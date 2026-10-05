@@ -14,6 +14,8 @@ Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against
       webhook notifications, expiry reminders, completion/failure notifications, questions (`ask_user`)
 - [x] Providers: normalized errors, SSE streaming, capabilities + LOCAL/REMOTE label, model registry,
       structured-JSON tool fallback, gateway retry/backoff/fallback, role routing, escalation
+- [x] UNSAFE mode is the default (no prompts): red badge, hard boundaries kept, destructive still asks,
+      audited auto-approvals, mandatory pre-edit checkpoint; `--safe` / `/mode ask` turn prompts on
 - [x] Anthropic provider (official SDK): content-block translation, same-model thinking-block replay,
       adaptive thinking, effort, server-side refusal fallbacks, cache-aware usage; secrets store +
       `trendlab secret set` (2026-10-05)

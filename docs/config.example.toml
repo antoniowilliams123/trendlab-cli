@@ -3,7 +3,8 @@
 
 [defaults]
 model = "openai:gpt-4o-mini"
-permission_mode = "ask"          # plan | ask | auto_edit | trusted
+permission_mode = "unsafe"       # unsafe (default, no prompts) | ask | auto_edit | trusted | plan
+allow_destructive = false        # unsafe mode: also skip the prompt for rm -rf / destructive git
 
 [limits]
 max_iterations = 50

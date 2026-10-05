@@ -42,6 +42,22 @@ def _version(value: bool) -> None:
         raise typer.Exit()
 
 
+def unsafe_banner(allow_destructive: bool) -> str:
+    kept = "sudo and paths outside the project are still denied"
+    destructive = (
+        "destructive commands (rm -rf, git reset --hard, force-push) run WITHOUT asking"
+        if allow_destructive
+        else "destructive commands still ask at the terminal"
+    )
+    return (
+        f"[bold white on red] UNSAFE MODE [/bold white on red] [red]permissions are skipped for "
+        f"this session: edits, shell, installs, network and deletes run without approval; "
+        f"{destructive}; "
+        f"{kept}. Every auto-approved operation is logged; /undo restores the pre-edit checkpoint. "
+        f'Turn prompts on with --safe, /mode ask, or permission_mode = "ask" in config.[/red]'
+    )
+
+
 def _first_run_check(config, model_ref: str) -> None:
     """Spec §56: a useful message instead of a stack trace when nothing is configured."""
     import os
@@ -88,6 +104,22 @@ def main_callback(
     plain: bool = typer.Option(
         False, "--plain", help="Use the plain REPL instead of the full-screen TUI."
     ),
+    dangerously_skip_permissions: bool = typer.Option(
+        False,
+        "--dangerously-skip-permissions",
+        help="UNSAFE (the default): run edits, shell, installs, network and deletes without "
+        "asking. "
+        "sudo and paths outside the project stay denied; destructive commands still ask unless "
+        "--allow-destructive. Use --safe to turn prompts on for this session.",
+    ),
+    safe: bool = typer.Option(
+        False, "--safe", help="Shortcut for --mode ask (approval prompts on)."
+    ),
+    allow_destructive: bool = typer.Option(
+        False,
+        "--allow-destructive",
+        help="In unsafe mode: also run rm -rf / destructive git without asking.",
+    ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -100,12 +132,32 @@ def main_callback(
         config.limits.max_cost_usd = max_cost
     if auto_edit:
         mode = PermissionMode.AUTO_EDIT
+    if safe:
+        mode = PermissionMode.ASK
+    if dangerously_skip_permissions:
+        mode = PermissionMode.UNSAFE
+    effective = PermissionMode(mode or config.defaults.permission_mode)
+    allow_destructive = allow_destructive or config.defaults.allow_destructive
+    if allow_destructive and effective != PermissionMode.UNSAFE:
+        console.print(
+            "[red]--allow-destructive only applies in unsafe mode "
+            "(the default, or --dangerously-skip-permissions)[/red]"
+        )
+        raise typer.Exit(2)
+    if effective == PermissionMode.UNSAFE and output != "json":
+        console.print(unsafe_banner(allow_destructive))
     from trendlab.app import TrendLabApp
 
     if prompt:
         _first_run_check(config, model or config.defaults.model)
         tl_app = TrendLabApp(
-            project, config, model_ref=model, console=console, permission_mode=mode, resume=resume
+            project,
+            config,
+            model_ref=model,
+            console=console,
+            permission_mode=mode,
+            resume=resume,
+            allow_destructive=allow_destructive,
         )
         code = asyncio.run(_run_once(tl_app, prompt, output))
         raise typer.Exit(code)
@@ -117,7 +169,14 @@ def main_callback(
         except ImportError:
             use_tui = False
     if use_tui:
-        run_tui(project, config, model_ref=model, permission_mode=mode, resume=resume)
+        run_tui(
+            project,
+            config,
+            model_ref=model,
+            permission_mode=mode,
+            resume=resume,
+            allow_destructive=allow_destructive,
+        )
         return
     tl_app = TrendLabApp(
         project,
@@ -127,6 +186,7 @@ def main_callback(
         permission_mode=mode,
         resume=resume,
         on_token=lambda t: console.print(t, end="", highlight=False),
+        allow_destructive=allow_destructive,
     )
     from trendlab.ui.repl import Repl
 

@@ -53,10 +53,17 @@ trendlab --plain                          # Rich REPL
 trendlab -m anthropic:claude-opus-5       # pick provider:model
 trendlab -m deepseek:deepseek-chat
 trendlab -p "Run the tests and fix failures" --auto-edit --output json   # headless / CI
+trendlab --safe                           # approval prompts on (default is UNSAFE: no prompts)
+trendlab --allow-destructive              # unsafe + rm -rf / destructive git without asking
 trendlab --resume latest                  # continue the last session for this project
 trendlab sessions | trendlab approvals    # history
 trendlab bench -m ollama:qwen3-coder      # benchmark fixtures A–E on a model
 ```
+
+**Permissions default to UNSAFE**: edits, shell, installs, network and deletes run without prompts;
+`sudo` and paths outside the project are always denied, destructive commands still ask, every
+auto-approval is logged, and `/undo` restores the pre-edit checkpoint. `--safe`, `/mode ask`, or
+`permission_mode = "ask"` in config turn prompts on.
 
 Slash commands: `/help /status /mode /permissions /plan /context /compact /cost /cost-limit
 /diff /git /commit /checkpoint /undo /sessions /new /model /models /review /init /skills /hooks

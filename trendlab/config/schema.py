@@ -17,11 +17,17 @@ class PermissionMode(StrEnum):
     ASK = "ask"
     AUTO_EDIT = "auto_edit"
     TRUSTED = "trusted"
+    # No approval prompts (hard boundaries, destructive prompt, audit and checkpoint remain).
+    UNSAFE = "unsafe"
 
 
 class DefaultsConfig(BaseModel):
     model: str = "openai:gpt-4o-mini"
-    permission_mode: PermissionMode = PermissionMode.ASK
+    # Tony's choice (2026-10-05): sessions start UNSAFE (no approval prompts) by default.
+    # Switch off per session with `trendlab --safe` / `/mode ask`, or set "ask" here.
+    permission_mode: PermissionMode = PermissionMode.UNSAFE
+    # In UNSAFE mode, also run destructive commands (rm -rf, destructive git) without asking.
+    allow_destructive: bool = False
 
 
 class LimitsConfig(BaseModel):

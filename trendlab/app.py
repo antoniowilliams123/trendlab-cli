@@ -63,6 +63,7 @@ class TrendLabApp:
         data_dir: Path | None = None,
         resume: str | None = None,
         on_token: Callable[[str], None] | None = None,
+        allow_destructive: bool = False,
     ) -> None:
         self.project_root = project_root.resolve()
         self.config = config
@@ -78,7 +79,10 @@ class TrendLabApp:
         self.store: SessionStore | None = None
         self.session_id: str = ""
         self.resumed = False
-        self.engine = PermissionEngine(mode=self.permission_mode)
+        self.engine = PermissionEngine(
+            mode=self.permission_mode,
+            allow_destructive=allow_destructive or config.defaults.allow_destructive,
+        )
         self.approvals: ApprovalManager | None = None
         self.local_channel: LocalTerminalChannel | None = None
         self.web_channel: WebApprovalChannel | None = None

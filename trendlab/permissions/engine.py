@@ -77,6 +77,19 @@ _POLICY: dict[PermissionMode, dict[OperationCategory, Decision]] = {
         OperationCategory.PRIVILEGED: Decision.DENY,
         OperationCategory.OUTSIDE_PROJECT: Decision.DENY,
     },
+    PermissionMode.UNSAFE: {
+        OperationCategory.READ_ONLY: Decision.ALLOW,
+        OperationCategory.SHELL_READ: Decision.ALLOW,
+        OperationCategory.RUN_TESTS: Decision.ALLOW,
+        OperationCategory.PROJECT_WRITE: Decision.ALLOW,
+        OperationCategory.FILE_DELETE: Decision.ALLOW,
+        OperationCategory.SHELL_WRITE: Decision.ALLOW,
+        OperationCategory.PACKAGE_INSTALL: Decision.ALLOW,
+        OperationCategory.NETWORK: Decision.ALLOW,
+        OperationCategory.DESTRUCTIVE: Decision.ASK,  # ALLOW only with allow_destructive
+        OperationCategory.PRIVILEGED: Decision.DENY,  # hard boundary, even here
+        OperationCategory.OUTSIDE_PROJECT: Decision.DENY,  # hard boundary, even here
+    },
 }
 
 # Categories that session-scoped "always allow" rules may never cover.
@@ -125,6 +138,8 @@ class Verdict:
     reason: str
     risk: RiskLevel
     matched_rule: str | None = None
+    # True when unsafe mode auto-approved something that would otherwise have asked (audited).
+    unsafe_auto: bool = False
 
 
 @dataclass
@@ -134,11 +149,29 @@ class PermissionEngine:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     # Rules persisted in <project>/.trendlab/permissions.toml ("always for this project").
     project_rules: ProjectRules | None = None
+    # Second explicit flag: in UNSAFE mode, also run destructive commands without asking.
+    allow_destructive: bool = False
+
+    @property
+    def unsafe(self) -> bool:
+        return self.mode == PermissionMode.UNSAFE
 
     def evaluate(self, request: PermissionRequest) -> Verdict:
         table = _POLICY[self.mode]
         base = table.get(request.category, Decision.ASK)
         risk = request.risk
+        if (
+            self.unsafe
+            and request.category == OperationCategory.DESTRUCTIVE
+            and self.allow_destructive
+        ):
+            base = Decision.ALLOW
+        if self.unsafe and base == Decision.ALLOW:
+            would_ask = _POLICY[PermissionMode.ASK].get(request.category) != Decision.ALLOW
+            if would_ask:
+                return Verdict(
+                    Decision.ALLOW, "auto-approved in UNSAFE mode", risk, unsafe_auto=True
+                )
         if base == Decision.DENY:
             return Verdict(
                 Decision.DENY, f"{request.category.value} is denied in {self.mode} mode", risk
@@ -187,4 +220,7 @@ class PermissionEngine:
             self._session_rules.clear()
 
     def policy_table(self) -> dict[OperationCategory, Decision]:
-        return dict(_POLICY[self.mode])
+        table = dict(_POLICY[self.mode])
+        if self.unsafe and self.allow_destructive:
+            table[OperationCategory.DESTRUCTIVE] = Decision.ALLOW
+        return table

@@ -975,6 +975,12 @@ Modes:
 
 Confirm modifications and risky commands.
 
+### Unsafe (the default)
+
+No approval prompts; hard boundaries, the destructive-command prompt, the
+audit trail and the pre-edit checkpoint remain. `--safe` / `/mode ask`
+turn prompts on. See §75.
+
 ### Auto Edit
 
 Automatically approve project-file edits but ask for risky shell
@@ -1700,7 +1706,8 @@ Example:
 ``` toml
 [defaults]
 model = "openai:gpt-5"
-permission_mode = "ask"
+permission_mode = "unsafe"    # default; "ask" turns approval prompts on
+allow_destructive = false
 
 [limits]
 max_cost_usd = 5.00
@@ -2895,6 +2902,32 @@ off all protection.
 
 A deliberately explicit unsafe mode may exist for expert users, but it
 must be visibly indicated.
+
+
+### Unsafe Mode (implemented; the default since 2026-10-05)
+
+The fifth mode, `unsafe`, is the configured default (`[defaults]
+permission_mode = "unsafe"`): project edits, shell commands, package
+installs, network commands and file deletes run without approval.
+`trendlab --safe` (or `--mode ask`) turns prompts on for one session,
+`/mode ask` inside a session, or set `permission_mode = "ask"` in config to
+change the default. `--dangerously-skip-permissions` forces unsafe when the
+config says otherwise. Guarantees that survive in unsafe mode:
+
+-   **Hard boundaries stay.** Privilege escalation (`sudo`) and operations
+    outside the project directory are denied in every mode, including this
+    one.
+-   **Destructive commands still ask** (`rm -rf`, `git reset --hard`,
+    `git clean -fd`, force-push) unless `--allow-destructive` or
+    `[defaults] allow_destructive = true` is set.
+-   **Always switchable.** `--safe`, `/mode ask` or config turn prompts back
+    on at any time; `/mode unsafe` turns them off again.
+-   **Visibly indicated.** A red UNSAFE badge in the CLI banner, REPL header,
+    TUI header and status bar, and in `/permissions`.
+-   **Audited.** Every operation that would have asked in `ask` mode is
+    recorded with `unsafe_auto = true`, the command and the affected files.
+-   **Checkpoint is mandatory.** If the pre-edit checkpoint cannot be
+    created, the mutation is blocked instead of proceeding unprotected.
 
 ------------------------------------------------------------------------
 

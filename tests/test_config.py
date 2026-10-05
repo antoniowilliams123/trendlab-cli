@@ -10,7 +10,9 @@ def test_defaults_when_no_files(project: Path):
     cfg = load_config(project)
     assert cfg.remote_approval.enabled is False  # disabled until configured
     assert cfg.notifications.enabled is False
-    assert cfg.defaults.permission_mode == PermissionMode.ASK
+    assert (
+        cfg.defaults.permission_mode == PermissionMode.UNSAFE
+    )  # Tony's default; --safe turns prompts on
     assert cfg.remote_approval.request_timeout_minutes == 30
 
 

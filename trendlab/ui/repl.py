@@ -44,10 +44,15 @@ class Repl:
         status = self.app.remote_status()
         remote = f"remote {'ON ' + str(status['url']) if status['enabled'] else 'off'}"
         resumed = " · resumed" if self.app.resumed else ""
+        mode_label = (
+            "[bold white on red] UNSAFE [/bold white on red]"
+            if self.app.engine.unsafe
+            else self.app.engine.mode.value
+        )
         self.console.print(
             f"[bold]{PRODUCT_NAME}[/bold] v{__version__} · {self.app.model_ref} "
             f"[{self.app.privacy_label()}] · {self.app.project_root} · "
-            f"mode {self.app.engine.mode.value} · {remote}{resumed}"
+            f"mode {mode_label} · {remote}{resumed}"
         )
         self.console.print(
             "[dim]Type a task, or /help for commands. Ctrl+C cancels a running task.[/dim]"

@@ -125,6 +125,12 @@ class ApprovalModal(ModalScreen[None]):
             self._decide("answer", event.value.strip())
 
 
+def _mode_badge(tl: TrendLabApp) -> str:
+    if tl.engine.unsafe:
+        return "[bold white on red] UNSAFE [/bold white on red]"
+    return tl.engine.mode.value.upper()
+
+
 class TrendLabTUI(App[None]):
     TITLE = PRODUCT_NAME
     CSS = """
@@ -187,9 +193,10 @@ class TrendLabTUI(App[None]):
     def _refresh_header(self) -> None:
         tl = self.tl
         remote = tl.remote_status()
+        mode_badge = _mode_badge(tl)
         self.query_one("#header", Static).update(
             f"[bold]{PRODUCT_NAME}[/bold]  {tl.model_ref} [{tl.privacy_label()}]\n"
-            f"{tl.project_root}   mode {tl.engine.mode.value.upper()}   "
+            f"{tl.project_root}   mode {mode_badge}   "
             f"remote {'ON' if remote['enabled'] else 'off'}   session {tl.session_id}"
         )
         self._refresh_status()
@@ -202,8 +209,7 @@ class TrendLabTUI(App[None]):
         pending = len(tl.approvals.pending()) if tl.approvals else 0
         self.query_one("#status", Static).update(
             f"{tl.model_ref} │ ~{ctx['estimated_tokens'] // 1000}k ctx │ ${cost:.3f} │ "
-            f"{tl.engine.mode.value.upper()} │ {state}"
-            + (f" │ ⏳ {pending} pending" if pending else "")
+            f"{_mode_badge(tl)} │ {state}" + (f" │ ⏳ {pending} pending" if pending else "")
         )
 
     def _refresh_plan(self) -> None:
@@ -345,6 +351,7 @@ def run_tui(
     model_ref: str | None,
     permission_mode: PermissionMode | None,
     resume: str | None,
+    allow_destructive: bool = False,
 ) -> None:
     tl = TrendLabApp(
         project,
@@ -353,5 +360,6 @@ def run_tui(
         permission_mode=permission_mode,
         resume=resume,
         console=Console(record=True, width=100, force_terminal=False),
+        allow_destructive=allow_destructive,
     )
     TrendLabTUI(tl).run()

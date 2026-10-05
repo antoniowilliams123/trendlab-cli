@@ -91,6 +91,9 @@ class ToolRuntime:
             reason=verdict.reason,
             mode=self.engine.mode.value,
             fingerprint=perm.fingerprint,
+            unsafe_auto=verdict.unsafe_auto,
+            command=perm.command,
+            files=perm.affected_files,
         )
         if verdict.decision == Decision.DENY:
             return ToolResult(
@@ -172,8 +175,12 @@ class ToolRuntime:
         if tool.name in MUTATING_TOOLS and self.on_before_mutation is not None:
             try:
                 await self.on_before_mutation(list(perm.affected_files))
-            except Exception:  # noqa: BLE001 — checkpoint failure must not block the edit
-                pass
+            except Exception as exc:  # noqa: BLE001
+                if self.engine.unsafe:
+                    # In UNSAFE mode the checkpoint is the only safety net, so it is mandatory.
+                    return ToolResult(
+                        ok=False, output=f"BLOCKED: checkpoint failed in UNSAFE mode ({exc})"
+                    )
         try:
             result = await tool.run(args, self.ctx)
         except PathOutsideProjectError as exc:

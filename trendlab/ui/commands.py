@@ -20,7 +20,7 @@ from trendlab.ui.diff_view import render_diff
 HELP = """\
 /help                      Show this help
 /status                    Model, project, mode, session, remote, cost
-/mode <plan|ask|auto_edit|trusted>   Change permission mode
+/mode <plan|ask|auto_edit|trusted|unsafe>   Change permission mode (unsafe = no prompts)
 /permissions               Policy table + session/project rules
 /plan | /tasks             Show the current task plan
 /context                   Context budget and compaction status
@@ -141,12 +141,21 @@ class CommandRouter:
         try:
             self.app.engine.mode = PermissionMode(args[0])
         except ValueError:
-            self.console.print("[red]modes: plan, ask, auto_edit, trusted[/red]")
+            self.console.print("[red]modes: plan, ask, auto_edit, trusted, unsafe[/red]")
             return
-        self.console.print(f"mode set to [bold]{self.app.engine.mode.value}[/bold]")
+        if self.app.engine.unsafe:
+            self.console.print(
+                "[bold white on red] UNSAFE [/bold white on red] [red]approval prompts are off; "
+                "sudo and outside-project paths stay denied; /mode ask turns prompts on[/red]"
+            )
+        else:
+            self.console.print(f"mode set to [bold]{self.app.engine.mode.value}[/bold]")
 
     async def _permissions(self, args: list[str]) -> None:
-        t = Table(title=f"Permissions — mode {self.app.engine.mode.value}")
+        title = f"Permissions — mode {self.app.engine.mode.value}"
+        if self.app.engine.unsafe:
+            title += "  [bold white on red] UNSAFE [/bold white on red]"
+        t = Table(title=title)
         t.add_column("Operation")
         t.add_column("Policy")
         for cat, dec in self.app.engine.policy_table().items():
