@@ -40,7 +40,7 @@ EXPECTED_CHANGED = {
     "A": {"orders.py"},
     "B": {"api.py"},
     "C": {"main.py"},
-    "D": {"mathx.py"},
+    "D": {"mathx.py", "test_mathx.py"},
     "E": {"greet.py"},
 }
 

@@ -33,7 +33,7 @@ async def test_tui_runs_a_prompt_and_slash_commands(project: Path, _trendlab_hom
     async with tui.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         header = tui.query_one("#header", Static).content
-        assert "TrendLab CLI" in str(header) and "scripted:m" in str(header)
+        assert "scripted:m" in str(header) and "ASK" in str(header)
         inp = tui.query_one("#input", Input)
         inp.value = "/status"
         await pilot.press("enter")
@@ -120,3 +120,26 @@ async def test_tui_question_modal_answers(project: Path, _trendlab_home: Path):
             if tui._run_task and tui._run_task.done():
                 break
         assert "USER ANSWER: b" in provider.calls[1][-1]["content"]
+
+
+async def test_tui_theme_is_black_and_neon(project: Path, _trendlab_home: Path):
+    tl = _tl(project, ScriptedProvider([]))
+    tui = TrendLabTUI(tl)
+    async with tui.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        bg = tui.screen.styles.background
+        assert (bg.r, bg.g, bg.b) == (0, 0, 0)
+        log = tui.query_one("#transcript", RichLog)
+        fg = log.styles.color
+        assert (fg.r, fg.g, fg.b) == (0x9D, 0xFF, 0x8A)  # soft neon body text
+        header = tui.query_one("#header", Static)
+        assert (header.styles.color.r, header.styles.color.g, header.styles.color.b) == (
+            0x39,
+            0xFF,
+            0x14,
+        )
+        status = tui.query_one("#status", Static)
+        assert "ctx" in str(status.content) and "cost" in str(status.content)
+        svg = tui.export_screenshot()
+        (_trendlab_home / "tui.svg").write_text(svg)
+        assert "#000000" in svg.lower() and "#39ff14" in svg.lower()

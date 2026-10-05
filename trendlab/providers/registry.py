@@ -44,6 +44,7 @@ def create_provider(config: AppConfig, model_ref: str) -> ModelProvider:
             thinking=pcfg.thinking,
             effort=pcfg.effort,
             refusal_fallbacks=pcfg.refusal_fallbacks,
+            cache=pcfg.prompt_caching,
             timeout=pcfg.timeout_seconds,
             context_window=info.context_window,
         )

@@ -7,9 +7,10 @@ import asyncio
 from rich.console import Console
 from rich.markdown import Markdown
 
-from trendlab import PRODUCT_NAME, __version__
+from trendlab import __version__
 from trendlab.app import TrendLabApp
 from trendlab.ui.commands import CommandRouter
+from trendlab.ui.theme import GREY, MINT, NEON, WORDMARK
 
 
 class Repl:
@@ -26,7 +27,7 @@ class Repl:
         self._header()
         try:
             while self._running:
-                self.console.print("[bold cyan]>[/bold cyan] ", end="")
+                self.console.print(f"[bold {MINT}]❯[/] ", end="")
                 line = await self.app.console_input.readline()
                 if line is None:
                     break
@@ -42,21 +43,23 @@ class Repl:
 
     def _header(self) -> None:
         status = self.app.remote_status()
-        remote = f"remote {'ON ' + str(status['url']) if status['enabled'] else 'off'}"
-        resumed = " · resumed" if self.app.resumed else ""
+        remote = (
+            f"[bold {NEON}]remote ON[/] [{GREY}]{status['url']}[/]"
+            if status["enabled"]
+            else f"[{GREY}]remote off[/]"
+        )
+        resumed = f" · [{GREY}]resumed[/]" if self.app.resumed else ""
         mode_label = (
-            "[bold white on red] UNSAFE [/bold white on red]"
+            "[unsafe] UNSAFE [/unsafe]"
             if self.app.engine.unsafe
-            else self.app.engine.mode.value
+            else f"[bold {NEON}]{self.app.engine.mode.value}[/]"
         )
         self.console.print(
-            f"[bold]{PRODUCT_NAME}[/bold] v{__version__} · {self.app.model_ref} "
-            f"[{self.app.privacy_label()}] · {self.app.project_root} · "
-            f"mode {mode_label} · {remote}{resumed}"
+            f"[bold {NEON}]{WORDMARK}[/]  [{GREY}]CLI v{__version__}[/]   "
+            f"[bold {NEON}]{self.app.model_ref}[/] [{GREY}]{self.app.privacy_label()}[/]"
         )
-        self.console.print(
-            "[dim]Type a task, or /help for commands. Ctrl+C cancels a running task.[/dim]"
-        )
+        self.console.print(f"[{GREY}]{self.app.project_root}[/] · {mode_label} · {remote}{resumed}")
+        self.console.print(f"[{GREY}]type a task, or /help · Ctrl+C cancels a running task[/]")
 
     async def _prompt(self, text: str) -> None:
         assert self.app.agent is not None

@@ -28,8 +28,13 @@ Remote approval request sent — decide here or on your phone.
   and `--resume`.
 - **Remote approval.** Authenticated mobile web page, Telegram/ntfy/webhook notifications,
   expiry reminders, completion/failure pings, questions answered from the phone, full audit trail.
-- **Two interfaces.** A Textual full-screen TUI (default) and a Rich REPL (`--plain`), plus
-  headless `-p "..." --output json` for CI.
+- **Two interfaces, one look.** A full-screen TUI (default) and a Rich REPL (`--plain`), both
+  jet-black with neon-green text: live token streaming, plan panel, spinner status bar with
+  context and cost, inline diffs, and approval/question modals. Headless `-p "..." --output json`
+  for CI.
+- **Edits that land.** Exact-text `patch_file` for small changes, unified-diff `apply_patch` for
+  multi-hunk, multi-file changes (all-or-nothing), and a secret scanner that refuses to write
+  keys into the repository.
 
 ## Install
 
@@ -56,6 +61,8 @@ trendlab -p "Run the tests and fix failures" --auto-edit --output json   # headl
 trendlab --safe                           # approval prompts on (default is UNSAFE: no prompts)
 trendlab --allow-destructive              # unsafe + rm -rf / destructive git without asking
 trendlab --resume latest                  # continue the last session for this project
+trendlab init                             # first-run wizard: provider, key, config
+trendlab doctor                           # check config, keys, tools, remote settings
 trendlab sessions | trendlab approvals    # history
 trendlab bench -m ollama:qwen3-coder      # benchmark fixtures A–E on a model
 ```
@@ -66,8 +73,9 @@ auto-approval is logged, and `/undo` restores the pre-edit checkpoint. `--safe`,
 `permission_mode = "ask"` in config turn prompts on.
 
 Slash commands: `/help /status /mode /permissions /plan /context /compact /cost /cost-limit
-/diff /git /commit /checkpoint /undo /sessions /new /model /models /review /init /skills /hooks
-/mcp /remote /approvals /clear /quit`.
+/diff /git /commit /checkpoint /undo /sessions /resume /new /export /model /models /review /init
+/skills /hooks /mcp /remote /approvals /clear /quit`. TUI keys: F1 help, F2 plan, F3 cost,
+Ctrl+L clear, Ctrl+C cancel (twice to quit).
 
 ## Remote approval from your phone
 

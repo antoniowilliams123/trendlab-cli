@@ -41,6 +41,7 @@ class EventType(StrEnum):
     SESSION_RESTORED = "session.restored"
     LOOP_DETECTED = "loop.detected"
     RECOVERY = "recovery.action"
+    SECRET_WRITE_BLOCKED = "security.secret_write_blocked"
     HOOK_RUN = "hook.run"
     HOOK_BLOCKED = "hook.blocked"
     QUESTION_ASKED = "question.asked"

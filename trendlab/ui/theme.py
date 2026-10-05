@@ -1,0 +1,212 @@
+"""TrendLab terminal theme: jet-black background, neon-green text.
+
+One palette for both interfaces. The Rich ``Theme`` styles the REPL and every Rich renderable;
+the Textual CSS below styles the full-screen TUI. Semantic names keep call sites readable
+(``[ok]``, ``[warning]``, ``[danger]``) instead of raw colors.
+"""
+
+from __future__ import annotations
+
+from rich.console import Console
+from rich.theme import Theme
+
+BLACK = "#000000"
+NEON = "#39ff14"  # primary text
+NEON_DIM = "#1f9e12"  # borders, secondary text
+NEON_SOFT = "#9dff8a"  # body text that should read softer than labels
+MINT = "#00ffd0"  # accents (user prompt, links)
+AMBER = "#ffd21f"  # approvals / warnings
+RED = "#ff3b3b"  # denials / unsafe
+GREY = "#5c6e5a"  # muted
+
+RICH_THEME = Theme(
+    {
+        "neon": f"bold {NEON}",
+        "soft": NEON_SOFT,
+        "dim": GREY,
+        "accent": f"bold {MINT}",
+        "ok": f"bold {NEON}",
+        "warning": f"bold {AMBER}",
+        "danger": f"bold {RED}",
+        "unsafe": f"bold white on {RED}",
+        "user": f"bold {MINT}",
+        "tool": NEON_DIM,
+        "rule.line": NEON_DIM,
+        "panel.border": NEON_DIM,
+        "table.header": f"bold {NEON}",
+        "table.border": NEON_DIM,
+        "markdown.code": f"{MINT} on #0b1a0b",
+        "markdown.h1": f"bold {NEON}",
+        "markdown.h2": f"bold {NEON}",
+        "markdown.item.bullet": NEON,
+        "prompt": f"bold {MINT}",
+        "repr.number": MINT,
+        "repr.str": NEON_SOFT,
+        "repr.path": MINT,
+        "repr.filename": MINT,
+        "progress.spinner": NEON,
+        "status.spinner": NEON,
+        "logging.level.warning": AMBER,
+        "logging.level.error": RED,
+    }
+)
+
+WORDMARK = "▌TRENDLAB"
+
+
+def make_console(**kwargs) -> Console:
+    """A Rich console with the TrendLab theme and neon-on-black default style."""
+    kwargs.setdefault("theme", RICH_THEME)
+    kwargs.setdefault("style", f"{NEON_SOFT} on {BLACK}")
+    kwargs.setdefault("highlight", False)
+    return Console(**kwargs)
+
+
+# Textual CSS shared by the TUI screens.
+TUI_CSS = f"""
+Screen {{
+    background: {BLACK};
+    color: {NEON};
+}}
+#header {{
+    height: 3;
+    background: {BLACK};
+    color: {NEON};
+    border-bottom: solid {NEON_DIM};
+    padding: 0 1;
+}}
+#body {{
+    height: 1fr;
+    background: {BLACK};
+}}
+#transcript {{
+    width: 3fr;
+    background: {BLACK};
+    color: {NEON_SOFT};
+    border: round {NEON_DIM};
+    border-title-color: {NEON};
+    scrollbar-color: {NEON_DIM};
+    scrollbar-color-hover: {NEON};
+    scrollbar-background: {BLACK};
+    padding: 0 1;
+}}
+#stream {{
+    width: 3fr;
+    height: auto;
+    max-height: 12;
+    background: {BLACK};
+    color: {NEON};
+    padding: 0 2;
+    display: none;
+}}
+#stream.visible {{
+    display: block;
+}}
+#left {{
+    width: 3fr;
+    height: 1fr;
+}}
+#plan {{
+    width: 1fr;
+    background: {BLACK};
+    color: {NEON};
+    border: round {NEON_DIM};
+    border-title-color: {NEON};
+    padding: 0 1;
+}}
+#status {{
+    height: 1;
+    background: #041004;
+    color: {NEON};
+    padding: 0 1;
+}}
+#input {{
+    dock: bottom;
+    background: {BLACK};
+    color: {NEON};
+    border: tall {NEON_DIM};
+}}
+#input:focus {{
+    border: tall {NEON};
+}}
+Input > .input--placeholder {{
+    color: {GREY};
+}}
+Input > .input--cursor {{
+    background: {NEON};
+    color: {BLACK};
+}}
+Footer {{
+    background: {BLACK};
+    color: {NEON_DIM};
+}}
+Footer > .footer--key {{
+    background: #0b2a0b;
+    color: {NEON};
+}}
+Footer > .footer--description {{
+    color: {NEON_DIM};
+}}
+ApprovalModal {{
+    align: center middle;
+    background: {BLACK} 60%;
+}}
+#dialog {{
+    width: 96;
+    max-height: 90%;
+    background: {BLACK};
+    color: {NEON};
+    border: double {AMBER};
+    padding: 1 2;
+}}
+#dialog.question {{
+    border: double {MINT};
+}}
+#dialog.high {{
+    border: double {RED};
+}}
+#dialog Label {{
+    color: {NEON};
+    text-style: bold;
+}}
+#dialog Static {{
+    color: {NEON_SOFT};
+}}
+#buttons {{
+    height: 3;
+    margin-top: 1;
+}}
+#buttons Button, #dialog Button {{
+    margin-right: 1;
+    background: {BLACK};
+    color: {NEON};
+    border: tall {NEON_DIM};
+    text-style: bold;
+}}
+#dialog Button:hover, #dialog Button:focus {{
+    border: tall {NEON};
+    background: #0b2a0b;
+}}
+#dialog Button.-success {{
+    color: {BLACK};
+    background: {NEON};
+    border: tall {NEON};
+}}
+#dialog Button.-error {{
+    color: {RED};
+    border: tall {RED};
+}}
+#dialog Button.-primary {{
+    color: {MINT};
+    border: tall {MINT};
+}}
+#preview {{
+    max-height: 20;
+    border: round {NEON_DIM};
+}}
+#answer {{
+    background: {BLACK};
+    color: {NEON};
+    border: tall {MINT};
+}}
+"""

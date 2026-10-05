@@ -16,7 +16,7 @@ from typing import Any
 from trendlab.config.schema import HookConfig
 from trendlab.telemetry.events import EventBus, EventType
 
-MUTATING = {"write_file", "patch_file", "delete_file"}
+MUTATING = {"write_file", "patch_file", "apply_patch", "delete_file"}
 
 
 class HookRunner:

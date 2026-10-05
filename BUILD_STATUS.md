@@ -16,6 +16,11 @@ Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against
       structured-JSON tool fallback, gateway retry/backoff/fallback, role routing, escalation
 - [x] UNSAFE mode is the default (no prompts): red badge, hard boundaries kept, destructive still asks,
       audited auto-approvals, mandatory pre-edit checkpoint; `--safe` / `/mode ask` turn prompts on
+- [x] apply_patch unified-diff editor; secret scanning on writes; Anthropic prompt caching;
+      compaction churn guard; redaction fix for token counters (2026-10-05)
+- [x] Neon-on-black theme for TUI + REPL; TUI live streaming pane, spinner status, F-keys;
+      /resume in place, /export, trendlab init, trendlab doctor (2026-10-05)
+- [x] Live on DeepSeek Flash: benchmarks A–E green, long sessions with compaction green (2026-10-05)
 - [x] Anthropic provider (official SDK): content-block translation, same-model thinking-block replay,
       adaptive thinking, effort, server-side refusal fallbacks, cache-aware usage; secrets store +
       `trendlab secret set` (2026-10-05)

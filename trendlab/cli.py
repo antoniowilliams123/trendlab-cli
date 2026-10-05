@@ -33,7 +33,9 @@ remote_app = typer.Typer(help="Remote (phone) approval settings.")
 app.add_typer(remote_app, name="remote")
 secret_app = typer.Typer(help="Secrets stored outside config (~/.trendlab/secrets, mode 0600).")
 app.add_typer(secret_app, name="secret")
-console = Console()
+from trendlab.ui.theme import make_console  # noqa: E402
+
+console = make_console()
 
 
 def _version(value: bool) -> None:
@@ -197,24 +199,26 @@ def main_callback(
 
 
 async def _run_repl(repl) -> None:
+    """Ctrl+C: first press cancels the running task; a second press within 2 s (or a press
+    while idle) exits."""
+    import time
+
     loop = asyncio.get_running_loop()
-    presses = {"n": 0}
+    last = {"t": 0.0}
 
     def on_sigint() -> None:
-        presses["n"] += 1
-        if repl.cancel_current():
-            console.print("\n[yellow]Canceling current task… (Ctrl+C again to quit)[/yellow]")
-            return
-        if presses["n"] >= 2 or True:
-            console.print("\n[dim]bye[/dim]")
-            repl._quit()  # noqa: SLF001
-            loop.call_soon(
-                lambda: [
-                    t.cancel()
-                    for t in asyncio.all_tasks(loop)
-                    if t is not asyncio.current_task(loop)
-                ]
+        now = time.monotonic()
+        if repl.cancel_current() and now - last["t"] > 2.0:
+            console.print(
+                "\n[warning]Canceling current task… (Ctrl+C again within 2 s to quit)[/warning]"
             )
+            last["t"] = now
+            return
+        console.print("\n[dim]bye[/dim]")
+        repl._quit()  # noqa: SLF001
+        for task in asyncio.all_tasks(loop):
+            if task is not asyncio.current_task(loop):
+                task.cancel()
 
     try:
         loop.add_signal_handler(signal.SIGINT, on_sigint)
@@ -444,6 +448,187 @@ def secret_rm(name: str) -> None:
     from trendlab.security.secrets import delete_secret
 
     console.print(f"removed {name}" if delete_secret(name) else f"[dim]{name} was not stored[/dim]")
+
+
+# -- trendlab doctor / init -----------------------------------------------------------------------
+@app.command("doctor")
+def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
+    """Check config, keys, providers, tools and remote settings; explain anything that is off."""
+    import shutil
+    import socket as _socket
+
+    from trendlab.providers.registry import parse_model_ref
+    from trendlab.security.secrets import secret_source
+
+    ok, warn = "[ok]✓[/ok]", "[warning]![/warning]"
+    rows: list[tuple[str, str, str]] = []
+    try:
+        config = load_config(project)
+        rows.append((ok, "config", f"{global_config_path()} loads"))
+    except ConfigError as exc:
+        console.print(f"[danger]✗ config:[/danger] {exc}")
+        raise typer.Exit(1) from exc
+    try:
+        provider, _ = parse_model_ref(config.defaults.model)
+        pcfg = config.providers.get(provider)
+        if pcfg is None:
+            rows.append(
+                (
+                    warn,
+                    "default model",
+                    f"{config.defaults.model}: provider {provider!r} not configured",
+                )
+            )
+        else:
+            src = (
+                "n/a (local)"
+                if pcfg.type == "ollama" or not pcfg.api_key_env
+                else secret_source(pcfg.api_key_env)
+            )
+            mark = ok if src != "missing" else warn
+            rows.append(
+                (
+                    mark,
+                    "default model",
+                    f"{config.defaults.model} · key {pcfg.api_key_env or '-'}: {src}",
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        rows.append((warn, "default model", str(exc)))
+    for name, pcfg in config.providers.items():
+        if pcfg.type == "ollama" or not pcfg.api_key_env:
+            continue
+        src = secret_source(pcfg.api_key_env)
+        rows.append(
+            (
+                ok if src != "missing" else warn,
+                f"provider {name}",
+                f"{pcfg.type} · {pcfg.api_key_env}: {src}",
+            )
+        )
+    rows.append((ok if shutil.which("git") else warn, "git", shutil.which("git") or "not found"))
+    rows.append(
+        (
+            ok if shutil.which("rg") else warn,
+            "ripgrep",
+            shutil.which("rg") or "not found (Python search fallback)",
+        )
+    )
+    rows.append(
+        (
+            ok,
+            "mode",
+            f"{config.defaults.permission_mode.value}"
+            + (
+                " (UNSAFE: no prompts; --safe turns them on)"
+                if config.defaults.permission_mode.value == "unsafe"
+                else ""
+            ),
+        )
+    )
+    ra = config.remote_approval
+    if ra.enabled:
+        try:
+            with _socket.socket() as sock:
+                sock.settimeout(0.5)
+                busy = (
+                    sock.connect_ex(
+                        (ra.host if ra.host not in {"0.0.0.0", "::"} else "127.0.0.1", ra.port)
+                    )
+                    == 0
+                )
+            rows.append(
+                (
+                    warn if busy else ok,
+                    "remote approval",
+                    f"{ra.host}:{ra.port} " + ("port in use" if busy else "port free"),
+                )
+            )
+        except OSError as exc:
+            rows.append((warn, "remote approval", str(exc)))
+    else:
+        rows.append((ok, "remote approval", "disabled"))
+    n = config.notifications
+    rows.append((ok, "notifications", n.provider if n.enabled else "disabled"))
+    rows.append((ok, "pricing entries", str(len(config.pricing))))
+    t = Table(title="trendlab doctor", show_header=False)
+    for mark, what, detail in rows:
+        t.add_row(mark, what, detail)
+    console.print(t)
+    problems = sum(1 for r in rows if r[0] == warn)
+    console.print(f"[dim]{problems} warning(s)[/dim]" if problems else "[ok]all checks passed[/ok]")
+
+
+@app.command("init")
+def init_cmd(
+    provider: str = typer.Option(
+        None, help="deepseek | anthropic | openai | ollama (prompted if omitted)"
+    ),
+    model: str | None = typer.Option(
+        None, help="Model id for that provider (defaults per provider)."
+    ),
+) -> None:
+    """First-run setup: pick a provider, store its key safely, write ~/.trendlab/config.toml."""
+    from trendlab.security.secrets import secret_source, store_secret
+
+    presets = {
+        "deepseek": (
+            "openai_compatible",
+            "https://api.deepseek.com/v1",
+            "DEEPSEEK_API_KEY",
+            "deepseek-flash",
+        ),
+        "anthropic": ("anthropic", "", "ANTHROPIC_API_KEY", "claude-opus-5"),
+        "openai": (
+            "openai_compatible",
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+            "gpt-4o-mini",
+        ),
+        "moonshot": (
+            "openai_compatible",
+            "https://api.moonshot.ai/v1",
+            "MOONSHOT_API_KEY",
+            "kimi-k2",
+        ),
+        "ollama": ("ollama", "http://localhost:11434/v1", None, "qwen3-coder"),
+    }
+    if provider is None:
+        console.print(f"[neon]Welcome to {PRODUCT_NAME}.[/neon] Choose a provider:")
+        for i, name in enumerate(presets, start=1):
+            console.print(f"  {i}. {name}")
+        choice = typer.prompt("Provider", default="1")
+        provider = (
+            list(presets)[int(choice) - 1]
+            if choice.isdigit() and 1 <= int(choice) <= len(presets)
+            else choice
+        )
+    if provider not in presets:
+        console.print(
+            f"[danger]unknown provider {provider!r}[/danger]; choose from {', '.join(presets)}"
+        )
+        raise typer.Exit(2)
+    ptype, base_url, key_env, default_model = presets[provider]
+    model = model or default_model
+    if key_env and secret_source(key_env) == "missing":
+        value = typer.prompt(
+            f"Paste your {provider} API key for {key_env} (input hidden)", hide_input=True
+        )
+        store_secret(key_env, value)
+        console.print(f"[ok]Stored {key_env}[/ok] in ~/.trendlab/secrets (never displayed).")
+    values = {"type": ptype, "api_key_env": key_env} if key_env else {"type": ptype}
+    if base_url:
+        values["base_url"] = base_url
+    update_global_config("providers", {provider: values})
+    update_global_config("defaults", {"model": f"{provider}:{model}"})
+    console.print(
+        f"[ok]Configured[/ok] default model [neon]{provider}:{model}[/neon] "
+        f"in {global_config_path()}"
+    )
+    console.print(
+        "Next: [neon]trendlab doctor[/neon] to check everything, then [neon]trendlab[/neon] "
+        "in a project."
+    )
 
 
 def main() -> None:

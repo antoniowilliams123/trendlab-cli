@@ -54,7 +54,10 @@ def test_repository_map_and_cache(project: Path):
 
 async def test_context_budget_and_compaction(events: EventBus, recorder: EventRecorder):
     cfg = ContextConfig(
-        recent_messages_budget_tokens=200, compact_threshold=0.5, default_context_window=600
+        recent_messages_budget_tokens=200,
+        compact_threshold=0.5,
+        default_context_window=600,
+        min_compaction_tokens=0,
     )
     summaries = []
 
@@ -162,3 +165,16 @@ def test_store_messages_state_usage(store: SessionStore, project: Path):
     assert store.sessions(str(project))[0]["id"] == sid
     store.set_session_status(sid, "closed")
     assert store.get_session(sid)["status"] == "closed"
+
+
+async def test_compaction_skips_tiny_histories(events: EventBus):
+    cfg = ContextConfig(
+        compact_threshold=0.5, default_context_window=600, min_compaction_tokens=1500
+    )
+    cm = ContextManager(
+        cfg, events, "s", system_prompt="S" * 2000
+    )  # system alone crosses the threshold
+    cm.messages = [{"role": "user", "content": "short"}] * 4
+    assert cm.estimate_full() >= 300 and not cm.needs_compaction()
+    cm.messages = [{"role": "user", "content": "word " * 800}] * 4
+    assert cm.needs_compaction()

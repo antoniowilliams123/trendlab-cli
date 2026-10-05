@@ -449,6 +449,111 @@ class TrendLabApp:
         except RuntimeError:
             pass
 
+    # -- sessions -------------------------------------------------------------------------------
+    def switch_session(self, target: str) -> str:
+        """Resume another session in place: swap messages, plan, summary and ids. Returns the id."""
+        assert self.store and self.context and self.agent and self.tools and self.approvals
+        row = (
+            self.store.latest_session(str(self.project_root))
+            if target == "latest"
+            else self.store.get_session(target)
+        )
+        if row is None:
+            raise KeyError(target)
+        if row["id"] == self.session_id:
+            return self.session_id
+        self._save_state()
+        self.store.set_session_status(self.session_id, "closed")
+        self.session_id = row["id"]
+        self.resumed = True
+        self.store.set_session_status(self.session_id, "active")
+        self.store.touch_session(self.session_id)
+        for obj in (self.approvals, self.agent, self.context, self.tools.ctx):
+            obj.session_id = self.session_id
+        if self.subagents is not None:
+            self.subagents.session_id = self.session_id
+        self.context.messages = self.store.messages(self.session_id)
+        self.plan.tasks = Plan.from_json(self.store.get_state(self.session_id, "plan")).tasks
+        summary = self.store.get_state(self.session_id, "summary")
+        if summary:
+            from trendlab.context.compaction import CompactionRecord
+
+            self.context.summary = CompactionRecord.model_validate(summary)
+        else:
+            self.context.summary = None
+        self.tools.changed_files.clear()
+        self.tools.validation_runs.clear()
+        if row.get("model") and not self._provider_override:
+            try:
+                self.switch_model(row["model"])
+            except Exception:  # noqa: BLE001 — keep the current model if the old one is gone
+                pass
+        self.events.emit(
+            EventType.SESSION_RESUMED,
+            session_id=self.session_id,
+            project=str(self.project_root),
+            model=self.model_ref,
+            messages=len(self.context.messages),
+            in_place=True,
+        )
+        return self.session_id
+
+    def export_transcript(self, path: Path | None = None) -> Path:
+        """Write the session as Markdown (spec addendum: transcript export)."""
+        assert self.store and self.context
+        path = path or (
+            self.project_root / ".trendlab" / "exports" / f"session-{self.session_id}.md"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"# TrendLab session {self.session_id}",
+            "",
+            f"- project: `{self.project_root}`",
+            f"- model: `{self.model_ref}`",
+            f"- mode: `{self.engine.mode.value}`",
+        ]
+        if self.costs:
+            lines.append(
+                f"- cost: ${self.costs.total_usd:.4f} over {self.costs.model_calls} model calls"
+            )
+        lines.append("")
+        if self.plan.tasks:
+            lines += ["## Plan", "", "```", self.plan.render(), "```", ""]
+        if self.context.summary:
+            lines += ["## Compacted summary", "", self.context.summary.summary, ""]
+        lines += ["## Transcript", ""]
+        for m in self.store.messages(self.session_id):
+            role = m.get("role")
+            if role == "user":
+                lines += [f"**You:** {m.get('content')}", ""]
+            elif role == "assistant":
+                if m.get("content"):
+                    lines += [f"**TrendLab:** {m['content']}", ""]
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function", {})
+                    lines.append(f"- tool `{fn.get('name')}` {fn.get('arguments', '')[:300]}")
+                if m.get("tool_calls"):
+                    lines.append("")
+            elif role == "tool":
+                content = str(m.get("content") or "")
+                lines += [
+                    f"<details><summary>result of {m.get('name')}</summary>",
+                    "",
+                    "```",
+                    content[:4000],
+                    "```",
+                    "</details>",
+                    "",
+                ]
+        if self.tools and self.tools.changed_files:
+            lines += (
+                ["## Files changed", ""] + [f"- `{f}`" for f in self.tools.changed_files] + [""]
+            )
+        from trendlab.security.redaction import redact_text
+
+        path.write_text(redact_text("\n".join(lines)), encoding="utf-8")
+        return path
+
     # -- model switching ---------------------------------------------------------------------------
     def switch_model(self, model_ref: str) -> None:
         assert self.gateway and self.agent and self.context

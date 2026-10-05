@@ -155,6 +155,7 @@ class AnthropicProvider(ModelProvider):
         thinking: str = "auto",
         effort: str | None = None,
         refusal_fallbacks: str = "auto",
+        cache: bool = True,
         timeout: float = 600.0,
         context_window: int | None = None,
         client: Any = None,
@@ -166,6 +167,7 @@ class AnthropicProvider(ModelProvider):
         self._thinking = thinking
         self._effort = effort
         self._fallbacks = refusal_fallbacks
+        self._cache = cache
         self._timeout = timeout
         self._client = client
         self._caps = ModelCapabilities(
@@ -202,10 +204,19 @@ class AnthropicProvider(ModelProvider):
             "messages": msgs,
         }
         if system:
-            params["system"] = system
+            # Prompt caching: the system prompt is the stable prefix; mark it as a breakpoint.
+            params["system"] = (
+                [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+                if self._cache
+                else system
+            )
         anth_tools = translate_tools(tools)
         if anth_tools:
             params["tools"] = anth_tools
+        if self._cache and msgs:
+            # Second breakpoint on the latest turn so the growing history is served from cache
+            # on the next call. The prefix stays byte-stable; the breakpoint moves forward.
+            _mark_cache(msgs[-1])
         thinking = thinking_param(self.model, self._thinking)
         if thinking:
             params["thinking"] = thinking
@@ -245,6 +256,20 @@ class AnthropicProvider(ModelProvider):
                 await client.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def _mark_cache(message: dict[str, Any]) -> None:
+    """Attach an ephemeral cache breakpoint to the last block of ``message``."""
+    content = message.get("content")
+    if isinstance(content, str):
+        message["content"] = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+        return
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, dict) and last.get("type") in {"text", "tool_result", "tool_use"}:
+            content[-1] = {**last, "cache_control": {"type": "ephemeral"}}
 
 
 def _to_response(message: Any) -> ModelResponse:

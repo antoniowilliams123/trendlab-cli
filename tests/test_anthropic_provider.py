@@ -230,7 +230,8 @@ async def test_complete_maps_tool_calls_usage_and_params():
     params = client.messages.calls[0]
     assert (
         params["model"] == "claude-opus-5"
-        and params["system"] == "S"
+        and params["system"]
+        == [{"type": "text", "text": "S", "cache_control": {"type": "ephemeral"}}]
         and params["max_tokens"] == 16000
     )
     assert params["thinking"] == {"type": "adaptive"} and params["output_config"] == {
@@ -397,3 +398,30 @@ def test_cli_secret_commands(_trendlab_home, monkeypatch):
     assert "ANTHROPIC_API_KEY" in r.output
     r = CliRunner().invoke(app, ["secret", "rm", "ANTHROPIC_API_KEY"])
     assert "removed" in r.output
+
+
+async def test_cache_breakpoints_can_be_disabled_and_land_on_tool_results():
+    client = FakeClient([_message([TextBlock(type="text", text="ok")])] * 2)
+    p = AnthropicProvider(model="claude-opus-5", client=client)
+    history = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "name": "read_file", "content": "data"},
+    ]
+    await p.complete(history)
+    last = client.messages.calls[0]["messages"][-1]
+    assert last["content"][-1]["type"] == "tool_result" and last["content"][-1]["cache_control"]
+    off = AnthropicProvider(model="claude-opus-5", client=client, cache=False)
+    await off.complete([{"role": "system", "content": "S"}, *history])
+    second = client.messages.calls[1]
+    assert second["system"] == "S" and "cache_control" not in second["messages"][-1]["content"][-1]

@@ -957,6 +957,19 @@ Before editing, TrendLab records a content hash. If the file changes
 externally before the patch is applied, TrendLab should reject or rebase
 the operation rather than silently overwrite user work.
 
+
+### Implemented Editors
+
+-   `patch_file`: exact-text replacement (must match once unless
+    `replace_all`), hash-guarded, returns the diff.
+-   `apply_patch`: a unified diff spanning one or more files, applied
+    all-or-nothing. Hunks are located by context with positional fuzz and a
+    whitespace-insensitive fallback; new files (`--- /dev/null`) and
+    deletions (`+++ /dev/null`) are supported. A patch containing a
+    deletion is classified FILE_DELETE (high risk).
+-   Every mutating tool shows the approver the resulting diff before it
+    runs, and is scanned for secrets first (§36).
+
 ------------------------------------------------------------------------
 
 ## 16. Shell Execution
@@ -1230,6 +1243,13 @@ NEXT ACTION
 Critical facts should not depend solely on free-form summarization.
 
 TrendLab should retain structured state separately from conversation text.
+
+
+Implemented guard (2026-10-05): compaction runs only when the full prompt
+crosses `compact_threshold` **and** the conversation itself is at least
+`min_compaction_tokens` (default 1500) or 10% of the window — a live run
+with a deliberately tiny window showed that without the guard a short
+history is re-compacted every turn.
 
 ------------------------------------------------------------------------
 
@@ -1628,6 +1648,18 @@ pending approvals) · input. Approvals and questions open a modal with
 `y / s / p / n` keys; the same request remains answerable from the phone.
 Ctrl+C cancels the running task; a second press quits.
 
+
+### Theme (implemented 2026-10-05)
+
+One palette for both interfaces (`trendlab/ui/theme.py`): jet-black
+background `#000000`, neon green `#39ff14` for labels and emphasis, soft
+neon `#9dff8a` for body text, dim green `#1f9e12` borders, mint `#00ffd0`
+for the user's prompt and accents, amber for approvals, red for denials
+and the UNSAFE badge. The TUI shows a live streaming pane under the
+transcript, a spinner with elapsed time in the status bar, context size
+with percentage of window, running cost, and the plan with glyphs. F1/F2/F3
+open help, plan and cost. The REPL uses the same Rich theme.
+
 ------------------------------------------------------------------------
 
 ## 30. Diff UX
@@ -1980,6 +2012,17 @@ It is **not** a remote command channel. The security properties are:
 -   **Fails closed.** If the phone is offline, the provider fails, or the
     server cannot start, the request stays pending for local approval and
     eventually expires — nothing is auto-approved.
+
+
+### Secret Scanning on Writes (implemented 2026-10-05)
+
+Before `write_file`, `patch_file` or `apply_patch` runs, the proposed
+content is scanned for secret shapes (provider keys, GitHub/AWS/Slack/
+Telegram tokens, private-key blocks, hard-coded secret assignments;
+placeholders such as `<your-key>` or `os.environ[...]` are ignored). A
+match blocks the write with a `security.secret_write_blocked` event that
+names the kind and line, never the value, and the model is told to
+reference an environment variable or the secrets store instead.
 
 ------------------------------------------------------------------------
 
@@ -3607,3 +3650,25 @@ decisions taken after the original specification. Newest last.
     file changed, no unnecessary changes, no human interventions. This is
     the first time the agent loop ran against a real model; the harness
     behaved as specified.
+
+### 2026-10-05 — Toward 9.5: mileage, editing, cost, UX
+-   Live benchmark sweep on DeepSeek Flash: fixtures A–E all green, 4–6
+    model calls and 5–8 tool calls each, 6–9 s, ≈$0.002 per fixture, no
+    unnecessary changes (fixture D's expected files now include its test).
+-   Live long sessions (8–13 model calls, three files changed): compaction
+    exercised five times with model-written summaries; task still green.
+    Led to the compaction minimum-history guard (§20).
+-   `apply_patch` unified-diff editor (§15); secret scanning on writes (§36);
+    Anthropic prompt caching (`prompt_caching`, §10.7); redaction no longer
+    treats token counters (`input_tokens`, `est_tokens`) as secrets in the
+    audit log; two-press Ctrl+C in the REPL.
+-   Owner's UI direction: jet-black background, neon-green text, best-in-
+    class terminal UX (§29 Theme). TUI rebuilt: live streaming pane,
+    spinner/elapsed status, context % and cost, plan glyphs, F-key
+    shortcuts, friendlier event lines, approval modal with inline diff.
+-   `/resume <id>` switches sessions in place; `/export` writes a redacted
+    Markdown transcript; `trendlab init` first-run wizard; `trendlab
+    doctor` diagnostics.
+-   Owner's scoring rule: unexercised real-world mileage is not counted
+    against the product; existing rules (unsafe default, hard boundaries,
+    destructive prompt, audit, checkpoints) unchanged.

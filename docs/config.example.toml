@@ -18,6 +18,7 @@ auto_compact = true
 compact_threshold = 0.75         # of the model's context window
 default_context_window = 128000
 repo_map_max_files = 400
+min_compaction_tokens = 1500     # never compact a conversation smaller than this
 
 [git]
 respect_gitignore = true
@@ -35,6 +36,7 @@ max_tokens = 16000
 thinking = "auto"               # auto | adaptive | off
 # effort = "xhigh"              # low | medium | high | xhigh | max (coding/agentic work likes xhigh)
 refusal_fallbacks = "auto"      # auto | on | off — server-side fallback on Fable 5.x / Opus 5 declines
+prompt_caching = true           # cache_control breakpoints on the system prompt + latest turn
 
 [providers.openai]
 type = "openai_compatible"

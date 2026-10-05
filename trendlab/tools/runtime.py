@@ -17,12 +17,13 @@ from trendlab.approvals.models import ApprovalScope, ApprovalStatus
 from trendlab.permissions.engine import PermissionEngine, PermissionRequest
 from trendlab.permissions.models import Decision, OperationCategory, operation_fingerprint
 from trendlab.providers.base import ToolCall
+from trendlab.security.scan import find_secrets
 from trendlab.telemetry.events import EventBus, EventType
 from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, ToolResult
 from trendlab.tools.registry import ToolRegistry
 
 StateHook = Callable[[str], None]
-MUTATING_TOOLS = {"write_file", "patch_file", "delete_file"}
+MUTATING_TOOLS = {"write_file", "patch_file", "apply_patch", "delete_file"}
 
 
 class ToolRuntime:
@@ -172,6 +173,23 @@ class ToolRuntime:
             tool=tool.name,
             summary=perm.summary,
         )
+        if tool.name in MUTATING_TOOLS and perm.preview and not perm.preview.startswith("("):
+            findings = find_secrets(perm.preview)
+            if findings:
+                self.events.emit(
+                    EventType.SECRET_WRITE_BLOCKED,
+                    session_id=self.ctx.session_id,
+                    tool=tool.name,
+                    files=perm.affected_files,
+                    findings=findings,
+                )
+                return ToolResult(
+                    ok=False,
+                    output="BLOCKED: the content looks like it contains a secret ("
+                    + "; ".join(findings[:3])
+                    + "). Never write credentials into the repository; reference an environment "
+                    "variable or the secrets store instead.",
+                )
         if tool.name in MUTATING_TOOLS and self.on_before_mutation is not None:
             try:
                 await self.on_before_mutation(list(perm.affected_files))

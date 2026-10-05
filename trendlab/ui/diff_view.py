@@ -32,22 +32,23 @@ def render_diff(diff: str, title: str | None = None, max_lines: int = 400) -> Pa
     lines = diff.splitlines()
     for line in lines[:max_lines]:
         if line.startswith("+++") or line.startswith("---"):
-            text.append(line + "\n", style="bold")
+            text.append(line + "\n", style="bold #39ff14")
         elif line.startswith("@@"):
-            text.append(line + "\n", style="cyan")
+            text.append(line + "\n", style="#00ffd0")
         elif line.startswith("+"):
-            text.append(line + "\n", style="green")
+            text.append(line + "\n", style="#39ff14 on #062406")
         elif line.startswith("-"):
-            text.append(line + "\n", style="red")
+            text.append(line + "\n", style="#ff3b3b on #240606")
         else:
-            text.append(line + "\n", style="dim")
+            text.append(line + "\n", style="#5c6e5a")
     if len(lines) > max_lines:
         text.append(f"... {len(lines) - max_lines} more lines\n", style="dim italic")
     added, removed = diff_stats(diff)
     return Panel(
         Group(text),
-        title=title or f"diff  [green]+{added}[/green] [red]-{removed}[/red]",
-        border_style="blue",
+        title=title or f"diff  [#39ff14]+{added}[/#39ff14] [#ff3b3b]-{removed}[/#ff3b3b]",
+        border_style="#1f9e12",
+        title_align="left",
     )
 
 

@@ -92,9 +92,17 @@ class ContextManager:
         system = self.build()[0]
         return message_tokens(system) + sum(message_tokens(m) for m in self.messages)
 
+    def history_tokens(self) -> int:
+        return sum(message_tokens(m) for m in self.messages)
+
     def needs_compaction(self) -> bool:
+        """Compact when the full prompt would cross the threshold *and* the conversation itself
+        is big enough that compacting it helps (avoids churning on a tiny tail)."""
+        if not self.config.auto_compact:
+            return False
         threshold = self.context_window * self.config.compact_threshold
-        return self.config.auto_compact and self.estimate_full() >= threshold
+        min_history = max(self.config.min_compaction_tokens, int(self.context_window * 0.1))
+        return self.estimate_full() >= threshold and self.history_tokens() >= min_history
 
     # -- compaction -------------------------------------------------------------------------------
     async def compact(self, *, keep_last: int = 6, force: bool = False) -> CompactionRecord | None:

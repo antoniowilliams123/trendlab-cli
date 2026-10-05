@@ -29,7 +29,8 @@ HELP = """\
 /diff [file]               Changes made this session (or git diff of a file)
 /git <status|diff|log>     Read-only git commands         /commit "<msg>"   Commit (explicit only)
 /checkpoint                List checkpoints                /undo [id] [force]   Restore a checkpoint
-/sessions | /resume <id> | /new      Session management
+/sessions | /resume <id|latest> | /new      Session management (resume switches in place)
+/export [path]             Write this session as Markdown (.trendlab/exports/)
 /model <provider:model>    Hot-switch the model            /models   Configured providers/models
 /review                    Run the reviewer sub-agent on the current diff
 /init                      Detect project tooling and draft TRENDLAB.md
@@ -73,6 +74,7 @@ class CommandRouter:
             "/sessions": self._sessions,
             "/resume": self._resume,
             "/new": self._new,
+            "/export": self._export,
             "/model": self._model,
             "/models": self._models,
             "/provider": self._models,
@@ -352,13 +354,36 @@ class CommandRouter:
             "[dim]Resume with: trendlab --resume <id>  (or /resume <id> to switch now)[/dim]"
         )
 
+    async def _export(self, args: list[str]) -> None:
+        from pathlib import Path
+
+        target = Path(args[0]).expanduser() if args else None
+        path = self.app.export_transcript(target)
+        self.console.print(f"[ok]Exported[/ok] {path}")
+
     async def _resume(self, args: list[str]) -> None:
         if not args:
             self.console.print("[red]usage: /resume <session-id|latest>[/red]")
             return
+        if (
+            self.app.agent
+            and not self.app.agent.state.terminal
+            and self.app.agent.state.state.value != "IDLE"
+        ):
+            self.console.print(
+                "[red]a task is running; cancel it (Ctrl+C) before switching sessions[/red]"
+            )
+            return
+        try:
+            sid = self.app.switch_session(args[0])
+        except KeyError:
+            self.console.print(
+                f"[red]no session {args[0]!r} for this project (see /sessions)[/red]"
+            )
+            return
+        n = len(self.app.context.messages) if self.app.context else 0
         self.console.print(
-            "[yellow]Switching sessions in place is not supported yet; exit and run:[/yellow] "
-            f"trendlab --resume {args[0]}"
+            f"[ok]Resumed session {sid}[/ok] · {n} messages · model {self.app.model_ref}"
         )
 
     async def _new(self, args: list[str]) -> None:

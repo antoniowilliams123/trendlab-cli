@@ -46,6 +46,8 @@ class ContextConfig(BaseModel):
     compact_threshold: float = Field(default=0.75, ge=0.1, le=0.95)
     default_context_window: int = 128_000
     repo_map_max_files: int = 400
+    # Never compact a conversation smaller than this (tokens); prevents compaction churn.
+    min_compaction_tokens: int = 1500
     repo_map_budget_tokens: int = 3_000
     recent_messages_budget_tokens: int = 60_000
 
@@ -106,6 +108,7 @@ class ProviderConfig(BaseModel):
     thinking: str = "auto"  # auto | adaptive | off
     effort: str | None = None  # low | medium | high | xhigh | max
     refusal_fallbacks: str = "auto"  # auto | on | off (server-side fallbacks on Fable 5.x / Opus 5)
+    prompt_caching: bool = True  # Anthropic: cache_control breakpoints on system + latest turn
 
     @field_validator("tool_calling")
     @classmethod

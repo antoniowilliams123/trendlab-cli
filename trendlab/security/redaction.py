@@ -13,7 +13,11 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 
-_SECRET_NAME_HINT = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)", re.I)
+# A *name* looks secret when it ends in one of these words (api_key, GITHUB_TOKEN, db_password).
+# Plural/compound counters such as input_tokens, est_tokens or token_budget are not secrets.
+_SECRET_NAME_HINT = re.compile(
+    r"(?:^|[_\-.])(api[_\-]?key|key|token|secret|password|passwd|credential|authorization)$", re.I
+)
 
 _PATTERNS: list[re.Pattern[str]] = [
     # key=value / key: value style assignments with a secret-looking key.

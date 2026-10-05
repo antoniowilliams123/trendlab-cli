@@ -43,6 +43,7 @@ READ_ONLY_TOOLS = [
 
 
 def default_registry() -> ToolRegistry:
+    from trendlab.tools.apply_patch import ApplyPatchTool
     from trendlab.tools.files import (
         DeleteFileTool,
         GlobTool,
@@ -64,6 +65,7 @@ def default_registry() -> ToolRegistry:
         SearchTextTool(),
         WriteFileTool(),
         PatchFileTool(),
+        ApplyPatchTool(),
         DeleteFileTool(),
         ShellTool(),
         GitStatusTool(),
