@@ -3592,3 +3592,18 @@ decisions taken after the original specification. Newest last.
     `/mode ask` or `permission_mode = "ask"` turn prompts on.
 -   Test suite: 183 cases, all passing; ruff clean. Not yet exercised
     against a live model provider — that shakedown is the next step.
+-   First-run key hint now consults the secrets store, not only the
+    environment.
+
+### 2026-10-05 — First live runs (DeepSeek)
+-   Owner's DeepSeek key moved from a plaintext test script into the
+    secrets store; global config written with `deepseek:deepseek-flash` as
+    the default model, Anthropic configured but keyless, DeepSeek pricing
+    (peak rates) and 1M context registered.
+-   Live smoke test: `trendlab --safe -p "Say exactly: TrendLab online."`
+    → `COMPLETED` in 1 s, $0.0008.
+-   Live shakedown: `trendlab bench -m deepseek:deepseek-flash --fixture A`
+    → tests red → green, 5 model calls, 7 tool calls, 7.8 s, $0.0018, one
+    file changed, no unnecessary changes, no human interventions. This is
+    the first time the agent loop ran against a real model; the harness
+    behaved as specified.

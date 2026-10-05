@@ -60,7 +60,6 @@ def unsafe_banner(allow_destructive: bool) -> str:
 
 def _first_run_check(config, model_ref: str) -> None:
     """Spec §56: a useful message instead of a stack trace when nothing is configured."""
-    import os
 
     from trendlab.providers.registry import parse_model_ref
 
@@ -78,10 +77,13 @@ def _first_run_check(config, model_ref: str) -> None:
             '  base_url = "https://api.deepseek.com/v1"\n  api_key_env = "DEEPSEEK_API_KEY"'
         )
         return
-    if pcfg.type != "ollama" and pcfg.api_key_env and not os.environ.get(pcfg.api_key_env):
+    from trendlab.security.secrets import resolve_secret
+
+    if pcfg.type != "ollama" and pcfg.api_key_env and not resolve_secret(pcfg.api_key_env):
         console.print(
-            f"[yellow]Welcome to {PRODUCT_NAME}.[/yellow] Set [bold]{pcfg.api_key_env}[/bold] in "
-            f"your environment for provider {provider!r} (secrets are never stored in config)."
+            f"[yellow]Welcome to {PRODUCT_NAME}.[/yellow] No key found for provider {provider!r}: "
+            f"run [bold]trendlab secret set {pcfg.api_key_env}[/bold] or export it in your "
+            f"environment (secrets are never stored in config)."
         )
 
 
