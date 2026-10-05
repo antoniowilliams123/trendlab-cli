@@ -192,8 +192,17 @@ class ToolRuntime:
                     "variable or the secrets store instead.",
                 )
         if tool.name in MUTATING_TOOLS and self.on_before_mutation is not None:
+            from trendlab.agent.plan_gate import PlanRejected
+
             try:
                 await self.on_before_mutation(list(perm.affected_files))
+            except PlanRejected as exc:
+                return ToolResult(
+                    ok=False,
+                    output=f"PLAN REJECTED by the user: {exc.reason}. Make no changes; "
+                    "stop and explain what you would adjust.",
+                    data={"plan_rejected": True, "reason": exc.reason},
+                )
             except Exception as exc:  # noqa: BLE001
                 if self.engine.unsafe:
                     # In UNSAFE mode the checkpoint is the only safety net, so it is mandatory.

@@ -36,6 +36,9 @@ HELP = """\
 /worktree start [name] | done | list | remove <name>   Work on a throwaway git worktree
 /checkpoint                List checkpoints                /undo [id] [force]   Restore a checkpoint
 /sessions | /resume <id|latest> | /new      Session management (resume switches in place)
+/branch [label] [--keep N]  Fork this conversation into a child session and continue there
+/tree                      Sessions of this project as a branch tree
+/plan gate on|off          Ask for a go-ahead (terminal/phone/Telegram) before the first change
 /export [path]             Write this session as Markdown (.trendlab/exports/)
 /edit                      Compose the next prompt in $EDITOR (TUI: Ctrl+E); end a line with \\
                            to continue on the next line
@@ -92,6 +95,8 @@ class CommandRouter:
             "/sessions": self._sessions,
             "/resume": self._resume,
             "/new": self._new,
+            "/branch": self._branch,
+            "/tree": self._tree,
             "/export": self._export,
             "/model": self._model,
             "/models": self._models,
@@ -221,6 +226,25 @@ class CommandRouter:
 
     # -- plan / context / cost -------------------------------------------------------------------
     async def _plan(self, args: list[str]) -> None:
+        if args and args[0] == "gate":
+            gate = self.app.plan_gate
+            if gate is None:
+                self.console.print("[red]plan gate not available[/red]")
+                return
+            if len(args) > 1 and args[1] in {"on", "off"}:
+                gate.config.enabled = args[1] == "on"
+            st = gate.status()
+            state = "ON" if st["enabled"] else "off"
+            run = (
+                "approved"
+                if st["approved"]
+                else ("rejected" if st["rejected"] else "not asked yet")
+            )
+            self.console.print(
+                f"plan gate [bold]{state}[/bold] · timeout {st['timeout_minutes']} min · "
+                f"this run: {run}"
+            )
+            return
         self.console.print(self.app.plan.render())
         for t in self.app.plan.tasks:
             for e in t.evidence:
@@ -444,7 +468,7 @@ class CommandRouter:
     async def _sessions(self, args: list[str]) -> None:
         rows = self.app.store.sessions(str(self.app.project_root)) if self.app.store else []
         t = Table(title="Sessions (this project)")
-        for col in ("id", "updated", "status", "model", "msgs", "cost"):
+        for col in ("id", "updated", "status", "model", "msgs", "cost", "parent"):
             t.add_column(col)
         for r in rows:
             usage = self.app.store.usage(r["id"])  # type: ignore[union-attr]
@@ -456,6 +480,7 @@ class CommandRouter:
                 r["model"] or "-",
                 str(len(self.app.store.messages(r["id"]))),
                 f"${usage['cost_usd']:.3f}",
+                (r.get("parent_id") or "-") + (f" “{r['label']}”" if r.get("label") else ""),
             )  # type: ignore[union-attr]
         self.console.print(t)
         self.console.print(
@@ -493,6 +518,55 @@ class CommandRouter:
         self.console.print(
             f"[ok]Resumed session {sid}[/ok] · {n} messages · model {self.app.model_ref}"
         )
+
+    async def _branch(self, args: list[str]) -> None:
+        if (
+            self.app.agent
+            and not self.app.agent.state.terminal
+            and self.app.agent.state.state.value != "IDLE"
+        ):
+            self.console.print("[red]a task is running; wait or cancel before branching[/red]")
+            return
+        keep = None
+        words = list(args)
+        if "--keep" in words:
+            i = words.index("--keep")
+            if i + 1 < len(words) and words[i + 1].isdigit():
+                keep = int(words[i + 1])
+            del words[i : i + 2]
+        label = " ".join(words) or None
+        parent = self.app.session_id
+        sid = self.app.branch_session(label, keep_last=keep)
+        n = len(self.app.context.messages) if self.app.context else 0
+        self.console.print(
+            f"[green]Branched[/green] {parent} → [bold]{sid}[/bold]"
+            + (f" “{label}”" if label else "")
+            + f" · {n} messages carried over · /resume {parent} returns to the parent"
+        )
+
+    async def _tree(self, args: list[str]) -> None:
+        store = self.app.store
+        if store is None:
+            return
+        rows = store.session_tree(str(self.app.project_root))
+        if not rows:
+            self.console.print("[dim]no sessions[/dim]")
+            return
+        t = Table(title="Session tree (this project)")
+        for col in ("session", "label", "updated", "status", "msgs", "branched at"):
+            t.add_column(col)
+        for depth, r in rows:
+            mark = " ◀" if r["id"] == self.app.session_id else ""
+            prefix = ("   " * (depth - 1) + "└─ ") if depth else ""
+            t.add_row(
+                f"{prefix}{r['id']}{mark}",
+                r.get("label") or "-",
+                r["updated_at"][:19],
+                r["status"],
+                str(len(store.messages(r["id"]))),
+                f"msg {r['branch_point']}" if r.get("branch_point") is not None else "-",
+            )
+        self.console.print(t)
 
     async def _new(self, args: list[str]) -> None:
         app = self.app

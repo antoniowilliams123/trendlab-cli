@@ -383,6 +383,9 @@ class AgentRuntime:
 
     def _observe(self, call, result) -> tuple[str, AgentState] | None:
         output = result.output
+        if result.data.get("plan_rejected"):
+            self._append(_tool_message(call, output))
+            return f"plan rejected by user: {result.data.get('reason', '')}", AgentState.FAILED
         fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
         reason = self.loops.record(call.name, fingerprint, output, result.ok)
         if reason:

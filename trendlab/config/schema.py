@@ -113,6 +113,14 @@ class DiagnosticsConfig(BaseModel):
     commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class PlanGateConfig(BaseModel):
+    """Ask for a human 'go' (terminal, phone page or Telegram buttons) before the first change
+    of every run. Off by default; independent of the permission mode."""
+
+    enabled: bool = False
+    timeout_minutes: int = Field(default=30, ge=1, le=24 * 60)
+
+
 class McpServerConfig(BaseModel):
     command: str
     args: list[str] = Field(default_factory=list)
@@ -166,6 +174,9 @@ class RemoteApprovalConfig(BaseModel):
     machine_name: str | None = None
     # Failed-auth lockout.
     max_auth_failures: int = 10
+    # Also deliver approvals/questions as Telegram messages with inline buttons (uses
+    # notifications.telegram for the bot token env + chat_id). Decisions arrive via getUpdates.
+    telegram: bool = False
 
     @field_validator("channel")
     @classmethod
@@ -233,6 +244,7 @@ class AppConfig(BaseModel):
     hooks: list[HookConfig] = Field(default_factory=list)
     sandbox: SandboxConfig = SandboxConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    plan_gate: PlanGateConfig = PlanGateConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()
     notifications: NotificationsConfig = NotificationsConfig()

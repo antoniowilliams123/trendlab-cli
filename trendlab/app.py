@@ -12,10 +12,13 @@ from typing import Any
 from rich.console import Console
 
 from trendlab import PRODUCT_NAME
+from trendlab.agent.plan_gate import PlanGate
 from trendlab.agent.prompt import build_system_prompt
 from trendlab.agent.runtime import AgentRuntime, RunResult
 from trendlab.agent.tasks import Plan
+from trendlab.approvals.channels.base import ChannelError
 from trendlab.approvals.channels.local import LocalTerminalChannel
+from trendlab.approvals.channels.telegram import TelegramChannel
 from trendlab.approvals.channels.web import WebApprovalChannel
 from trendlab.approvals.manager import ApprovalManager
 from trendlab.approvals.notifications.base import Notification, NotificationProvider
@@ -93,6 +96,8 @@ class TrendLabApp:
         self.approvals: ApprovalManager | None = None
         self.local_channel: LocalTerminalChannel | None = None
         self.web_channel: WebApprovalChannel | None = None
+        self.telegram_channel: TelegramChannel | None = None
+        self.plan_gate: PlanGate | None = None
         self.gateway: ModelGateway | None = None
         self.costs: CostTracker | None = None
         self.context: ContextManager | None = None
@@ -132,7 +137,13 @@ class TrendLabApp:
             session_id=self.session_id,
             machine=machine,
             project_name=self.project_root.name,
-            notifier=self.notifier if "approval" in self.config.notifications.notify_on else None,
+            # With the Telegram button channel on, approvals already arrive as Telegram messages.
+            notifier=(
+                self.notifier
+                if "approval" in self.config.notifications.notify_on
+                and not self.config.remote_approval.telegram
+                else None
+            ),
         )
         stale = self.approvals.recover()
         if stale:
@@ -196,7 +207,10 @@ class TrendLabApp:
         registry.register(TaskTool(self.plan, self.events))
         registry.register(AskUserTool(self.approvals))
         self.tools = ToolRuntime(registry, self.engine, self.approvals, self.events, ctx)
-        self.tools.on_before_mutation = self._checkpoint_before_mutation
+        self.tools.on_before_mutation = self._before_mutation
+        self.plan_gate = PlanGate(
+            self.config.plan_gate, self.approvals, self.plan, self.events, self.project_root
+        )
         self.tools.diagnostics = Diagnostics(self.config.diagnostics, self.project_root)
         self.events.emit(
             EventType.SANDBOX_STATUS,
@@ -362,6 +376,8 @@ class TrendLabApp:
         """Run a prompt; ``@file.png`` references in the text and ``images`` become vision parts."""
         assert self.agent is not None
         self._run_checkpoint = None
+        if self.plan_gate is not None:
+            self.plan_gate.reset()
         images = [*self.pending_images, *(images or [])]
         self.pending_images = []
         prompt, attached = expand_file_refs(prompt, self.project_root)
@@ -381,6 +397,11 @@ class TrendLabApp:
         if self.hooks is not None:
             await self.hooks.run("task_complete", status=result.status)
         return result
+
+    async def _before_mutation(self, files: list[str]) -> None:
+        if self.plan_gate is not None:
+            await self.plan_gate.check(files)  # raises PlanRejected → mutation refused
+        await self._checkpoint_before_mutation(files)
 
     async def _checkpoint_before_mutation(self, files: list[str]) -> None:
         if self.checkpoints is None:
@@ -502,6 +523,29 @@ class TrendLabApp:
             pass
 
     # -- sessions -------------------------------------------------------------------------------
+    def branch_session(self, label: str | None = None, *, keep_last: int | None = None) -> str:
+        """Fork the current conversation into a child session and continue there.
+
+        The parent keeps everything it has; the child starts with the same messages (optionally
+        only the first ``len - keep_last``), plan and summary, and records its parent/branch point.
+        """
+        assert self.store and self.context
+        self._save_state()
+        total = len(self.store.messages(self.session_id))
+        upto = None if keep_last is None else max(0, total - keep_last)
+        new_id = self.store.fork_session(
+            self.session_id, machine_name(self.config), self.model_ref, upto=upto, label=label
+        )
+        self.events.emit(
+            EventType.SESSION_BRANCHED,
+            session_id=self.session_id,
+            child=new_id,
+            branch_point=upto if upto is not None else total,
+            label=label,
+        )
+        self.switch_session(new_id)
+        return new_id
+
     def switch_session(self, target: str) -> str:
         """Resume another session in place: swap messages, plan, summary and ids. Returns the id."""
         assert self.store and self.context and self.agent and self.tools and self.approvals
@@ -679,6 +723,15 @@ class TrendLabApp:
             self.web_channel = channel
         self.config.remote_approval.enabled = True
         self.approvals.approval_url = self.web_channel.url
+        if self.config.remote_approval.telegram and self.telegram_channel is None:
+            tg = TelegramChannel(
+                self.config.notifications.telegram, self.events, project_name=self.project_root.name
+            )
+            try:
+                await self.approvals.add_channel(tg)
+                self.telegram_channel = tg
+            except ChannelError as exc:
+                self.console.print(f"[yellow]Telegram approvals unavailable: {exc}[/yellow]")
         if persist:
             from trendlab.config.loader import update_global_config
 
@@ -690,6 +743,9 @@ class TrendLabApp:
         if self.web_channel is not None:
             await self.approvals.remove_channel(self.web_channel)
             self.web_channel = None
+        if self.telegram_channel is not None:
+            await self.approvals.remove_channel(self.telegram_channel)
+            self.telegram_channel = None
         self.config.remote_approval.enabled = False
         self.approvals.approval_url = None
         if persist:
@@ -715,5 +771,7 @@ class TrendLabApp:
             "allow_high_risk": cfg.allow_high_risk,
             "allow_session_scope": cfg.allow_session_scope,
             "notifications": notif.provider if notif.enabled else "disabled",
+            "telegram": self.telegram_channel.status() if self.telegram_channel else None,
+            "plan_gate": self.plan_gate.status() if self.plan_gate else None,
             "pending": len(self.approvals.pending()) if self.approvals else 0,
         }

@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+_SESSION_COLUMNS = {"parent_id": "TEXT", "branch_point": "INTEGER", "label": "TEXT"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -117,6 +118,10 @@ class SessionStore:
         self._lock = threading.RLock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            have = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
+            for col, typ in _SESSION_COLUMNS.items():  # v3: session branching
+                if col not in have:
+                    self._conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typ}")
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -128,18 +133,94 @@ class SessionStore:
             self._conn.close()
 
     # -- sessions -----------------------------------------------------------
-    def create_session(self, project_path: str, machine: str, model: str | None = None) -> str:
+    def create_session(
+        self,
+        project_path: str,
+        machine: str,
+        model: str | None = None,
+        *,
+        parent_id: str | None = None,
+        branch_point: int | None = None,
+        label: str | None = None,
+    ) -> str:
         sid = uuid.uuid4().hex[:12]
         now = _now()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO sessions"
-                "(id, project_path, machine, created_at, updated_at, status, model)"
-                " VALUES(?,?,?,?,?, 'active', ?)",
-                (sid, project_path, machine, now, now, model),
+                "(id, project_path, machine, created_at, updated_at, status, model,"
+                " parent_id, branch_point, label)"
+                " VALUES(?,?,?,?,?, 'active', ?,?,?,?)",
+                (sid, project_path, machine, now, now, model, parent_id, branch_point, label),
             )
             self._conn.commit()
         return sid
+
+    def fork_session(
+        self,
+        source_id: str,
+        machine: str,
+        model: str | None,
+        *,
+        upto: int | None = None,
+        label: str | None = None,
+    ) -> str:
+        """Copy a session's conversation (first ``upto`` messages) and state into a new child."""
+        src = self.get_session(source_id)
+        if src is None:
+            raise KeyError(source_id)
+        msgs = self.messages(source_id)
+        if upto is not None:
+            msgs = msgs[:upto]
+        new_id = self.create_session(
+            src["project_path"],
+            machine,
+            model or src.get("model"),
+            parent_id=source_id,
+            branch_point=len(msgs),
+            label=label,
+        )
+        for m in msgs:
+            self.append_message(new_id, m)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value FROM session_state WHERE session_id=?", (source_id,)
+            ).fetchall()
+            for r in rows:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO session_state(session_id, key, value, updated_at)"
+                    " VALUES(?,?,?,?)",
+                    (new_id, r["key"], r["value"], _now()),
+                )
+            self._conn.commit()
+        return new_id
+
+    def children(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM sessions WHERE parent_id=? ORDER BY created_at", (session_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def session_tree(self, project_path: str, limit: int = 200) -> list[tuple[int, dict[str, Any]]]:
+        """Sessions of a project as ``(depth, row)`` in tree order (roots oldest first)."""
+        rows = self.sessions(project_path, limit=limit)
+        by_parent: dict[str | None, list[dict[str, Any]]] = {}
+        ids = {r["id"] for r in rows}
+        for r in rows:
+            parent = r.get("parent_id") if r.get("parent_id") in ids else None
+            by_parent.setdefault(parent, []).append(r)
+        for lst in by_parent.values():
+            lst.sort(key=lambda r: r["created_at"])
+        out: list[tuple[int, dict[str, Any]]] = []
+
+        def visit(parent: str | None, depth: int) -> None:
+            for r in by_parent.get(parent, []):
+                out.append((depth, r))
+                visit(r["id"], depth + 1)
+
+        visit(None, 0)
+        return out
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._lock:

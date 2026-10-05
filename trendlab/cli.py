@@ -122,6 +122,12 @@ def main_callback(
     worktree: str | None = typer.Option(
         None, "--worktree", help="Create a throwaway git worktree with this name and work there."
     ),
+    plan_gate: bool = typer.Option(
+        False,
+        "--plan-gate",
+        help="Ask for a go-ahead (terminal, phone page or Telegram buttons) before the first "
+        "change of every run.",
+    ),
     allow_destructive: bool = typer.Option(
         False,
         "--allow-destructive",
@@ -145,6 +151,8 @@ def main_callback(
         mode = PermissionMode.UNSAFE
     effective = PermissionMode(mode or config.defaults.permission_mode)
     allow_destructive = allow_destructive or config.defaults.allow_destructive
+    if plan_gate:
+        config.plan_gate.enabled = True
     if allow_destructive and effective != PermissionMode.UNSAFE:
         console.print(
             "[red]--allow-destructive only applies in unsafe mode "
