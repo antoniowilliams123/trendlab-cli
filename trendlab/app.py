@@ -33,12 +33,14 @@ from trendlab.permissions.rules import ProjectRules
 from trendlab.providers.base import ModelProvider
 from trendlab.providers.gateway import ModelGateway
 from trendlab.providers.registry import model_info, resolve_role
+from trendlab.security.sandbox import Sandbox
 from trendlab.sessions.checkpoints import CheckpointManager
 from trendlab.sessions.store import SessionStore
 from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import Event, EventBus, EventType, JsonlEventSink
 from trendlab.tools.ask_user import AskUserTool
 from trendlab.tools.base import ToolContext
+from trendlab.tools.diagnostics import Diagnostics
 from trendlab.tools.registry import default_registry
 from trendlab.tools.runtime import ToolRuntime
 from trendlab.tools.task_tool import TaskTool
@@ -102,6 +104,7 @@ class TrendLabApp:
         self.skills: Any = None
         self.notifier: NotificationProvider | None = None
         self.subagents: SubAgentRunner | None = None
+        self.sandbox: Sandbox | None = None
         self._token: str | None = None
         self._run_checkpoint: dict[str, Any] | None = None
         self._reminder_task: asyncio.Task | None = None
@@ -175,17 +178,26 @@ class TrendLabApp:
         if self.resumed:
             self._restore_state()
 
+        self.sandbox = Sandbox(self.config.sandbox, self.project_root)
         ctx = ToolContext(
             project_root=self.project_root,
             session_id=self.session_id,
             ignore_rules=rules,
             validation_commands=validation_commands(self.config, self.project_root),
+            sandbox=self.sandbox,
         )
         registry = default_registry()
         registry.register(TaskTool(self.plan, self.events))
         registry.register(AskUserTool(self.approvals))
         self.tools = ToolRuntime(registry, self.engine, self.approvals, self.events, ctx)
         self.tools.on_before_mutation = self._checkpoint_before_mutation
+        self.tools.diagnostics = Diagnostics(self.config.diagnostics, self.project_root)
+        self.events.emit(
+            EventType.SANDBOX_STATUS,
+            session_id=self.session_id,
+            status=self.sandbox.describe(),
+            active=self.sandbox.active,
+        )
         self.subagents = SubAgentRunner(
             config=self.config,
             gateway=self.gateway,
@@ -590,6 +602,9 @@ class TrendLabApp:
         self.tools.ctx.ignore_rules = rules
         self.tools.ctx.validation_commands = validation_commands(self.config, new_root)
         self.engine.project_rules = ProjectRules(new_root)
+        self.sandbox = Sandbox(self.config.sandbox, new_root)
+        self.tools.ctx.sandbox = self.sandbox
+        self.tools.diagnostics = Diagnostics(self.config.diagnostics, new_root)
         self.repo_map = RepositoryMap(
             new_root, rules, max_files=self.config.context.repo_map_max_files
         ).build()

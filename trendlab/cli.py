@@ -520,6 +520,16 @@ def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> N
             )
         )
     rows.append((ok if shutil.which("git") else warn, "git", shutil.which("git") or "not found"))
+    bwrap = shutil.which("bwrap")
+    rows.append(
+        (
+            ok if (bwrap or config.sandbox.mode == "off") else warn,
+            "sandbox",
+            f"bubblewrap {bwrap} · mode {config.sandbox.mode}"
+            if bwrap
+            else f"bwrap not installed (mode {config.sandbox.mode}); apt install bubblewrap",
+        )
+    )
     rows.append(
         (
             ok if shutil.which("rg") else warn,

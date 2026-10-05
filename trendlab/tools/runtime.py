@@ -45,6 +45,7 @@ class ToolRuntime:
         self.changed_files: dict[str, list[str]] = {}  # rel path → diffs this session
         self.validation_runs: list[dict[str, Any]] = []
         self.hooks: Any = None  # trendlab.hooks.HookRunner, attached by the app
+        self.diagnostics: Any = None  # trendlab.tools.diagnostics.Diagnostics, attached by the app
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -223,6 +224,25 @@ class ToolRuntime:
             )
             for f in perm.affected_files:
                 self.changed_files.setdefault(f, []).append(result.data.get("diff") or "")
+            if self.diagnostics is not None:
+                try:
+                    wrapper = None
+                    if self.ctx.sandbox is not None and self.ctx.sandbox.active:
+                        wrapper = lambda c: self.ctx.sandbox.wrap(c, cwd=self.ctx.project_root)  # noqa: E731
+                    report = await self.diagnostics.run(
+                        list(perm.affected_files), argv_wrapper=wrapper
+                    )
+                except Exception:  # noqa: BLE001 — diagnostics never break an edit
+                    report = ""
+                if report:
+                    result.output = f"{result.output}\n\n{report}"
+                    result.data["diagnostics"] = report
+                    self.events.emit(
+                        EventType.DIAGNOSTICS,
+                        session_id=self.ctx.session_id,
+                        files=perm.affected_files,
+                        report=report[:1000],
+                    )
         ran_validation = "exit_code" in result.data and (
             tool.name == "run_tests"
             or (tool.name == "shell" and perm.category == OperationCategory.RUN_TESTS)

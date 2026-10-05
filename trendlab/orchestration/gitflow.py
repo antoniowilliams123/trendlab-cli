@@ -11,7 +11,6 @@ import json
 import re
 import shlex
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -103,13 +102,9 @@ async def commit(app, message: str | None = None) -> dict[str, Any]:
     if not patch.strip():
         return {"ok": False, "error": "nothing to commit"}
     message = message or await generate_commit_message(app, patch, stat)
-    msg_file = Path(tempfile.mkstemp(prefix="trendlab-commit-", suffix=".txt")[1])
-    msg_file.write_text(message.rstrip() + "\n", encoding="utf-8")
-    res = await _shell(app, f"git add -A && git commit -F {shlex.quote(str(msg_file))}")
-    try:
-        msg_file.unlink()
-    except OSError:
-        pass
+    # -m with shlex quoting: safe against backticks/$() and works inside the sandbox, where the
+    # host's /tmp (and hence any temp message file) is not visible.
+    res = await _shell(app, f"git add -A && git commit -m {shlex.quote(message.rstrip())}")
     if not res.ok:
         return {"ok": False, "error": res.output, "message": message}
     _, head = await run_git(app.project_root, "rev-parse", "--short", "HEAD")
@@ -165,18 +160,11 @@ async def create_pr(app, title: str | None = None, *, draft: bool = False) -> di
     issue = getattr(app, "current_issue", None)
     if issue:
         body += f"\n\nCloses #{issue['number']}"
-    body_file = Path(tempfile.mkstemp(prefix="trendlab-pr-", suffix=".md")[1])
-    body_file.write_text(body, encoding="utf-8")
     cmd = (
         f"gh pr create --base {shlex.quote(base)} --head {shlex.quote(branch)} "
-        f"--title {shlex.quote(title)} --body-file {shlex.quote(str(body_file))}"
-        + (" --draft" if draft else "")
+        f"--title {shlex.quote(title)} --body {shlex.quote(body)}" + (" --draft" if draft else "")
     )
     res = await _shell(app, cmd)
-    try:
-        body_file.unlink()
-    except OSError:
-        pass
     if not res.ok:
         return {"ok": False, "error": res.output}
     tokens = res.output.split()

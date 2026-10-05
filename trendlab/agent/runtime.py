@@ -31,6 +31,7 @@ from trendlab.providers.base import ModelResponse, ProviderContextOverflowError,
 from trendlab.providers.gateway import ModelGateway
 from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import EventBus, EventType
+from trendlab.tools.registry import READ_ONLY_TOOLS
 from trendlab.tools.runtime import ToolRuntime
 
 TokenCallback = Callable[[str], None]
@@ -342,46 +343,79 @@ class AgentRuntime:
         return response
 
     async def _run_tools(self, response: ModelResponse) -> tuple[str, AgentState] | None:
-        for call in response.tool_calls:
+        """Execute the model's tool calls. Runs of consecutive read-only calls execute
+        concurrently (bounded by limits.parallel_tools); anything else runs in order."""
+        calls = list(response.tool_calls)
+        i = 0
+        while i < len(calls):
             if self._cancel.is_set():
-                self._append(_tool_message(call, "NOT EXECUTED: run canceled by user"))
+                for c in calls[i:]:
+                    self._append(_tool_message(c, "NOT EXECUTED: run canceled by user"))
                 return "canceled by user", AgentState.CANCELED
             self.state.transition(AgentState.RUNNING_TOOL)
-            result = await self.tools.execute(call)
-            output = result.output
-            fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
-            reason = self.loops.record(call.name, fingerprint, output, result.ok)
-            if reason:
-                action = recovery_for(
-                    FailureClass.NO_PROGRESS,
-                    compaction_attempted=False,
-                    escalation_available=bool(self.escalation_model),
-                    no_progress_strikes=self.loops.strikes,
-                )
+            group = [calls[i]]
+            if self._is_read_only(calls[i]):
+                while (
+                    i + len(group) < len(calls)
+                    and len(group) < self.limits.parallel_tools
+                    and self._is_read_only(calls[i + len(group)])
+                ):
+                    group.append(calls[i + len(group)])
+            if len(group) == 1:
+                results = [await self.tools.execute(group[0])]
+            else:
                 self.events.emit(
-                    EventType.LOOP_DETECTED,
+                    EventType.TOOLS_PARALLEL,
                     session_id=self.session_id,
-                    tool=call.name,
-                    reason=reason,
-                    strikes=self.loops.strikes,
-                    action=action.value,
+                    count=len(group),
+                    tools=[c.name for c in group],
                 )
-                if action == RecoveryAction.ESCALATE and self.escalation_model:
-                    self.events.emit(
-                        EventType.RECOVERY,
-                        session_id=self.session_id,
-                        failure=FailureClass.NO_PROGRESS.value,
-                        action="escalate",
-                        from_model=self.model_ref,
-                        to_model=self.escalation_model,
-                    )
-                    self.model_ref = self.escalation_model
-                    self.escalation_model = None
-                elif action == RecoveryAction.STOP:
-                    self._append(_tool_message(call, output))
-                    return f"NO_PROGRESS: {reason}", AgentState.FAILED
-                output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
-            self._append(_tool_message(call, output))
+                results = list(await asyncio.gather(*(self.tools.execute(c) for c in group)))
+            for call, result in zip(group, results, strict=True):
+                stop = self._observe(call, result)
+                if stop:
+                    return stop
+            i += len(group)
+        return None
+
+    def _is_read_only(self, call) -> bool:
+        return call.name in READ_ONLY_TOOLS
+
+    def _observe(self, call, result) -> tuple[str, AgentState] | None:
+        output = result.output
+        fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
+        reason = self.loops.record(call.name, fingerprint, output, result.ok)
+        if reason:
+            action = recovery_for(
+                FailureClass.NO_PROGRESS,
+                compaction_attempted=False,
+                escalation_available=bool(self.escalation_model),
+                no_progress_strikes=self.loops.strikes,
+            )
+            self.events.emit(
+                EventType.LOOP_DETECTED,
+                session_id=self.session_id,
+                tool=call.name,
+                reason=reason,
+                strikes=self.loops.strikes,
+                action=action.value,
+            )
+            if action == RecoveryAction.ESCALATE and self.escalation_model:
+                self.events.emit(
+                    EventType.RECOVERY,
+                    session_id=self.session_id,
+                    failure=FailureClass.NO_PROGRESS.value,
+                    action="escalate",
+                    from_model=self.model_ref,
+                    to_model=self.escalation_model,
+                )
+                self.model_ref = self.escalation_model
+                self.escalation_model = None
+            elif action == RecoveryAction.STOP:
+                self._append(_tool_message(call, output))
+                return f"NO_PROGRESS: {reason}", AgentState.FAILED
+            output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
+        self._append(_tool_message(call, output))
         return None
 
     def _finish(

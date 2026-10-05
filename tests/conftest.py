@@ -22,6 +22,9 @@ TOKEN = "test-token-" + "x" * 40
 def _trendlab_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
     monkeypatch.setenv("TRENDLAB_HOME", str(home))
+    # Tests use fake binaries and bare remotes under the host /tmp, which a sandboxed shell
+    # cannot see; sandbox-specific tests opt back in with TRENDLAB_SANDBOX=on.
+    monkeypatch.setenv("TRENDLAB_SANDBOX", "off")
     return home
 
 

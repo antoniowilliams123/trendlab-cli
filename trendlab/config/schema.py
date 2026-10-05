@@ -33,6 +33,8 @@ class DefaultsConfig(BaseModel):
 class LimitsConfig(BaseModel):
     max_cost_usd: float | None = None
     max_iterations: int = 50
+    # Read-only tool calls issued together by the model run concurrently, up to this many.
+    parallel_tools: int = Field(default=6, ge=1, le=32)
     max_model_calls: int | None = None
     max_wall_clock_minutes: int | None = None
     # Warn when session cost reaches this fraction of max_cost_usd.
@@ -84,6 +86,31 @@ class HookConfig(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     # before_* hooks may block the operation by exiting non-zero when true.
     blocking: bool = False
+
+
+class SandboxConfig(BaseModel):
+    """OS sandbox for shell commands (bubblewrap). auto = use it when installed."""
+
+    mode: str = "auto"  # auto | on | off
+    allow_network: bool = False
+    # Extra writable paths (e.g. a package cache). The project and /tmp are always writable.
+    writable_paths: list[str] = Field(default_factory=lambda: ["~/.cache"])
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in {"auto", "on", "off"}:
+            raise ValueError("sandbox mode must be auto, on or off")
+        return v
+
+
+class DiagnosticsConfig(BaseModel):
+    """Run linters/type checkers on files the agent just edited and feed results back."""
+
+    enabled: bool = True
+    timeout_seconds: int = 60
+    # Override per extension: {".py": ["ruff check {files}"]}
+    commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class McpServerConfig(BaseModel):
@@ -204,6 +231,8 @@ class AppConfig(BaseModel):
     models: dict[str, ModelInfo] = Field(default_factory=dict)
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
     hooks: list[HookConfig] = Field(default_factory=list)
+    sandbox: SandboxConfig = SandboxConfig()
+    diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()
     notifications: NotificationsConfig = NotificationsConfig()

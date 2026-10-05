@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 
 from pydantic import BaseModel, Field
@@ -37,6 +38,31 @@ class ShellInput(BaseModel):
     )
 
 
+_NETWORK_CLIENTS = {
+    "gh",
+    "pip",
+    "pip3",
+    "uv",
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "cargo",
+    "go",
+    "poetry",
+    "pipx",
+}
+
+
+def _mentions_network_client(command: str) -> bool:
+    """True when a segment starts with a tool that routinely needs the network (gh, npm ...)."""
+    for seg in re.split(r"\s*(?:&&|\|\||;|\|)\s*", command):
+        head = seg.strip().split(" ", 1)[0].rsplit("/", 1)[-1] if seg.strip() else ""
+        if head in _NETWORK_CLIENTS:
+            return True
+    return False
+
+
 class ShellTool(Tool):
     name = "shell"
     description = "Execute a shell command inside the project directory."
@@ -66,13 +92,30 @@ class ShellTool(Tool):
         cwd = ctx.resolve(args.cwd) if args.cwd else ctx.project_root
         env = {k: v for k, v in os.environ.items()}
         started = time.monotonic()
-        proc = await asyncio.create_subprocess_shell(
-            args.command,
-            cwd=str(cwd),
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        sandbox = ctx.sandbox
+        if sandbox is not None and sandbox.active:
+            # Network stays off inside the sandbox unless the command is one that exists to talk
+            # to the network (curl, git push, pip install, gh ...) — those were already classified
+            # and permission-checked as NETWORK / PACKAGE_INSTALL.
+            category = classify_shell_command(args.command)
+            needs_net = category in {OperationCategory.NETWORK, OperationCategory.PACKAGE_INSTALL}
+            needs_net = needs_net or _mentions_network_client(args.command)
+            argv = sandbox.wrap(args.command, cwd=cwd, allow_network=needs_net or None)
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(cwd),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                args.command,
+                cwd=str(cwd),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=args.timeout)
         except asyncio.CancelledError:

@@ -31,6 +31,7 @@ class ToolContext:
     ignore_rules: Any = None  # trendlab.context.ignore.IgnoreRules
     validation_commands: dict[str, str] | None = None
     agent_role: str = "main"
+    sandbox: Any = None  # trendlab.security.sandbox.Sandbox
 
     def resolve(self, raw: str) -> Path:
         """Resolve ``raw`` inside the project root, following symlinks; reject escapes."""
