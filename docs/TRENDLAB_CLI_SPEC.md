@@ -2,8 +2,8 @@
 
 ## Product Requirements & Technical Specification
 
-**Version 1.2 — remote approval, questions-to-phone, completion notifications, sub-agents,
-context engine, checkpoints, TUI and ecosystem features implemented (2026-10-04).**
+**Version 1.3 — the complete record of what was built. §89 (Implementation Record) lists every
+change by date, including decisions made after the original specification (2026-10-05).**
 
 **Version:** 1.0\
 **Status:** Build-ready specification\
@@ -634,6 +634,44 @@ must switch subsequent model calls without destroying session history.
 The context manager may regenerate the provider-specific representation
 of the current session.
 
+Implemented: `/model provider:model` switches every subsequent call;
+`-m provider:model` picks the model at launch; `/models` lists configured
+providers, the model registry and routing; `[routing]` assigns models per
+role (default, planning, explorer, debugger, tester, reviewer, summarizer,
+escalation). The internal history is provider-neutral (OpenAI-shaped
+messages). Adapters that need richer turns (Anthropic thinking blocks)
+store their raw content under private `_provider_content` /
+`_provider_model` keys on the assistant message; the same model replays
+them verbatim, other adapters strip every underscore-prefixed key before
+sending. Switching mid-session therefore keeps the whole conversation.
+
+### 10.7 Anthropic Provider (implemented 2026-10-05)
+
+`type = "anthropic"` uses the official `anthropic` SDK rather than an
+OpenAI-compatible shim:
+
+-   translation: top-level `system`; assistant `tool_calls` → `tool_use`
+    blocks; consecutive tool results → one user message of `tool_result`
+    blocks; a history that would start with an assistant turn gets a
+    leading user message;
+-   adaptive thinking (`thinking = "auto"`) on the 4.6+ families, omitted
+    for Haiku 4.5 and older (which require `budget_tokens`); `thinking =
+    "adaptive" | "off"` to force; optional `effort` (`low` … `max`);
+-   `refusal_fallbacks = "auto"` enables server-side fallbacks on Claude
+    Fable 5.x and Claude Opus 5 (beta header `server-side-fallback-2026-07-01`,
+    `fallbacks: "default"`); a final `stop_reason: refusal` surfaces as a
+    non-retryable provider error;
+-   streaming through the SDK stream helper; usage reports
+    `cache_read_input_tokens` so cached input is priced correctly;
+-   errors map onto the gateway classes (rate limit, timeout, auth,
+    unavailable, context overflow, malformed) so retry, fallback and
+    compaction behave the same as for every other provider;
+-   credentials: `ANTHROPIC_API_KEY` from the environment or the secrets
+    store (§35); without one the SDK's own resolution (`ant auth login`
+    profile, workload identity) applies. API keys come from the Anthropic
+    Console; a Claude.ai or Claude Code subscription does not grant API
+    access.
+
 ------------------------------------------------------------------------
 
 ## 11. Model Routing
@@ -964,6 +1002,22 @@ ShellCommand(
 
 High-risk commands require explicit confirmation unless the user has
 deliberately configured an applicable rule.
+
+
+### Classifier Rules (implemented)
+
+Commands are split on `;`, `&&`, `||` and `|` and classified by the most
+dangerous segment: privilege escalation (`sudo`, `su`, `doas`, `pkexec`) →
+PRIVILEGED; recursive/forced deletion, destructive git, disk tools,
+`DROP TABLE`, fork bombs → DESTRUCTIVE; package managers (`pip`, `uv`,
+`npm`, `apt`, `cargo` …) → PACKAGE_INSTALL; a **network command in command
+position** (`curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `git push/fetch/
+pull/clone`, allowing env-var prefixes and absolute paths) → NETWORK;
+test/lint runners → RUN_TESTS; a whitelist of read-only commands and
+read-only git subcommands with no output redirection → SHELL_READ;
+everything else → SHELL_WRITE. The 2026-10-04 fix: `ssh` inside a *path*
+(`cat ~/.ssh/id_rsa`) is no longer a network command — matching used to
+be a substring regex, which made trusted-mode runs wait on a prompt.
 
 ------------------------------------------------------------------------
 
@@ -1679,6 +1733,25 @@ trendlab -p "Review this diff" --output json
 
 This enables CI and automation.
 
+
+### Implemented CLI Surface
+
+``` text
+trendlab [-m provider:model] [-C dir] [--mode plan|ask|auto_edit|trusted|unsafe]
+         [--safe] [--dangerously-skip-permissions] [--allow-destructive]
+         [--resume latest|<id>] [--max-cost usd] [--plain]
+trendlab -p "<prompt>" [--output text|json] [--auto-edit]
+trendlab remote status|enable|disable|url|rotate-token
+trendlab approvals            # cross-session audit view
+trendlab sessions [--all]     # saved sessions; resume with --resume <id>
+trendlab secret set|list|rm   # secrets store (§35)
+trendlab bench -m provider:model [--fixture A..E] [--output json]
+```
+
+`--output json` prints `{status, text, report, changed_files, validation,
+cost_usd, elapsed_s, model_calls, iterations, stop_reason, plan}`; the exit
+code is 0 for `COMPLETED` and 1 otherwise.
+
 ------------------------------------------------------------------------
 
 ## 33. Configuration
@@ -1753,6 +1826,28 @@ url = ""
 
 `trendlab remote enable` writes the `[remote_approval]` section for you.
 
+
+### All Sections (implemented)
+
+| Section | Purpose |
+|---|---|
+| `[defaults]` | `model`, `permission_mode` (default `unsafe`), `allow_destructive` |
+| `[limits]` | `max_cost_usd`, `max_iterations`, `max_model_calls`, `max_wall_clock_minutes`, `warn_at_fraction` |
+| `[context]` | `auto_compact`, `compact_threshold`, `default_context_window`, `repo_map_max_files`, budgets |
+| `[git]` | `respect_gitignore`, `auto_commit` |
+| `[retry]` | gateway backoff: `max_attempts`, `base_delay_seconds`, `max_delay_seconds` |
+| `[providers.<name>]` | `type` (`openai_compatible` · `openai` · `ollama` · `anthropic`), `base_url`, `api_key_env`, `tool_calling` (`auto`/`native`/`structured`), `timeout_seconds`; Anthropic: `max_tokens`, `thinking`, `effort`, `refusal_fallbacks` |
+| `[models."provider:model"]` | registry: `context_window`, `supports_tools`, `supports_streaming`, `local` |
+| `[pricing."provider:model"]` | `input_per_million`, `output_per_million`, `cached_input_per_million` |
+| `[routing]` | role → `provider:model`, plus `escalation` |
+| `[fallback]` | `"provider:model" = ["…"]` for infrastructure failures |
+| `[[hooks]]` | `event`, `command`, `timeout_seconds`, `blocking` |
+| `[mcp.servers.<name>]` | `command`, `args`, `env`, `category`, `timeout_seconds` |
+| `[project]` | `test_command`, `lint_command`, `typecheck_command`, `build_command` |
+| `[remote_approval]`, `[notifications.*]` | as above |
+
+A complete annotated example ships as `docs/config.example.toml`.
+
 ------------------------------------------------------------------------
 
 ## 34. Project Instructions
@@ -1812,6 +1907,17 @@ carry secrets:
     same redaction;
 -   the remote access token lives in `~/.trendlab/remote_token` (mode
     0600) and is referenced, never logged.
+
+
+### Secrets Store (implemented 2026-10-05)
+
+Config files only ever name a secret (`api_key_env = "ANTHROPIC_API_KEY"`).
+The value is resolved at use time, in order: the environment variable, then
+`~/.trendlab/secrets/<NAME>` (directory 0700, file 0600). `trendlab secret
+set NAME` prompts with hidden input and never prints the value back;
+`trendlab secret list` shows names only; `trendlab secret rm NAME` removes
+one. Provider adapters and notification providers all resolve through this
+path, so keys never live in a file that could be committed or shared.
 
 ------------------------------------------------------------------------
 
@@ -2798,6 +2904,22 @@ remote.channel_started / remote.channel_stopped / remote.auth_failed
 Each record carries approval_id, tool, category, risk, redacted summary,
 fingerprint and — for decisions — the channel and client identifier.
 
+Complete implemented event set (`trendlab.telemetry.events.EventType`):
+
+``` text
+agent.state_changed · model.call_started · model.token · model.call_completed
+provider.retry · provider.fallback · cost.updated · budget.warning · budget.exceeded
+tool.requested · tool.started · tool.completed · file.changed
+permission.requested · permission.decided (mode, unsafe_auto, command, files)
+approval.* (above) · remote.channel_started/stopped · remote.auth_failed
+question.asked · question.answered
+task.updated · plan.updated · agent.spawned · agent.completed
+context.compacted · context.budget · session.started/resumed/restored/checkpointed
+loop.detected · recovery.action · hook.run · hook.blocked
+run.completed · run.failed · run.canceled · notification.sent · notification.failed
+mcp.server_started · mcp.server_failed
+```
+
 This decouples the UI from the runtime and makes future alternate
 interfaces possible.
 
@@ -3251,6 +3373,17 @@ channel is now part of V1; the items below extend it):
 -   push notifications with provider-side delivery receipts;
 -   plan-approval gate (approve the plan from the phone before any edit);
 -   secret scanning on writes; transcript export; container sandboxing;
+-   **Jev (parked 2026-10-05).** A TypeSafe decision model reached through
+    OpenRouter's Decisions API (`POST /api/alpha/decisions`, model
+    `typesafe/jev-1.13`): send `state` text plus typed `questions`
+    (`noul` yes/no probability, `choice` one option with per-option
+    probabilities, `score` on ordered levels), get answers with confidence
+    and `usage.cost`. Intended shape in TrendLab: a `jev_decide` tool in the
+    NETWORK category (text leaves the machine, so it is approvable and
+    previewed), a skill stating "Jev decides, the writing model writes;
+    below the confidence threshold the agent decides itself", and a
+    `trendlab jev setup|test` flow. Built, then removed at the owner's
+    request to revisit later.
 -   browser control;
 -   issue tracker integration;
 -   GitHub/GitLab workflows;
@@ -3403,3 +3536,59 @@ The central architectural contract is:
 > completion. The user remains in control.**
 
 That contract should guide every implementation decision.
+
+------------------------------------------------------------------------
+
+## 89. Implementation Record
+
+This section is the running history of what was actually built, including
+decisions taken after the original specification. Newest last.
+
+### 2026-10-04 — Rename and Remote Approval System
+-   Product renamed from Forge CLI to **TrendLab CLI** (command `trendlab`,
+    package `trendlab`, `~/.trendlab/`, `TRENDLAB.md`). No code existed
+    before this date; only the specification documents did.
+-   Foundation built from this spec: config, event bus + audit log,
+    permission engine, SQLite sessions, tool runtime, OpenAI-compatible
+    provider, agent loop, Rich REPL, Typer CLI.
+-   Remote Approval System: `ApprovalManager`, `ApprovalChannel` (local
+    terminal, authenticated web page), `NotificationProvider` (Telegram,
+    ntfy, webhook), per-install bearer token, per-request decision token,
+    operation fingerprint binding, single use, expiry, risk gating, restart
+    recovery, full audit. 89 tests.
+
+### 2026-10-04 — Full specification implemented
+-   Providers: error classes, SSE streaming, capabilities and LOCAL/REMOTE
+    label, model registry, structured-JSON tool fallback, gateway with
+    retry/backoff/fallback, role routing and escalation; cost tracking with
+    configured pricing and budgets.
+-   Tools: `glob`, `patch_file`, git read tools, `run_tests` with detected
+    validation commands, `task`, `delegate`, `ask_user`; ignore rules;
+    ripgrep when present; diff previews on approvals; project-persisted
+    rules (`.trendlab/permissions.toml`).
+-   Agent: structured plan, completion evaluator, loop detection with
+    escalation, failure classification, limits, cancellation, final report.
+-   Context: repository map, token budgeting, structured compaction,
+    overflow → compaction → retry. Sessions: resume, checkpoints, undo.
+-   Sub-agents (explorer, debugger, tester, reviewer), `/review`.
+-   Ecosystem: hooks, skills, MCP stdio client, `/init`, headless JSON,
+    `sessions`/`approvals`/`bench` commands, benchmark fixtures A–E.
+-   Textual TUI as the default interface; REPL via `--plain`.
+-   Beyond the original spec: questions answered from the phone,
+    completion/failure notifications, expiry reminders.
+-   Fix: shell classifier network detection moved to command position
+    (`cat ~/.ssh/x` was misclassified as a network command).
+
+### 2026-10-05 — Anthropic, secrets, unsafe default
+-   Anthropic provider on the official SDK (§10.7); cross-provider model
+    switching keeps the conversation via provider-private message keys.
+-   Secrets store and `trendlab secret` (§35).
+-   Jev decision model integration built and removed the same day at the
+    owner's request; design recorded in §84 for later.
+-   `unsafe` permission mode added (§75) and, by the owner's decision, made
+    the **default**: no approval prompts; `sudo` and outside-project paths
+    still denied; destructive commands still ask unless `allow_destructive`;
+    auto-approvals audited; pre-edit checkpoint mandatory. `--safe`,
+    `/mode ask` or `permission_mode = "ask"` turn prompts on.
+-   Test suite: 183 cases, all passing; ruff clean. Not yet exercised
+    against a live model provider — that shakedown is the next step.
