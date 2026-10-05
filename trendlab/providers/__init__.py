@@ -1,3 +1,4 @@
+from trendlab.providers.anthropic_provider import AnthropicProvider
 from trendlab.providers.base import (
     ModelCapabilities,
     ModelProvider,
@@ -23,6 +24,7 @@ from trendlab.providers.scripted import ScriptedProvider
 from trendlab.providers.structured import StructuredToolProvider
 
 __all__ = [
+    "AnthropicProvider",
     "ModelCapabilities",
     "ModelGateway",
     "ModelProvider",

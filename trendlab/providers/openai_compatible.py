@@ -7,7 +7,6 @@ error classes, and never leaks vendor JSON past this module.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -28,6 +27,7 @@ from trendlab.providers.base import (
     TokenUsage,
     ToolCall,
 )
+from trendlab.security.secrets import resolve_secret
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
 
@@ -71,7 +71,7 @@ class OpenAICompatibleProvider(ModelProvider):
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self._api_key_env:
-            key = os.environ.get(self._api_key_env)
+            key = resolve_secret(self._api_key_env)
             if not key:
                 raise ProviderAuthenticationError(
                     f"{self.name}: environment variable {self._api_key_env} is not set"
@@ -80,7 +80,8 @@ class OpenAICompatibleProvider(ModelProvider):
         return headers
 
     def _payload(self, messages, tools, stream: bool) -> dict[str, Any]:
-        payload: dict[str, Any] = {"model": self.model, "messages": messages}
+        clean = [{k: v for k, v in m.items() if not k.startswith("_")} for m in messages]
+        payload: dict[str, Any] = {"model": self.model, "messages": clean}
         if tools and self._caps.native_tools:
             payload["tools"] = tools
         if stream:

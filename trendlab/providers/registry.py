@@ -33,6 +33,20 @@ def create_provider(config: AppConfig, model_ref: str) -> ModelProvider:
             f"add [providers.{provider_name}] to config"
         )
     info = model_info(config, model_ref)
+    if pcfg.type == "anthropic":
+        from trendlab.providers.anthropic_provider import AnthropicProvider
+
+        return AnthropicProvider(
+            model=model,
+            api_key_env=pcfg.api_key_env,
+            provider_name=provider_name,
+            max_tokens=pcfg.max_tokens,
+            thinking=pcfg.thinking,
+            effort=pcfg.effort,
+            refusal_fallbacks=pcfg.refusal_fallbacks,
+            timeout=pcfg.timeout_seconds,
+            context_window=info.context_window,
+        )
     if pcfg.type not in {"openai_compatible", "openai", "ollama"}:
         raise ProviderError(f"unknown provider type {pcfg.type!r}")
     is_ollama = pcfg.type == "ollama"

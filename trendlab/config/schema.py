@@ -95,6 +95,11 @@ class ProviderConfig(BaseModel):
     # Force the structured-JSON tool-calling fallback for every model of this provider.
     tool_calling: str = "auto"  # auto | native | structured
     timeout_seconds: float = 120.0
+    # Anthropic-only knobs (type = "anthropic").
+    max_tokens: int = 16000
+    thinking: str = "auto"  # auto | adaptive | off
+    effort: str | None = None  # low | medium | high | xhigh | max
+    refusal_fallbacks: str = "auto"  # auto | on | off (server-side fallbacks on Fable 5.x / Opus 5)
 
     @field_validator("tool_calling")
     @classmethod

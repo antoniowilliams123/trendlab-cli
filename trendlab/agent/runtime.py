@@ -411,18 +411,24 @@ class AgentRuntime:
 
 
 def _assistant_message(response: ModelResponse) -> dict[str, Any]:
-    return {
+    message: dict[str, Any] = {
         "role": "assistant",
         "content": response.text or None,
-        "tool_calls": [
-            {
-                "id": c.id,
-                "type": "function",
-                "function": {"name": c.name, "arguments": json.dumps(c.arguments, default=str)},
-            }
-            for c in response.tool_calls
-        ],
     }
+    if response.raw_metadata.get("provider_content"):
+        # Providers with richer turns (e.g. Anthropic thinking blocks) replay these verbatim
+        # when the same model continues; other providers ignore underscore keys.
+        message["_provider_content"] = response.raw_metadata["provider_content"]
+        message["_provider_model"] = response.raw_metadata.get("provider_model")
+    message["tool_calls"] = [
+        {
+            "id": c.id,
+            "type": "function",
+            "function": {"name": c.name, "arguments": json.dumps(c.arguments, default=str)},
+        }
+        for c in response.tool_calls
+    ]
+    return message
 
 
 def _tool_message(call, content: str) -> dict[str, Any]:

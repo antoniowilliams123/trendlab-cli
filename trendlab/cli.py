@@ -31,6 +31,8 @@ app = typer.Typer(
 )
 remote_app = typer.Typer(help="Remote (phone) approval settings.")
 app.add_typer(remote_app, name="remote")
+secret_app = typer.Typer(help="Secrets stored outside config (~/.trendlab/secrets, mode 0600).")
+app.add_typer(secret_app, name="secret")
 console = Console()
 
 
@@ -348,6 +350,38 @@ def bench_cmd(
             str(r["files_changed"]),
         )
     console.print(t)
+
+
+# -- trendlab secret ... --------------------------------------------------------------------
+@secret_app.command("set")
+def secret_set(name: str = typer.Argument(..., help="e.g. ANTHROPIC_API_KEY")) -> None:
+    """Store a secret. The value is prompted without echo and never printed back."""
+    from trendlab.security.secrets import store_secret
+
+    value = typer.prompt(f"Paste the value for {name} (input hidden)", hide_input=True)
+    try:
+        path = store_secret(name, value)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+    console.print(
+        f"[green]Stored {name}[/green] in {path.parent} (mode 0600). It is never displayed."
+    )
+
+
+@secret_app.command("list")
+def secret_list() -> None:
+    from trendlab.security.secrets import list_secrets
+
+    names = list_secrets()
+    console.print("\n".join(names) if names else "[dim]no stored secrets[/dim]")
+
+
+@secret_app.command("rm")
+def secret_rm(name: str) -> None:
+    from trendlab.security.secrets import delete_secret
+
+    console.print(f"removed {name}" if delete_secret(name) else f"[dim]{name} was not stored[/dim]")
 
 
 def main() -> None:

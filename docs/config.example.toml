@@ -25,6 +25,16 @@ respect_gitignore = true
 max_attempts = 3
 base_delay_seconds = 1.0
 
+# Anthropic (official SDK). Key from ANTHROPIC_API_KEY, `trendlab secret set ANTHROPIC_API_KEY`,
+# or an `ant auth login` profile. Adaptive thinking is on for 4.6+ models; Haiku runs without it.
+[providers.anthropic]
+type = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+max_tokens = 16000
+thinking = "auto"               # auto | adaptive | off
+# effort = "xhigh"              # low | medium | high | xhigh | max (coding/agentic work likes xhigh)
+refusal_fallbacks = "auto"      # auto | on | off — server-side fallback on Fable 5.x / Opus 5 declines
+
 [providers.openai]
 type = "openai_compatible"
 base_url = "https://api.openai.com/v1"
@@ -50,11 +60,27 @@ base_url = "http://localhost:11434/v1"
 context_window = 64000
 supports_tools = true
 
+[models."anthropic:claude-opus-5"]
+context_window = 1000000
+
 [models."ollama:qwen3-coder"]
 context_window = 32000
 local = true
 
 # Pricing per million tokens (spec §40). Keep this current; code never hard-codes prices.
+[pricing."anthropic:claude-opus-5"]
+input_per_million = 5.00
+output_per_million = 25.00
+cached_input_per_million = 0.50
+
+[pricing."anthropic:claude-sonnet-5"]
+input_per_million = 2.00
+output_per_million = 10.00
+
+[pricing."anthropic:claude-haiku-4-5"]
+input_per_million = 1.00
+output_per_million = 5.00
+
 [pricing."openai:gpt-4o-mini"]
 input_per_million = 0.15
 output_per_million = 0.60
@@ -62,10 +88,11 @@ cached_input_per_million = 0.075
 
 # Role routing (spec §11). Missing roles use the session model. "escalation" is used after loops.
 [routing]
-# explorer = "deepseek:deepseek-chat"
-# summarizer = "ollama:qwen3-coder"
-# reviewer = "openai:gpt-4o"
-# escalation = "openai:gpt-4o"
+# default = "anthropic:claude-opus-5"
+# explorer = "anthropic:claude-sonnet-5"
+# summarizer = "anthropic:claude-haiku-4-5"
+# reviewer = "anthropic:claude-opus-5"
+# escalation = "anthropic:claude-opus-5"
 
 # Provider fallback for infrastructure failures only (spec §69).
 [fallback]

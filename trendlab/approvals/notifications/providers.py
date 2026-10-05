@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import httpx
 
 from trendlab.approvals.notifications.base import (
@@ -16,10 +14,11 @@ from trendlab.config.schema import (
     TelegramNotificationConfig,
     WebhookNotificationConfig,
 )
+from trendlab.security.secrets import resolve_secret
 
 
 def _env(name: str | None) -> str | None:
-    return os.environ.get(name) if name else None
+    return resolve_secret(name) if name else None
 
 
 class _HttpProvider(NotificationProvider):

@@ -14,8 +14,8 @@ Remote approval request sent — decide here or on your phone.
 
 ## What it does
 
-- **Any model.** OpenAI, DeepSeek, Moonshot/Kimi, Ollama or any OpenAI-compatible endpoint behind
-  one gateway with retries, fallback, streaming, cost tracking and a JSON fallback for models
+- **Any model.** Anthropic (Claude Opus 5, Sonnet 5, Haiku 4.5 via the official SDK), OpenAI,
+  DeepSeek, Moonshot/Kimi, Ollama or any OpenAI-compatible endpoint behind one gateway with retries, fallback, streaming, cost tracking and a JSON fallback for models
   with weak native tool calling. Hot-switch with `/model`; route roles with `[routing]`.
 - **Real tools.** read/list/glob/search, atomic `write_file` and targeted `patch_file` with diff
   previews and hash conflict protection, `shell` with risk classification, `run_tests` with
@@ -41,15 +41,17 @@ pip3 --python .venv/bin/python install -e ".[dev]"
 ```
 
 Configuration: `~/.trendlab/config.toml` (global) and `.trendlab/config.toml` (per project).
-Secrets are environment variables only (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …). Start from
-`docs/config.example.toml`. Project instructions live in `TRENDLAB.md` (`/init` drafts one).
+Secrets are referenced by name only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) and resolved from
+the environment or from `trendlab secret set NAME` (stored under `~/.trendlab/secrets`, mode 0600,
+never echoed). Start from `docs/config.example.toml`. Project instructions live in `TRENDLAB.md` (`/init` drafts one).
 
 ## Use
 
 ```bash
 trendlab                                  # full-screen TUI in the current project
 trendlab --plain                          # Rich REPL
-trendlab -m deepseek:deepseek-chat        # pick provider:model
+trendlab -m anthropic:claude-opus-5       # pick provider:model
+trendlab -m deepseek:deepseek-chat
 trendlab -p "Run the tests and fix failures" --auto-edit --output json   # headless / CI
 trendlab --resume latest                  # continue the last session for this project
 trendlab sessions | trendlab approvals    # history
