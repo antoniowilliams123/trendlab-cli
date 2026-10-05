@@ -53,6 +53,34 @@ RICH_THEME = Theme(
 
 WORDMARK = "▌ T R E N D L A B"
 
+# Big banner built from full blocks only (█), so it renders as solid pixels in every terminal font.
+_GLYPHS = {
+    "T": ["█████", "  █  ", "  █  ", "  █  ", "  █  "],
+    "R": ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
+    "E": ["█████", "█    ", "████ ", "█    ", "█████"],
+    "N": ["█   █", "██  █", "█ █ █", "█  ██", "█   █"],
+    "D": ["████ ", "█   █", "█   █", "█   █", "████ "],
+    "L": ["█    ", "█    ", "█    ", "█    ", "█████"],
+    "A": [" ███ ", "█   █", "█████", "█   █", "█   █"],
+    "B": ["████ ", "█   █", "████ ", "█   █", "████ "],
+}
+
+
+def banner_rows(word: str = "TRENDLAB", gap: int = 2) -> list[str]:
+    """Five rows of block letters for ``word`` (letters outside the glyph set are skipped)."""
+    rows = ["" for _ in range(5)]
+    for ch in word.upper():
+        glyph = _GLYPHS.get(ch)
+        if glyph is None:
+            continue
+        for i in range(5):
+            rows[i] += (" " * gap if rows[i] else "") + glyph[i]
+    return rows
+
+
+BANNER = banner_rows()
+BANNER_WIDTH = len(BANNER[0])
+
 
 def make_console(**kwargs) -> Console:
     """A Rich console with the TrendLab theme and neon-on-black default style."""
@@ -69,7 +97,7 @@ Screen {{
     color: {NEON};
 }}
 #header {{
-    height: 3;
+    height: 6;
     background: {BLACK};
     color: {NEON};
     border-bottom: solid {NEON_DIM};

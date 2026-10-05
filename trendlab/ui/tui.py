@@ -35,7 +35,17 @@ from trendlab.config.schema import AppConfig, PermissionMode
 from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
-from trendlab.ui.theme import GREY, MINT, NEON, NEON_DIM, RED, TUI_CSS, WORDMARK, make_console
+from trendlab.ui.theme import (
+    BANNER,
+    BANNER_WIDTH,
+    GREY,
+    MINT,
+    NEON,
+    NEON_DIM,
+    RED,
+    TUI_CSS,
+    make_console,
+)
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -223,16 +233,16 @@ class TrendLabTUI(App[None]):
             f"[bold {MINT}]{privacy}[/]" if privacy == "LOCAL" else f"[{GREY}]{privacy}[/]"
         )
         width = max(60, self.size.width - 4)
-        project = _shorten(str(tl.project_root), max(20, width - 70))
-        line1 = (
-            f"[bold {NEON}]{WORDMARK}[/]  [{GREY}]CLI v{__version__}[/]   "
-            f"[bold {NEON}]{tl.model_ref}[/] {privacy_txt}"
-        )
-        line2 = (
-            f"[{GREY}]{project}[/]   {_mode_badge(tl)}   {remote_txt}   "
-            f"[{GREY}]session {tl.session_id}[/]"
-        )
-        self.query_one("#header", Static).update(f"{line1}\n{line2}")
+        project = _shorten(str(tl.project_root), max(20, width - BANNER_WIDTH - 12))
+        info = [
+            f"[{GREY}]CLI v{__version__}[/]",
+            f"[bold {NEON}]{tl.model_ref}[/] {privacy_txt}",
+            f"[{GREY}]{project}[/]",
+            f"{_mode_badge(tl)}   {remote_txt}",
+            f"[{GREY}]session {tl.session_id}[/]",
+        ]
+        lines = [f"[bold {NEON}]{row}[/]   {info[i]}" for i, row in enumerate(BANNER)]
+        self.query_one("#header", Static).update("\n".join(lines))
         self._refresh_status()
 
     def _refresh_status(self) -> None:

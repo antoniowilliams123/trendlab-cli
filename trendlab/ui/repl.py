@@ -10,7 +10,7 @@ from rich.markdown import Markdown
 from trendlab import __version__
 from trendlab.app import TrendLabApp
 from trendlab.ui.commands import CommandRouter
-from trendlab.ui.theme import GREY, MINT, NEON, WORDMARK
+from trendlab.ui.theme import BANNER, GREY, MINT, NEON
 
 
 class Repl:
@@ -54,12 +54,16 @@ class Repl:
             if self.app.engine.unsafe
             else f"[bold {NEON}]{self.app.engine.mode.value}[/]"
         )
-        self.console.print(
-            f"[bold {NEON}]{WORDMARK}[/]  [{GREY}]CLI v{__version__}[/]   "
-            f"[bold {NEON}]{self.app.model_ref}[/] [{GREY}]{self.app.privacy_label()}[/]"
-        )
-        self.console.print(f"[{GREY}]{self.app.project_root}[/] · {mode_label} · {remote}{resumed}")
-        self.console.print(f"[{GREY}]type a task, or /help · Ctrl+C cancels a running task[/]")
+        info = [
+            f"[{GREY}]CLI v{__version__}[/]",
+            f"[bold {NEON}]{self.app.model_ref}[/] [{GREY}]{self.app.privacy_label()}[/]",
+            f"[{GREY}]{self.app.project_root}[/]",
+            f"{mode_label} · {remote}{resumed}",
+            f"[{GREY}]session {self.app.session_id} · type a task, or /help · Ctrl+C cancels[/]",
+        ]
+        for row, extra in zip(BANNER, info, strict=True):
+            self.console.print(f"[bold {NEON}]{row}[/]   {extra}")
+        self.console.print()
 
     async def _prompt(self, text: str) -> None:
         assert self.app.agent is not None

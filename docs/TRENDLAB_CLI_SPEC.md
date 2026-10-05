@@ -1660,6 +1660,12 @@ transcript, a spinner with elapsed time in the status bar, context size
 with percentage of window, running cost, and the plan with glyphs. F1/F2/F3
 open help, plan and cost. The REPL uses the same Rich theme.
 
+The header carries a five-row **TRENDLAB** banner built from full-block
+characters only (`█`), chosen after half-block art proved font-dependent:
+full blocks draw as solid pixels in every monospace terminal font. Version,
+model and privacy label, project, mode/remote badges and session id sit
+beside the banner so it costs no extra vertical space.
+
 ------------------------------------------------------------------------
 
 ## 30. Diff UX
