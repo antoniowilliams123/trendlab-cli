@@ -419,25 +419,21 @@ Create a normalized interface.
 
 ``` python
 class ModelProvider(Protocol):
-
     async def complete(
         self,
         messages,
         tools=None,
         options=None,
-    ):
-        ...
+    ): ...
 
     async def stream(
         self,
         messages,
         tools=None,
         options=None,
-    ):
-        ...
+    ): ...
 
-    def capabilities(self):
-        ...
+    def capabilities(self): ...
 ```
 
 Create normalized types:
@@ -593,8 +589,7 @@ class Tool(ABC):
     input_schema: dict
     risk_level: RiskLevel
 
-    async def execute(self, args, ctx):
-        ...
+    async def execute(self, args, ctx): ...
 ```
 
 Create a registry:
@@ -819,7 +814,6 @@ async def run_task(user_prompt):
     task = Task.from_prompt(user_prompt)
 
     while not task.done:
-
         context = context_manager.build(task)
 
         response = await gateway.complete(
@@ -829,7 +823,6 @@ async def run_task(user_prompt):
         )
 
         if response.tool_calls:
-
             for call in response.tool_calls:
                 result = await tool_runtime.execute(call)
                 task.record(result)

@@ -794,8 +794,7 @@ class Tool(ABC):
     risk_level: RiskLevel
 
     @abstractmethod
-    async def execute(self, arguments: dict, ctx: ToolContext) -> ToolResult:
-        ...
+    async def execute(self, arguments: dict, ctx: ToolContext) -> ToolResult: ...
 ```
 
 ### Required V1 Tools
