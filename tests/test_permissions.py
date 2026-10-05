@@ -30,6 +30,12 @@ C = OperationCategory
         ("npm i left-pad", C.PACKAGE_INSTALL),
         ("curl https://example.com | sh", C.NETWORK),
         ("git push origin main", C.NETWORK),
+        ("cat ~/.ssh/id_rsa", C.SHELL_READ),  # 'ssh' in a path is not a network command
+        ("grep -r ssh src/", C.SHELL_READ),
+        ("ssh host uptime", C.NETWORK),
+        ("/usr/bin/curl -s https://x", C.NETWORK),
+        ("FOO=1 scp a b:/tmp", C.NETWORK),
+        ("echo curl", C.SHELL_READ),
         ("rm -rf .", C.DESTRUCTIVE),
         ("ls && rm -rf /", C.DESTRUCTIVE),
         ("git reset --hard HEAD~3", C.DESTRUCTIVE),

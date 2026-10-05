@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from trendlab.config.schema import AppConfig
 
 KINDS = ("test", "lint", "typecheck", "build")
+
+
+def _python() -> str:
+    return "python" if shutil.which("python") else "python3"
 
 
 def detect_validation_commands(root: Path) -> dict[str, str]:
@@ -24,7 +29,7 @@ def detect_validation_commands(root: Path) -> dict[str, str]:
             else ""
         )
         if (root / "tests").is_dir() or "pytest" in text or (root / "pytest.ini").is_file():
-            cmds["test"] = "python -m pytest -q"
+            cmds["test"] = f"{_python()} -m pytest -q"
         if "ruff" in text or (root / "ruff.toml").is_file():
             cmds["lint"] = "ruff check ."
         elif "flake8" in text or (root / ".flake8").is_file():

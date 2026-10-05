@@ -273,7 +273,9 @@ async def test_restart_cancels_stale_pending_without_executing(manager_factory, 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert store.get_approval(req.approval_id)["status"] == "pending"
+    # Orderly cancellation records 'canceled'; force the row back to 'pending' to simulate a hard crash.
+    assert store.get_approval(req.approval_id)["status"] == "canceled"
+    store.update_approval(req.approval_id, status="pending")
 
     second = manager_factory(process_id="proc-2", session_id=first.session_id)
     stale = second.recover()

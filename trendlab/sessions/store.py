@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -64,6 +64,42 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    role TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+CREATE TABLE IF NOT EXISTS session_state (
+    session_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, key)
+);
+CREATE TABLE IF NOT EXISTS model_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    model TEXT NOT NULL,
+    role TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cached_input_tokens INTEGER NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    cost_usd REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    label TEXT,
+    git_head TEXT,
+    task_id TEXT,
+    files TEXT NOT NULL
+);
 """
 
 
@@ -152,6 +188,132 @@ class SessionStore:
             d["data"] = json.loads(d["data"])
             out.append(d)
         return out
+
+    # -- messages / state -------------------------------------------------------
+    def append_message(self, session_id: str, message: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO messages(session_id, ts, role, payload) VALUES(?,?,?,?)",
+                (session_id, _now(), message.get("role", "?"), json.dumps(message, default=str)),
+            )
+            self._conn.commit()
+
+    def messages(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM messages WHERE session_id=? ORDER BY id", (session_id,)
+            ).fetchall()
+        return [json.loads(r["payload"]) for r in rows]
+
+    def clear_messages(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+            self._conn.commit()
+
+    def set_state(self, session_id: str, key: str, value: Any) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO session_state(session_id, key, value, updated_at)"
+                " VALUES(?,?,?,?)",
+                (session_id, key, json.dumps(value, default=str), _now()),
+            )
+            self._conn.commit()
+
+    def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM session_state WHERE session_id=? AND key=?", (session_id, key)
+            ).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def record_model_call(
+        self,
+        session_id: str,
+        model: str,
+        role: str,
+        input_tokens: int,
+        output_tokens: int,
+        cached: int,
+        latency_ms: int,
+        cost_usd: float,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO model_calls(session_id, ts, model, role, input_tokens, output_tokens,"
+                " cached_input_tokens, latency_ms, cost_usd) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    session_id,
+                    _now(),
+                    model,
+                    role,
+                    input_tokens,
+                    output_tokens,
+                    cached,
+                    latency_ms,
+                    cost_usd,
+                ),
+            )
+            self._conn.commit()
+
+    def usage(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens),0) AS input_tokens,"
+                " COALESCE(SUM(output_tokens),0) AS output_tokens,"
+                " COALESCE(SUM(cost_usd),0) AS cost_usd"
+                " FROM model_calls WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return dict(row)
+
+    def sessions(self, project_path: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        q = "SELECT * FROM sessions"
+        params: list[Any] = []
+        if project_path:
+            q += " WHERE project_path=?"
+            params.append(project_path)
+        q += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_session_status(self, session_id: str, status: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET status=?, updated_at=? WHERE id=?",
+                (status, _now(), session_id),
+            )
+            self._conn.commit()
+
+    # -- checkpoints ------------------------------------------------------------
+    def insert_checkpoint(self, row: dict[str, Any]) -> None:
+        row = dict(row)
+        row["files"] = json.dumps(row["files"])
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO checkpoints({cols}) VALUES({marks})", tuple(row.values())
+            )
+            self._conn.commit()
+
+    def checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM checkpoints WHERE session_id=? ORDER BY created_at", (session_id,)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["files"] = json.loads(d["files"])
+            out.append(d)
+        return out
+
+    def delete_checkpoint(self, checkpoint_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM checkpoints WHERE id=?", (checkpoint_id,))
+            self._conn.commit()
 
     # -- approvals ------------------------------------------------------------
     def insert_approval(self, row: dict[str, Any]) -> None:

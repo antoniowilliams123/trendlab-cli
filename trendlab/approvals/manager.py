@@ -42,7 +42,7 @@ from trendlab.approvals.notifications.base import (
 )
 from trendlab.config.schema import RemoteApprovalConfig
 from trendlab.permissions.engine import PermissionRequest
-from trendlab.permissions.models import RiskLevel
+from trendlab.permissions.models import OperationCategory, RiskLevel
 from trendlab.sessions.store import SessionStore
 from trendlab.telemetry.events import EventBus, EventType
 
@@ -93,6 +93,7 @@ class ApprovalManager:
         self._pending: dict[str, _Pending] = {}
         self._lock = threading.RLock()
         self._on_pending_changed: list[Callable[[], None]] = []
+        self._reminded: set[str] = set()
 
     # -- channels ---------------------------------------------------------------
     @property
@@ -199,10 +200,157 @@ class ApprovalManager:
             return await asyncio.wait_for(asyncio.shield(future), timeout=timeout.total_seconds())
         except TimeoutError:
             return self._expire(request.approval_id)
+        except asyncio.CancelledError:
+            self.cancel(request.approval_id, "run canceled")
+            raise
         finally:
             with self._lock:
                 self._pending.pop(request.approval_id, None)
             self._notify_pending_changed()
+
+    async def ask(
+        self,
+        question: str,
+        options: list[str] | None = None,
+        *,
+        task_id: str | None = None,
+        timeout: timedelta | None = None,
+    ) -> DecisionResult:
+        """Ask the human a free-text question through the same channels. Answer is in ``reason``."""
+        timeout = timeout or timedelta(minutes=self.config.request_timeout_minutes)
+        perm = PermissionRequest(
+            tool="ask_user",
+            category=OperationCategory.READ_ONLY,
+            summary=question[:200],
+            cwd="",
+            task_id=task_id,
+            args={"q": question},
+        )
+        request = ApprovalRequest.from_permission_request(
+            perm,
+            session_id=self.session_id,
+            machine=self.machine,
+            timeout=timeout,
+            remote_allowed=True,
+            session_scope_allowed=False,
+        )
+        request.kind = "question"
+        request.options = list(options or [])[:8]
+        request.explanation = question
+        now = self.clock()
+        request.created_at, request.expires_at = now, now + timeout
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        with self._lock:
+            self._pending[request.approval_id] = _Pending(request, future, loop)
+        self.store.insert_approval(request.to_row(self.process_id))
+        self.events.emit(
+            EventType.QUESTION_ASKED,
+            session_id=self.session_id,
+            approval_id=request.approval_id,
+            question=question[:300],
+            options=request.options,
+            task_id=task_id,
+        )
+        self._notify_pending_changed()
+        await self._dispatch(request)
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout.total_seconds())
+        except TimeoutError:
+            return self._expire(request.approval_id)
+        except asyncio.CancelledError:
+            self.cancel(request.approval_id, "run canceled")
+            raise
+        finally:
+            with self._lock:
+                self._pending.pop(request.approval_id, None)
+            self._notify_pending_changed()
+
+    def answer(
+        self,
+        approval_id: str,
+        text: str,
+        *,
+        via: str,
+        by: str | None = None,
+        decision_token: str | None = None,
+        trusted: bool = False,
+    ) -> DecisionResult:
+        """Answer a pending question. Validated like a decision (token, expiry, single use)."""
+        text = (text or "").strip()
+        if not text:
+            raise ApprovalError("invalid_answer", "answer must not be empty", 400)
+        with self._lock:
+            pending = self._pending.get(approval_id)
+            if pending is None:
+                row = self.store.get_approval(approval_id)
+                if row is None:
+                    self._reject(approval_id, via, by, "unknown")
+                    raise ApprovalError("unknown", "unknown question id", 404)
+                self._reject(approval_id, via, by, "already_decided")
+                raise ApprovalError("already_decided", f"question already {row['status']}", 409)
+            request = pending.request
+            if request.kind != "question":
+                raise ApprovalError("not_a_question", "this id is an approval, not a question", 400)
+            if request.is_expired(self.clock()):
+                self._resolve_locked(pending, ApprovalStatus.EXPIRED, reason="expired")
+                raise ApprovalError("expired", "question expired", 410)
+            if not trusted and (
+                not decision_token
+                or not hmac.compare_digest(decision_token, request.decision_token)
+            ):
+                self._reject(approval_id, via, by, "invalid_token")
+                raise ApprovalError("invalid_token", "invalid decision token", 403)
+            self.events.emit(
+                EventType.QUESTION_ANSWERED,
+                session_id=self.session_id,
+                approval_id=approval_id,
+                channel=via,
+                client=by,
+                answer=text[:500],
+            )
+            result = self._resolve_locked(
+                pending, ApprovalStatus.APPROVED, via=via, by=by, reason=text[:4000]
+            )
+        self._notify_pending_changed()
+        return result
+
+    async def send_reminders(self, fraction: float) -> list[str]:
+        """Re-notify for pending remote-eligible requests past ``fraction`` of their lifetime."""
+        if self.notifier is None or not self.config.enabled or fraction <= 0:
+            return []
+        now = self.clock()
+        reminded: list[str] = []
+        for req in self.pending(remote_only=True):
+            if req.approval_id in self._reminded:
+                continue
+            life = (req.expires_at - req.created_at).total_seconds() or 1
+            if (now - req.created_at).total_seconds() / life >= fraction:
+                self._reminded.add(req.approval_id)
+                notification = build_notification(req, self.approval_url, self.project_name)
+                notification.title = notification.title.replace(
+                    "Approval Required", "Reminder — still waiting"
+                )
+                try:
+                    await self.notifier.send(notification)
+                    reminded.append(req.approval_id)
+                    self.events.emit(
+                        EventType.APPROVAL_DISPATCHED,
+                        session_id=self.session_id,
+                        approval_id=req.approval_id,
+                        channel=f"notify:{self.notifier.name}",
+                        reminder=True,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self.events.emit(
+                        EventType.APPROVAL_DELIVERY_FAILED,
+                        session_id=self.session_id,
+                        approval_id=req.approval_id,
+                        channel=f"notify:{self.notifier.name}",
+                        error=str(exc)[:200],
+                        reminder=True,
+                    )
+        return reminded
 
     async def _dispatch(self, request: ApprovalRequest) -> None:
         for channel in self.channels:
@@ -287,6 +435,9 @@ class ApprovalManager:
                 self._reject(approval_id, via, by, "already_decided")
                 raise ApprovalError("already_decided", f"approval already {row['status']}", 409)
             request = pending.request
+            if request.kind == "question":
+                self._reject(approval_id, via, by, "not_an_approval")
+                raise ApprovalError("not_an_approval", "this id is a question; use answer", 400)
             if request.is_expired(self.clock()):
                 self._resolve_locked(pending, ApprovalStatus.EXPIRED, reason="expired")
                 self._reject(approval_id, via, by, "expired")

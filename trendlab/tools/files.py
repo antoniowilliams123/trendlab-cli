@@ -106,7 +106,7 @@ class ReadFileTool(Tool):
         if len(raw) > MAX_FILE_BYTES and args.end_line is None:
             return ToolResult(
                 ok=False,
-                output=f"{args.path} is {len(raw)} bytes; read it in ranges with start_line/end_line",
+                output=f"{args.path} is {len(raw)} bytes; read it in ranges (start_line/end_line)",
             )
         lines = raw.decode("utf-8", errors="replace").splitlines()
         end = args.end_line or min(len(lines), args.start_line + 399)
@@ -317,7 +317,7 @@ class WriteFileInput(BaseModel):
     content: str
     expected_sha256: str | None = Field(
         default=None,
-        description="sha256 of the current content (from read_file); write is refused if it differs.",
+        description="sha256 of the current content (from read_file); refused if it differs.",
     )
     explanation: str = Field(
         default="", description="Why this change is needed (shown to the approver)."
@@ -327,7 +327,7 @@ class WriteFileInput(BaseModel):
 class WriteFileTool(Tool):
     name = "write_file"
     description = (
-        "Create or overwrite a project file atomically. Prefer patch_file for edits to existing files. "
+        "Create or overwrite a project file atomically. Prefer patch_file for edits. "
         "Pass expected_sha256 to guard against external edits."
     )
     input_model = WriteFileInput
@@ -389,7 +389,8 @@ class PatchFileInput(BaseModel):
 class PatchFileTool(Tool):
     name = "patch_file"
     description = (
-        "Apply a targeted edit: replace old_text with new_text in a project file. old_text must match "
+        "Apply a targeted edit: replace old_text with new_text in a project file. old_text must "
+        "match "
         "exactly once unless replace_all is true. Returns the resulting diff."
     )
     input_model = PatchFileInput

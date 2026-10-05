@@ -1,35 +1,47 @@
 # TrendLab Build Status
 
 ## Current Milestone
-Remote Approval System — implemented on a minimal runtime foundation (2026-10-04).
+Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against real providers.
 
 ## Completed
-- [x] Bootstrap (pyproject, package layout, `trendlab` entry point, ruff)
-- [x] Config (global + project TOML, env secrets by name, `[remote_approval]`, `[notifications]`)
-- [x] Event bus + JSONL audit sink + SQLite event persistence (redacted)
-- [x] Permissions: categories, risk levels, shell classifier, mode policy table, session rules
-- [x] Approval Manager (fingerprint binding, tokens, replay/expiry/supersede, restart recovery)
-- [x] Approval channels: local terminal, remote web (mobile page, bearer auth, lockout, TLS option)
-- [x] Notification providers: telegram, ntfy, webhook (behind one abstraction, failure-tolerant)
-- [x] Tools: read_file, list_directory, search_text, write_file (atomic + hash guard), delete_file, shell
-- [x] Tool runtime: validate → permission → approval → binding re-check → execute → events
-- [x] Providers: normalized contract, OpenAI-compatible (OpenAI/DeepSeek/Moonshot/Ollama /v1), scripted
-- [x] Agent loop + explicit state machine (WAITING_PERMISSION)
-- [x] Rich REPL with `/remote`, `/approvals`, `/permissions`, `/mode`, `/model`, `/status`
-- [x] CLI: `trendlab`, `-p`, `remote status|enable|disable|url|rotate-token`, `approvals`
-- [ ] Planner, completion evaluator, recovery, loop detection
-- [ ] Context budgeting, compaction, repository map, checkpoints/undo, session resume
-- [ ] Sub-agents, model routing, cost tracking
-- [ ] Textual TUI, MCP, skills, hooks
+- [x] Bootstrap, config (global/project TOML; secrets by env name), `trendlab` entry point, ruff
+- [x] Event bus + redacted JSONL audit + SQLite persistence (schema v2: sessions, events, approvals,
+      messages, session_state, model_calls, checkpoints)
+- [x] Permissions: categories, risk, shell classifier (command-position network detection), policy
+      per mode, session rules, project rules (`.trendlab/permissions.toml`), path/symlink boundary
+- [x] Remote Approval System: ApprovalManager (fingerprint binding, tokens, replay/expiry/supersede,
+      restart recovery), local + web + Textual channels, mobile page with diff preview, Telegram/ntfy/
+      webhook notifications, expiry reminders, completion/failure notifications, questions (`ask_user`)
+- [x] Providers: normalized errors, SSE streaming, capabilities + LOCAL/REMOTE label, model registry,
+      structured-JSON tool fallback, gateway retry/backoff/fallback, role routing, escalation
+- [x] Cost tracking (config pricing), budgets, `/cost`, `/cost-limit`
+- [x] Tools: read/list/glob/search (ripgrep when present, ignore rules), write/patch (atomic, hash
+      guard, diff), delete, shell, git_status/diff/log, run_tests (auto-detected), task, delegate, ask_user
+- [x] Agent loop: structured plan, completion evaluator, loop detection + escalation, failure
+      classification/recovery, limits (iterations/cost/calls/wall-clock), cancellation, final report
+- [x] Context engine: repository map (cached), token budgeting, structured compaction (model or
+      deterministic), overflow → compaction → retry
+- [x] Sessions: `--resume latest|<id>`, `/sessions`, `/new`; checkpoints + `/undo` with conflict guard
+- [x] Sub-agents: explorer/debugger/tester/reviewer, isolated context, read-only registry, parallel
+      research, cost roll-up, `/review`
+- [x] Ecosystem: hooks (blocking before_*), skills (`SKILL.md`), MCP stdio client, `/init`, first-run hints
+- [x] UI: Textual TUI (default) with approval/question modal, Rich REPL (`--plain`), headless
+      `-p --output json`, `trendlab sessions|approvals|bench`
+- [x] Benchmarks A–E + runner (`trendlab bench -m provider:model`)
+- [x] Security regressions: prompt injection, destructive commands, external paths
 
 ## Tests
-89 passed, 0 failed (`.venv/bin/python -m pytest -q`); `ruff check` and `ruff format --check` clean.
+133 test functions (≈170 cases with parametrization), all passing (`.venv/bin/python -m pytest -q`,
+~30 s). `ruff check` and `ruff format --check` clean. Source: ~10k lines in `trendlab/`.
 
 ## Known Issues
-- Streaming model output is not implemented (non-streaming chat completions only).
-- Non-interactive `-p` mode with remote approval disabled cannot resolve ASK verdicts; they expire.
-- No `--resume`; sessions and events are persisted but not yet reloaded into a new run.
+- Only exercised against scripted/mocked providers in CI; real OpenAI/DeepSeek/Ollama runs still
+  need a live shakedown (streaming edge cases, tool-call quirks).
+- `/resume <id>` inside a running session only prints the command to restart with; use `--resume`.
+- Sub-agents are read-only by design (no `write_access` yet).
+- Patch tool is search/replace based (no unified-diff application).
+- One harmless pytest warning: asyncio subprocess transport finalizer after loop close.
 
 ## Next Action
-Implement the planner + completion evaluator (Milestones 14/17) so long unattended runs that rely
-on remote approval also stop on evidence rather than on the model saying "done".
+Live shakedown with a real provider on the benchmark fixtures (`trendlab bench -m deepseek:deepseek-chat`),
+then tune prompts/evaluator thresholds from the results.

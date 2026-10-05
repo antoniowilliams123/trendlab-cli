@@ -88,6 +88,21 @@
     }
     items.forEach(function (a) {
       var card = el('div', 'card');
+      if (a.kind === 'question') {
+        card.appendChild(el('strong', null, 'TrendLab asks'));
+        card.appendChild(el('div', 'cmd', a.explanation));
+        var qa = el('div', 'actions');
+        function answer(text) {
+          if (!text || busy[a.approval_id]) return; busy[a.approval_id] = true;
+          api('POST', '/api/approvals/' + encodeURIComponent(a.approval_id) + '/answer', { answer: text, decision_token: a.decision_token })
+            .then(function (res) { show(res.status === 200 ? 'ok' : 'err', res.status === 200 ? 'Answered: ' + text : 'Rejected (' + (res.json.error || res.status) + ')'); delete busy[a.approval_id]; refresh(); })
+            .catch(function () { show('err', 'Network error'); delete busy[a.approval_id]; });
+        }
+        (a.options || []).forEach(function (o) { var b = el('button', 'session', o); b.onclick = function () { answer(o); }; qa.appendChild(b); });
+        var inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Type an answer…'; inp.style.cssText = 'font:inherit;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg)';
+        var send = el('button', 'approve', 'Send answer'); send.onclick = function () { answer(inp.value.trim()); };
+        qa.appendChild(inp); qa.appendChild(send); card.appendChild(qa); list.appendChild(card); return;
+      }
       var top = el('div', 'row');
       top.appendChild(el('strong', null, a.summary));
       top.appendChild(el('span', 'risk ' + a.risk, a.risk));

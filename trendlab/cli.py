@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import signal
+import sys
 from pathlib import Path
 
 import typer
@@ -37,6 +40,33 @@ def _version(value: bool) -> None:
         raise typer.Exit()
 
 
+def _first_run_check(config, model_ref: str) -> None:
+    """Spec §56: a useful message instead of a stack trace when nothing is configured."""
+    import os
+
+    from trendlab.providers.registry import parse_model_ref
+
+    try:
+        provider, _ = parse_model_ref(model_ref)
+    except Exception:  # noqa: BLE001
+        return
+    pcfg = config.providers.get(provider)
+    if pcfg is None:
+        console.print(
+            f"[yellow]Provider {provider!r} is not configured in {global_config_path()}.[/yellow]"
+        )
+        console.print(
+            'Add e.g.\n  [providers.deepseek]\n  type = "openai_compatible"\n'
+            '  base_url = "https://api.deepseek.com/v1"\n  api_key_env = "DEEPSEEK_API_KEY"'
+        )
+        return
+    if pcfg.type != "ollama" and pcfg.api_key_env and not os.environ.get(pcfg.api_key_env):
+        console.print(
+            f"[yellow]Welcome to {PRODUCT_NAME}.[/yellow] Set [bold]{pcfg.api_key_env}[/bold] in "
+            f"your environment for provider {provider!r} (secrets are never stored in config)."
+        )
+
+
 @app.callback()
 def main_callback(
     ctx: typer.Context,
@@ -49,6 +79,13 @@ def main_callback(
         None, "--prompt", "-p", help="Run one prompt non-interactively."
     ),
     mode: PermissionMode | None = typer.Option(None, "--mode", help="Permission mode."),
+    auto_edit: bool = typer.Option(False, "--auto-edit", help="Shortcut for --mode auto_edit."),
+    resume: str | None = typer.Option(None, "--resume", help="Resume a session id, or 'latest'."),
+    output: str = typer.Option("text", "--output", help="text | json (with -p)."),
+    max_cost: float | None = typer.Option(None, "--max-cost", help="Hard USD budget for this run."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Use the plain REPL instead of the full-screen TUI."
+    ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -57,23 +94,88 @@ def main_callback(
     except ConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
+    if max_cost is not None:
+        config.limits.max_cost_usd = max_cost
+    if auto_edit:
+        mode = PermissionMode.AUTO_EDIT
     from trendlab.app import TrendLabApp
+
+    if prompt:
+        _first_run_check(config, model or config.defaults.model)
+        tl_app = TrendLabApp(
+            project, config, model_ref=model, console=console, permission_mode=mode, resume=resume
+        )
+        code = asyncio.run(_run_once(tl_app, prompt, output))
+        raise typer.Exit(code)
+    _first_run_check(config, model or config.defaults.model)
+    use_tui = not plain and sys.stdin.isatty() and sys.stdout.isatty()
+    if use_tui:
+        try:
+            from trendlab.ui.tui import run_tui
+        except ImportError:
+            use_tui = False
+    if use_tui:
+        run_tui(project, config, model_ref=model, permission_mode=mode, resume=resume)
+        return
+    tl_app = TrendLabApp(
+        project,
+        config,
+        model_ref=model,
+        console=console,
+        permission_mode=mode,
+        resume=resume,
+        on_token=lambda t: console.print(t, end="", highlight=False),
+    )
     from trendlab.ui.repl import Repl
 
-    tl_app = TrendLabApp(project, config, model_ref=model, console=console, permission_mode=mode)
-    if prompt:
-        asyncio.run(_run_once(tl_app, prompt))
-    else:
-        asyncio.run(Repl(tl_app).run())
+    repl = Repl(tl_app)
+    asyncio.run(_run_repl(repl))
 
 
-async def _run_once(tl_app, prompt: str) -> None:
-    await tl_app.start(interactive=True)
+async def _run_repl(repl) -> None:
+    loop = asyncio.get_running_loop()
+    presses = {"n": 0}
+
+    def on_sigint() -> None:
+        presses["n"] += 1
+        if repl.cancel_current():
+            console.print("\n[yellow]Canceling current task… (Ctrl+C again to quit)[/yellow]")
+            return
+        if presses["n"] >= 2 or True:
+            console.print("\n[dim]bye[/dim]")
+            repl._quit()  # noqa: SLF001
+            loop.call_soon(
+                lambda: [
+                    t.cancel()
+                    for t in asyncio.all_tasks(loop)
+                    if t is not asyncio.current_task(loop)
+                ]
+            )
+
     try:
-        reply = await tl_app.agent.run(prompt)
-        console.print(reply)
+        loop.add_signal_handler(signal.SIGINT, on_sigint)
+    except (NotImplementedError, RuntimeError):
+        pass
+    try:
+        await repl.run()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _run_once(tl_app, prompt: str, output: str) -> int:
+    quiet = output == "json"
+    if quiet:
+        tl_app.console = Console(stderr=True, quiet=True)
+    await tl_app.start(interactive=not quiet)
+    try:
+        result = await tl_app.run_prompt(prompt)
     finally:
         await tl_app.stop()
+    if quiet:
+        typer.echo(json.dumps(result.to_json(), indent=2))
+    else:
+        console.print(result.report)
+    return 0 if result.status == "COMPLETED" else 1
 
 
 # -- trendlab remote ... ----------------------------------------------------------------
@@ -181,6 +283,71 @@ def approvals_cmd(limit: int = typer.Option(20, help="Rows to show.")) -> None:
         )
     console.print(t)
     store.close()
+
+
+@app.command("sessions")
+def sessions_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    all_projects: bool = typer.Option(False, "--all", help="Across all projects."),
+) -> None:
+    """List saved sessions; resume one with `trendlab --resume <id>`."""
+    from trendlab.sessions.store import SessionStore
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    rows = store.sessions(None if all_projects else str(project.resolve()))
+    t = Table(title="Sessions")
+    for col in ("id", "updated", "status", "model", "project", "messages", "cost"):
+        t.add_column(col)
+    for r in rows:
+        u = store.usage(r["id"])
+        t.add_row(
+            r["id"],
+            r["updated_at"][:19],
+            r["status"],
+            r["model"] or "-",
+            Path(r["project_path"]).name,
+            str(len(store.messages(r["id"]))),
+            f"${u['cost_usd']:.3f}",
+        )
+    console.print(t)
+    store.close()
+
+
+@app.command("bench")
+def bench_cmd(
+    model: str = typer.Option(..., "--model", "-m", help="provider:model to benchmark."),
+    fixture: str | None = typer.Option(None, help="Run one fixture (A..E) instead of all."),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Run the autonomous coding benchmark fixtures against a model (spec §54)."""
+    from trendlab.benchmarks.runner import run_benchmarks
+
+    results = asyncio.run(run_benchmarks(model, fixture))
+    if output == "json":
+        typer.echo(json.dumps(results, indent=2))
+        return
+    t = Table(title=f"Benchmark — {model}")
+    for col in (
+        "fixture",
+        "success",
+        "model calls",
+        "tool calls",
+        "cost",
+        "elapsed",
+        "files changed",
+    ):
+        t.add_column(col)
+    for r in results:
+        t.add_row(
+            r["fixture"],
+            "✓" if r["success"] else "✗",
+            str(r["model_calls"]),
+            str(r["tool_calls"]),
+            f"${r['cost_usd']:.3f}",
+            f"{r['elapsed_s']:.0f}s",
+            str(r["files_changed"]),
+        )
+    console.print(t)
 
 
 def main() -> None:

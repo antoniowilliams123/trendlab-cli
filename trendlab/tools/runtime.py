@@ -7,7 +7,7 @@ validate args → describe permission → PermissionEngine → (ASK → Approval
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -22,6 +22,7 @@ from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, Tool
 from trendlab.tools.registry import ToolRegistry
 
 StateHook = Callable[[str], None]
+MUTATING_TOOLS = {"write_file", "patch_file", "delete_file"}
 
 
 class ToolRuntime:
@@ -43,6 +44,8 @@ class ToolRuntime:
         self.changed_files: dict[str, list[str]] = {}  # rel path → diffs this session
         self.validation_runs: list[dict[str, Any]] = []
         self.hooks: Any = None  # trendlab.hooks.HookRunner, attached by the app
+        # Called with affected files before a mutation runs (checkpointing).
+        self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
     async def execute(self, call: ToolCall) -> ToolResult:
         tool = self.registry.get(call.name)
@@ -166,6 +169,11 @@ class ToolRuntime:
             tool=tool.name,
             summary=perm.summary,
         )
+        if tool.name in MUTATING_TOOLS and self.on_before_mutation is not None:
+            try:
+                await self.on_before_mutation(list(perm.affected_files))
+            except Exception:  # noqa: BLE001 — checkpoint failure must not block the edit
+                pass
         try:
             result = await tool.run(args, self.ctx)
         except PathOutsideProjectError as exc:
@@ -180,7 +188,7 @@ class ToolRuntime:
             duration_ms=int((time.monotonic() - started) * 1000),
             **{k: v for k, v in result.data.items() if k in {"exit_code", "sha256"}},
         )
-        if result.ok and tool.name in {"write_file", "patch_file", "delete_file"}:
+        if result.ok and tool.name in MUTATING_TOOLS:
             self.events.emit(
                 EventType.FILE_CHANGED,
                 session_id=self.ctx.session_id,

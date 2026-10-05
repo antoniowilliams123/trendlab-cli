@@ -72,6 +72,9 @@ class ApprovalRequest(BaseModel):
     machine: str
     fingerprint: str
     status: ApprovalStatus = ApprovalStatus.PENDING
+    # "approval" (a permission decision) or "question" (free-text answer, no authority).
+    kind: str = "approval"
+    options: list[str] = Field(default_factory=list)
     # Which remote channels this request may be decided through. High-risk
     # operations are local-only unless configured otherwise.
     remote_allowed: bool = True
@@ -142,6 +145,8 @@ class ApprovalRequest(BaseModel):
             "status": self.status.value,
             "remote_allowed": self.remote_allowed,
             "session_scope_allowed": self.session_scope_allowed,
+            "kind": self.kind,
+            "options": list(self.options),
         }
         if include_decision_token:
             view["decision_token"] = self.decision_token

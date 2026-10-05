@@ -21,8 +21,9 @@ def unified_diff(path: str, old: str, new: str, context: int = 3) -> str:
 
 
 def diff_stats(diff: str) -> tuple[int, int]:
-    added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
+    lines = diff.splitlines()
+    added = sum(1 for ln in lines if ln.startswith("+") and not ln.startswith("+++"))
+    removed = sum(1 for ln in lines if ln.startswith("-") and not ln.startswith("---"))
     return added, removed
 
 

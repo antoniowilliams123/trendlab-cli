@@ -193,7 +193,7 @@ class AppConfig(BaseModel):
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()
     notifications: NotificationsConfig = NotificationsConfig()
-    # Project-level validation commands: test_command, lint_command, typecheck_command, build_command.
+    # Project validation commands: test_command, lint_command, typecheck_command, build_command.
     project: dict[str, str] = Field(default_factory=dict)
 
     def mcp_servers(self) -> dict[str, McpServerConfig]:

@@ -29,9 +29,8 @@ _PACKAGE_INSTALL = re.compile(
     r"\b(pip3?|uv|pipx|poetry|conda)\s+(install|add)\b|\b(npm|pnpm|yarn)\s+(install|add|i)\b"
     r"|\bapt(-get)?\s+install\b|\bbrew\s+install\b|\bcargo\s+(install|add)\b|\bgo\s+get\b"
 )
-_NETWORK = re.compile(
-    r"\b(curl|wget|ssh|scp|rsync|nc|ncat|telnet|ftp|git\s+(push|fetch|pull|clone))\b"
-)
+_NETWORK_CMDS = {"curl", "wget", "ssh", "scp", "sftp", "rsync", "nc", "ncat", "telnet", "ftp"}
+_GIT_NETWORK = {"push", "fetch", "pull", "clone", "remote"}
 _TESTS = re.compile(
     r"^\s*(python3?\s+-m\s+)?(pytest|unittest|tox|nox|jest|vitest|mocha|cargo\s+test|go\s+test|"
     r"npm\s+test|pnpm\s+test|yarn\s+test|ruff|mypy|pyright|flake8|eslint|black\s+--check)\b"
@@ -97,6 +96,25 @@ def _is_read_only_segment(seg: str) -> bool:
     return False
 
 
+def _is_network_segment(seg: str) -> bool:
+    """Network only when a network *command* is invoked — not when 'ssh' appears in a path."""
+    try:
+        parts = shlex.split(seg)
+    except ValueError:
+        return False
+    # Skip leading env assignments / sudo-like wrappers already handled elsewhere.
+    while parts and "=" in parts[0] and not parts[0].startswith("-"):
+        parts = parts[1:]
+    if not parts:
+        return False
+    head = parts[0].rsplit("/", 1)[-1]
+    if head in _NETWORK_CMDS:
+        return True
+    if head == "git" and any(p in _GIT_NETWORK for p in parts[1:3]):
+        return True
+    return False
+
+
 def classify_shell_command(command: str) -> OperationCategory:
     text = command.strip()
     if not text:
@@ -108,9 +126,9 @@ def classify_shell_command(command: str) -> OperationCategory:
             return OperationCategory.DESTRUCTIVE
     if _PACKAGE_INSTALL.search(text):
         return OperationCategory.PACKAGE_INSTALL
-    if _NETWORK.search(text):
-        return OperationCategory.NETWORK
     segments = _segments(text)
+    if any(_is_network_segment(seg) for seg in segments):
+        return OperationCategory.NETWORK
     if segments and all(_TESTS.match(s) for s in segments):
         return OperationCategory.RUN_TESTS
     if segments and all(_is_read_only_segment(s) for s in segments):

@@ -1,20 +1,35 @@
 # TrendLab CLI
 
 **TrendLab CLI** is a local-first, model-agnostic agentic coding harness: a terminal agent that
-inspects a repository, edits files, runs commands and tests, and keeps working until there is
-evidence the task is done — with every risky operation gated by a permission engine you control.
-
-Its headline capability is the **Remote Approval System**: start a long task on your laptop,
-walk away, and approve or deny permission requests from your phone. TrendLab resumes the moment
-you decide.
+inspects a repository, plans, edits files, runs commands and tests, recovers from failures, and
+stops only when there is evidence the task is done. Every risky operation passes through a
+permission engine you control, and you can approve, deny or answer questions **from your phone**.
 
 ```text
 ⏳ Waiting for approval
-   Action:   Install Python package
-   Command:  pip install pandas-ta
+   Action:   Patch src/orders.py (+3 -1)
    Risk:     MEDIUM
 Remote approval request sent — decide here or on your phone.
 ```
+
+## What it does
+
+- **Any model.** OpenAI, DeepSeek, Moonshot/Kimi, Ollama or any OpenAI-compatible endpoint behind
+  one gateway with retries, fallback, streaming, cost tracking and a JSON fallback for models
+  with weak native tool calling. Hot-switch with `/model`; route roles with `[routing]`.
+- **Real tools.** read/list/glob/search, atomic `write_file` and targeted `patch_file` with diff
+  previews and hash conflict protection, `shell` with risk classification, `run_tests` with
+  auto-detected validation commands, read-only git tools, `task` plan, `delegate` sub-agents,
+  `ask_user`, and MCP servers as first-class tools.
+- **Evidence-based completion.** A structured plan, a completion evaluator that refuses "done"
+  without validation, loop detection with model escalation, iteration/cost/time limits,
+  automatic checkpoints and `/undo`.
+- **Long sessions.** Repository map, token budgeting, structured compaction, SQLite persistence
+  and `--resume`.
+- **Remote approval.** Authenticated mobile web page, Telegram/ntfy/webhook notifications,
+  expiry reminders, completion/failure pings, questions answered from the phone, full audit trail.
+- **Two interfaces.** A Textual full-screen TUI (default) and a Rich REPL (`--plain`), plus
+  headless `-p "..." --output json` for CI.
 
 ## Install
 
@@ -25,19 +40,25 @@ pip3 --python .venv/bin/python install -e ".[dev]"
 .venv/bin/trendlab --version
 ```
 
-Configuration lives in `~/.trendlab/config.toml` (global) and `.trendlab/config.toml`
-(per project). Secrets are environment variables only (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …).
-See `docs/config.example.toml`. Project instructions go in `TRENDLAB.md`.
+Configuration: `~/.trendlab/config.toml` (global) and `.trendlab/config.toml` (per project).
+Secrets are environment variables only (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …). Start from
+`docs/config.example.toml`. Project instructions live in `TRENDLAB.md` (`/init` drafts one).
 
 ## Use
 
 ```bash
-trendlab                              # interactive REPL in the current project
-trendlab -m deepseek:deepseek-chat    # pick a provider:model
-trendlab -p "Run the tests and fix failures" --mode auto_edit
+trendlab                                  # full-screen TUI in the current project
+trendlab --plain                          # Rich REPL
+trendlab -m deepseek:deepseek-chat        # pick provider:model
+trendlab -p "Run the tests and fix failures" --auto-edit --output json   # headless / CI
+trendlab --resume latest                  # continue the last session for this project
+trendlab sessions | trendlab approvals    # history
+trendlab bench -m ollama:qwen3-coder      # benchmark fixtures A–E on a model
 ```
 
-Slash commands: `/help /status /mode /permissions /remote /approvals /model /clear /quit`.
+Slash commands: `/help /status /mode /permissions /plan /context /compact /cost /cost-limit
+/diff /git /commit /checkpoint /undo /sessions /new /model /models /review /init /skills /hooks
+/mcp /remote /approvals /clear /quit`.
 
 ## Remote approval from your phone
 
@@ -46,29 +67,32 @@ Slash commands: `/help /status /mode /permissions /remote /approvals /model /cle
 ```bash
 # Bind to an address your phone can reach. Tailscale is the recommended transport:
 trendlab remote enable --host 100.x.y.z --allow-insecure-http --machine-name ThinkPad
-# (or give --public-url / tls_cert + tls_key in config for HTTPS)
+# (or set tls_cert + tls_key / public_url in config for HTTPS)
 trendlab remote url        # prints the pairing link — open it ONCE on your phone
 ```
 
-Optional phone notifications (pick one provider in `[notifications]`):
+Optional notifications (pick one provider in `[notifications]`; see `docs/config.example.toml`):
 
 ```toml
 [notifications]
 enabled = true
 provider = "ntfy"          # or "telegram" / "webhook"
+notify_on = ["approval", "question", "completion", "failure"]
 [notifications.ntfy]
 topic = "trendlab-<random>"
 ```
 
-**On the phone:** open the pairing link once (the token is stored in the browser), then open
-the same URL whenever a notification arrives. Each pending request shows machine, project,
-action, command, risk, directory and expiry with **Approve Once / Approve for Session / Deny**.
+**On the phone:** open the pairing link once (the token is stored in the browser), then open the
+same URL whenever a notification arrives. Each card shows machine, project, action, command,
+risk, directory, expiry and the proposed diff, with **Approve Once / Approve for Session / Deny**.
+Questions from the agent appear as cards with option buttons or a text box.
 
-**Security model (short version):** bearer-token API, per-request decision tokens, SHA-256
-operation fingerprint binding, single-use decisions, expiry (default 30 min), high-risk
-operations terminal-only by default, redaction of secrets everywhere, full audit trail
-(`~/.trendlab/logs/events.jsonl` + SQLite). A restarted TrendLab cancels stale pending approvals
-instead of executing them. Details: `docs/TRENDLAB_CLI_SPEC.md` §17, §35, §36.
+**Security model (short version):** bearer-token API with lockout, per-request decision tokens,
+SHA-256 operation fingerprint binding, single-use decisions, expiry (default 30 min), high-risk
+operations terminal-only by default, project-scope rules terminal-only, redaction of secrets
+everywhere, full audit trail (`~/.trendlab/logs/events.jsonl` + SQLite). A restarted TrendLab
+cancels stale pending approvals instead of executing them. Details: `docs/TRENDLAB_CLI_SPEC.md`
+§17, §35, §36.
 
 ## Develop
 
@@ -78,4 +102,5 @@ instead of executing them. Details: `docs/TRENDLAB_CLI_SPEC.md` §17, §35, §36
 ```
 
 Layout follows the spec (`docs/TRENDLAB_CLI_SPEC.md` §9): `config/ permissions/ approvals/
-telemetry/ sessions/ tools/ providers/ agent/ ui/ security/`. Build history: `BUILD_STATUS.md`.
+telemetry/ sessions/ tools/ providers/ agent/ context/ orchestration/ extensions/ benchmarks/
+ui/ security/`. Build history: `BUILD_STATUS.md`.

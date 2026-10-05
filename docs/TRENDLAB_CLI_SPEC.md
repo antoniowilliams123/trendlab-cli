@@ -2,7 +2,8 @@
 
 ## Product Requirements & Technical Specification
 
-**Version 1.1 — adds the Remote Approval System as a first-class capability (2026-10-04).**
+**Version 1.2 — remote approval, questions-to-phone, completion notifications, sub-agents,
+context engine, checkpoints, TUI and ecosystem features implemented (2026-10-04).**
 
 **Version:** 1.0\
 **Status:** Build-ready specification\
@@ -310,6 +311,16 @@ the terminal, and never "for the session".
 
 As a user, I want every remote decision recorded: when it happened, which
 channel delivered it, and which client made it.
+
+### Questions and Progress on the Phone
+
+As a user, I want TrendLab to be able to ask me a clarifying question
+mid-task and let me answer from my phone, so an unattended run does not
+stall on a decision only I can make.
+
+As a user, I want a notification when a run completes, fails or stalls,
+with what changed and whether it was validated, so I know when to come
+back.
 
 ------------------------------------------------------------------------
 
@@ -851,6 +862,22 @@ Create/update task state.
 
 Launch a sub-agent.
 
+
+#### `ask_user`
+
+Ask the human a free-text question (optionally with options). Delivered
+through the same approval channels (terminal, phone); the answer is data,
+never authority.
+
+#### `delete_file`
+
+Delete one project file (high-risk category: local approval, once only).
+
+Implemented V1 tool set: `read_file`, `list_directory`, `glob`,
+`search_text`, `write_file`, `patch_file`, `delete_file`, `shell`,
+`git_status`, `git_diff`, `git_log`, `run_tests`, `task`, `delegate`,
+`ask_user`, plus MCP tools registered as `mcp_<server>_<tool>`.
+
 ------------------------------------------------------------------------
 
 ## 15. File Editing Strategy
@@ -1035,6 +1062,18 @@ status: pending | approved | denied | expired | canceled | superseded
 The request is redacted at construction time (see §35). It never carries
 environment variables or credentials.
 
+
+### Diff Preview and Project Rules
+
+Approval requests for `write_file` / `patch_file` carry a redacted unified
+diff (`preview`) shown in the terminal, the TUI modal and the phone card,
+so approvers see the exact change, not just a filename.
+
+`[p] always for this project` persists the rule to
+`<project>/.trendlab/permissions.toml`. Project scope can only be granted
+from a trusted local channel (terminal/TUI), never from the phone, and
+never for high-risk categories.
+
 ------------------------------------------------------------------------
 
 ## 18. Context Engine
@@ -1209,6 +1248,18 @@ transcript.
 
 This reduces context pollution and cost.
 
+
+### Implementation Notes
+
+Sub-agents are fresh `AgentRuntime` instances with an isolated
+`ContextManager` (role prompt + the parent's short context, never the
+transcript), a registry restricted to read-only tools (plus `run_tests`
+for the tester), their own `CostTracker` rolled into the session total,
+and a role-routed model (`[routing] explorer = ...`). The `delegate` tool
+exposes them to the main agent; `parallel_objectives` fans out read-only
+research with `asyncio.gather`. Writes remain with the parent — one
+mutation coordinator.
+
 ------------------------------------------------------------------------
 
 ## 23. Parallelism
@@ -1296,6 +1347,16 @@ Did I introduce unrelated changes?
 Did I run the strongest reasonable validation?
 Are there unresolved failures?
 ```
+
+
+### Completion Evaluator (implemented)
+
+When the model answers without tool calls, the evaluator checks the
+evidence: files changed but no validation run (when a validation command
+exists), last validation failed, or plan tasks still open without the
+model acknowledging it. Each finding produces one corrective nudge (at
+most two per run); then the run completes with the evidence summarised in
+the final report. Sub-agents skip nudging — the parent validates.
 
 ------------------------------------------------------------------------
 
@@ -1398,6 +1459,13 @@ Undo must avoid overwriting external user changes.
 Git should be leveraged when available, but TrendLab's internal
 checkpointing should not depend entirely on commits.
 
+
+Implemented: the first mutation of each run creates an automatic
+checkpoint (snapshots under `.trendlab/checkpoints/<id>/`, pre/post
+hashes, git HEAD); later mutations in the same run extend it. `/undo`
+restores the latest (or a named) checkpoint and refuses when a file
+changed externally since, unless `force` is given.
+
 ------------------------------------------------------------------------
 
 ## 29. Terminal UI Specification
@@ -1487,6 +1555,18 @@ Continuing...
 
 The local `y / s / n` flow keeps working whether or not remote approval is
 enabled.
+
+
+### Implementation
+
+`trendlab` launches the Textual TUI when attached to a terminal
+(`--plain` selects the Rich REPL; `-p` runs headless). Layout: header
+(product, model + LOCAL/REMOTE label, project, mode, remote status,
+session) · transcript (streamed text, tool activity, diffs, reports) ·
+plan panel · status bar (model, context size, cost, mode, agent state,
+pending approvals) · input. Approvals and questions open a modal with
+`y / s / p / n` keys; the same request remains answerable from the phone.
+Ctrl+C cancels the running task; a second press quits.
 
 ------------------------------------------------------------------------
 
@@ -1902,6 +1982,12 @@ Total                $0.85
 
 Prices must be configuration-driven because provider pricing changes.
 
+
+Implemented via `[pricing."provider:model"]` (input/output/cached per
+million tokens). `/cost` shows per-model spend with LOCAL models at $0;
+`/cost-limit <usd>` sets the hard budget; a warning event fires at
+`warn_at_fraction` (default 80%). Sub-agent spend is included.
+
 ------------------------------------------------------------------------
 
 ## 41. Budget Controls
@@ -2121,6 +2207,13 @@ After a threshold:
 3.  optionally escalate model;
 4.  request user input if necessary.
 
+
+Implemented: identical tool call + identical result three times, or the
+same failing command/test output three times, is `NO_PROGRESS`. First
+strike: corrective feedback appended to the observation. Second strike:
+escalate to `[routing] escalation` if configured, otherwise stop with
+`FAILED`.
+
 ------------------------------------------------------------------------
 
 ## 49. Task Evidence
@@ -2234,6 +2327,18 @@ Store deterministic transcripts for mocked model outputs.
 ### Destructive Command Tests
 
 Verify dangerous commands are blocked or require approval.
+
+### Implemented Suites
+
+`tests/` covers: config, permissions/classifier/path boundary, redaction,
+approval manager, web channel, notifications, tool runtime, extended
+tools, providers/gateway/cost, agent loop (evaluator, loop detection,
+limits, cancellation, escalation, overflow→compaction), context/sessions
+(plan, repo map, compaction, checkpoints, store), app/CLI (resume,
+auto-checkpoint, REPL commands, headless JSON), sub-agents/hooks/skills/
+init/MCP, questions/reminders, security regressions (prompt injection,
+destructive commands, external paths), benchmarks, and the Textual TUI via
+its headless pilot.
 
 ### Remote Approval Tests
 
@@ -2728,16 +2833,13 @@ SQLite tables:
 sessions
 events
 messages
-tasks
-tool_calls
-model_calls
-file_mutations
+approvals
+session_state      (plan, compaction summary — keyed JSON)
+model_calls        (usage + cost per call)
 checkpoints
-summaries
-usage
 ```
 
-Large command outputs may be stored separately with references to avoid
+Schema version 2. Large command outputs may be stored separately with references to avoid
 bloating primary tables.
 
 ------------------------------------------------------------------------
@@ -2859,7 +2961,11 @@ V1 is considered successful when a user can:
 21. enable remote approval, pair a phone, and approve or deny a pending
     operation from the phone with TrendLab continuing automatically;
 22. observe that a restarted TrendLab cancels, rather than executes,
-    approvals left pending by the previous process.
+    approvals left pending by the previous process;
+23. answer a clarifying question from the phone and see the run continue;
+24. receive a completion/failure notification on the phone;
+25. undo the last run's edits with `/undo`;
+26. delegate research to a read-only sub-agent and run `/review`.
 
 ------------------------------------------------------------------------
 
@@ -3108,8 +3214,10 @@ Potential post-V1 capabilities (remote/mobile approval via the web
 channel is now part of V1; the items below extend it):
 
 -   native mobile app and chat-platform approval channels (Slack,
-    Discord, Telegram) on the `ApprovalChannel` abstraction;
+    Discord, Telegram inline buttons) on the `ApprovalChannel` abstraction;
 -   push notifications with provider-side delivery receipts;
+-   plan-approval gate (approve the plan from the phone before any edit);
+-   secret scanning on writes; transcript export; container sandboxing;
 -   browser control;
 -   issue tracker integration;
 -   GitHub/GitLab workflows;

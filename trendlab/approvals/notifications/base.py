@@ -42,6 +42,24 @@ class NotificationProvider(ABC):
 def build_notification(
     request: ApprovalRequest, approval_url: str | None, project: str
 ) -> Notification:
+    if request.kind == "question":
+        q_lines = [
+            f"Machine: {request.machine}",
+            f"Project: {project}",
+            f"Question: {request.explanation}",
+        ]
+        if request.options:
+            q_lines.append("Options: " + " / ".join(request.options))
+        q_lines.append(f"Expires in: {max(1, request.seconds_remaining() // 60)} min")
+        if approval_url:
+            q_lines.append(f"Answer: {approval_url}")
+        return Notification(
+            title=f"{PRODUCT_NAME} — Question for you",
+            body=redact_text("\n".join(q_lines)),
+            url=approval_url,
+            approval_id=request.approval_id,
+            risk="low",
+        )
     lines = [
         f"Machine: {request.machine}",
         f"Project: {project}",
@@ -56,10 +74,14 @@ def build_notification(
         lines.append(f"Files: {shown}")
     if request.preview and request.preview.startswith("---"):
         added = sum(
-            1 for l in request.preview.splitlines() if l.startswith("+") and not l.startswith("+++")
+            1
+            for ln in request.preview.splitlines()
+            if ln.startswith("+") and not ln.startswith("+++")
         )
         removed = sum(
-            1 for l in request.preview.splitlines() if l.startswith("-") and not l.startswith("---")
+            1
+            for ln in request.preview.splitlines()
+            if ln.startswith("-") and not ln.startswith("---")
         )
         lines.append(f"Change: +{added} -{removed} lines (diff on the approval page)")
     lines.append(f"Risk: {request.risk.value.capitalize()}")

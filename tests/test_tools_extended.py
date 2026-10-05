@@ -52,12 +52,12 @@ def test_detect_validation(project: Path):
     )
     (project / "tests").mkdir()
     cmds = detect_validation_commands(project)
-    assert cmds["test"] == "python -m pytest -q" and cmds["lint"] == "ruff check ."
+    assert cmds["test"].endswith("-m pytest -q") and cmds["lint"] == "ruff check ."
     cfg = AppConfig(project={"test_command": "make check"})
     assert validation_commands(cfg, project)["test"] == "make check"
     (project / "package.json").write_text('{"scripts": {"test": "jest", "build": "tsc"}}')
     cmds = detect_validation_commands(project)
-    assert cmds["build"] == "npm run build" and cmds["test"] == "python -m pytest -q"
+    assert cmds["build"] == "npm run build" and cmds["test"].endswith("-m pytest -q")
 
 
 def test_unified_diff_and_stats():

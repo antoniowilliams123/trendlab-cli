@@ -1,34 +1,47 @@
-"""Composition root: wires config → store → events → permissions → approvals → tools → agent.
-
-UI layers (REPL today, Textual later) talk to ``TrendLabApp``; they contain no
-agent or permission logic.
-"""
+"""Composition root: config → store → events → permissions → approvals → gateway → context →
+tools → agent. UI layers (REPL, Textual TUI) talk to ``TrendLabApp`` and contain no agent logic."""
 
 from __future__ import annotations
 
+import asyncio
 import socket
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
+from trendlab import PRODUCT_NAME
 from trendlab.agent.prompt import build_system_prompt
-from trendlab.agent.runtime import AgentRuntime
+from trendlab.agent.runtime import AgentRuntime, RunResult
+from trendlab.agent.tasks import Plan
 from trendlab.approvals.channels.local import LocalTerminalChannel
 from trendlab.approvals.channels.web import WebApprovalChannel
 from trendlab.approvals.manager import ApprovalManager
+from trendlab.approvals.notifications.base import Notification, NotificationProvider
 from trendlab.approvals.notifications.registry import create_notification_provider
 from trendlab.approvals.tokens import load_or_create_token, pairing_url
 from trendlab.config.loader import trendlab_home
 from trendlab.config.schema import AppConfig, PermissionMode
+from trendlab.context.ignore import IgnoreRules
+from trendlab.context.manager import ContextManager
+from trendlab.context.repository_map import RepositoryMap
+from trendlab.context.validation import validation_commands
+from trendlab.orchestration.subagents import SubAgentRunner, delegate_tool_factory
 from trendlab.permissions.engine import PermissionEngine
+from trendlab.permissions.rules import ProjectRules
 from trendlab.providers.base import ModelProvider
-from trendlab.providers.registry import create_provider
+from trendlab.providers.gateway import ModelGateway
+from trendlab.providers.registry import model_info, resolve_role
+from trendlab.sessions.checkpoints import CheckpointManager
 from trendlab.sessions.store import SessionStore
+from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import Event, EventBus, EventType, JsonlEventSink
+from trendlab.tools.ask_user import AskUserTool
 from trendlab.tools.base import ToolContext
 from trendlab.tools.registry import default_registry
 from trendlab.tools.runtime import ToolRuntime
+from trendlab.tools.task_tool import TaskTool
 from trendlab.ui.console import ConsoleInput
 
 
@@ -48,6 +61,8 @@ class TrendLabApp:
         console_input: ConsoleInput | None = None,
         permission_mode: PermissionMode | None = None,
         data_dir: Path | None = None,
+        resume: str | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> None:
         self.project_root = project_root.resolve()
         self.config = config
@@ -55,36 +70,52 @@ class TrendLabApp:
         self._provider_override = provider
         self.console = console or Console()
         self.console_input = console_input or ConsoleInput()
-        self.permission_mode = permission_mode or config.defaults.permission_mode
+        self.permission_mode = PermissionMode(permission_mode or config.defaults.permission_mode)
         self.data_dir = data_dir or trendlab_home()
+        self.resume_target = resume
+        self.on_token = on_token
         self.events = EventBus()
         self.store: SessionStore | None = None
         self.session_id: str = ""
+        self.resumed = False
         self.engine = PermissionEngine(mode=self.permission_mode)
         self.approvals: ApprovalManager | None = None
         self.local_channel: LocalTerminalChannel | None = None
         self.web_channel: WebApprovalChannel | None = None
+        self.gateway: ModelGateway | None = None
+        self.costs: CostTracker | None = None
+        self.context: ContextManager | None = None
+        self.plan = Plan()
+        self.tools: ToolRuntime | None = None
         self.agent: AgentRuntime | None = None
-        self.provider: ModelProvider | None = None
+        self.checkpoints: CheckpointManager | None = None
+        self.repo_map: RepositoryMap | None = None
+        self.hooks: Any = None
+        self.mcp: Any = None
+        self.skills: Any = None
+        self.notifier: NotificationProvider | None = None
+        self.subagents: SubAgentRunner | None = None
         self._token: str | None = None
+        self._run_checkpoint: dict[str, Any] | None = None
+        self._reminder_task: asyncio.Task | None = None
 
-    # -- lifecycle ------------------------------------------------------------------
+    # -- lifecycle -----------------------------------------------------------------------------
     async def start(self, *, interactive: bool = True, command_handler=None) -> None:
         self.store = SessionStore(self.data_dir / "sessions.db")
-        self.session_id = self.store.create_session(
-            str(self.project_root), machine_name(self.config), self.model_ref
-        )
+        machine = machine_name(self.config)
+        self._open_session(machine)
         self.events.subscribe(JsonlEventSink(self.data_dir / "logs" / "events.jsonl"))
         self.events.subscribe(self._persist_event)
 
+        self.notifier = create_notification_provider(self.config.notifications)
         self.approvals = ApprovalManager(
             config=self.config.remote_approval,
             events=self.events,
             store=self.store,
             session_id=self.session_id,
-            machine=machine_name(self.config),
+            machine=machine,
             project_name=self.project_root.name,
-            notifier=create_notification_provider(self.config.notifications),
+            notifier=self.notifier if "approval" in self.config.notifications.notify_on else None,
         )
         stale = self.approvals.recover()
         if stale:
@@ -100,46 +131,346 @@ class TrendLabApp:
         if self.config.remote_approval.enabled:
             await self.enable_remote(persist=False)
 
-        self.provider = self._provider_override or create_provider(self.config, self.model_ref)
-        ctx = ToolContext(project_root=self.project_root, session_id=self.session_id)
-        tool_runtime = ToolRuntime(
-            default_registry(), self.engine, self.approvals, self.events, ctx
+        self.gateway = ModelGateway(self.config, self.events, self.session_id)
+        if self._provider_override is not None:
+            self.gateway.register(self.model_ref, self._provider_override)
+        self.costs = CostTracker(self.config)
+        self.engine.project_rules = ProjectRules(self.project_root)
+
+        rules = IgnoreRules.for_project(
+            self.project_root, respect_gitignore=self.config.git.respect_gitignore
         )
-        self.agent = AgentRuntime(
-            provider=self.provider,
-            tools=tool_runtime,
+        self.repo_map = RepositoryMap(
+            self.project_root, rules, max_files=self.config.context.repo_map_max_files
+        ).build()
+        info = model_info(self.config, self.model_ref)
+        self.context = ContextManager(
+            self.config.context,
+            self.events,
+            self.session_id,
+            system_prompt=build_system_prompt(self.project_root),
+            context_window=info.context_window or self.config.context.default_context_window,
+            summarizer=self._summarize,
+        )
+        self.context.repo_map_text = self.repo_map.render(
+            self.config.context.repo_map_budget_tokens * 4
+        )
+        self.checkpoints = CheckpointManager(self.project_root, self.store, self.session_id)
+        if self.resumed:
+            self._restore_state()
+
+        ctx = ToolContext(
+            project_root=self.project_root,
+            session_id=self.session_id,
+            ignore_rules=rules,
+            validation_commands=validation_commands(self.config, self.project_root),
+        )
+        registry = default_registry()
+        registry.register(TaskTool(self.plan, self.events))
+        registry.register(AskUserTool(self.approvals))
+        self.tools = ToolRuntime(registry, self.engine, self.approvals, self.events, ctx)
+        self.tools.on_before_mutation = self._checkpoint_before_mutation
+        self.subagents = SubAgentRunner(
+            config=self.config,
+            gateway=self.gateway,
             events=self.events,
             session_id=self.session_id,
-            system_prompt=build_system_prompt(self.project_root),
-            max_iterations=self.config.limits.max_iterations,
+            session_model=self.model_ref,
+            parent_registry=registry,
+            parent_ctx=ctx,
+            engine=self.engine,
+            approvals=self.approvals,
+            costs=self.costs,
         )
+        registry.register(delegate_tool_factory(self.subagents))
+        self.agent = AgentRuntime(
+            gateway=self.gateway,
+            model_ref=self.model_ref,
+            tools=self.tools,
+            context=self.context,
+            events=self.events,
+            session_id=self.session_id,
+            costs=self.costs,
+            limits=self.config.limits,
+            plan=self.plan,
+            escalation_model=self.config.routing.get("escalation"),
+            on_token=self.on_token,
+            on_message=self._persist_message,
+            stream=self.on_token is not None,
+        )
+        await self._start_extensions()
+        self.events.subscribe(self._notify_run_events)
         self.events.emit(
-            EventType.SESSION_STARTED,
+            EventType.SESSION_RESUMED if self.resumed else EventType.SESSION_STARTED,
             session_id=self.session_id,
             project=str(self.project_root),
             model=self.model_ref,
             mode=self.engine.mode.value,
             remote_enabled=self.approvals.remote_enabled,
+            files_mapped=len(self.repo_map.files),
+        )
+        if self.hooks is not None:
+            await self.hooks.run("session_start")
+        if self.notifier is not None and self.config.notifications.reminder_at_fraction > 0:
+            self._reminder_task = asyncio.create_task(self._reminder_loop())
+
+    def _open_session(self, machine: str) -> None:
+        assert self.store is not None
+        target = self.resume_target
+        row = None
+        if target:
+            row = (
+                self.store.latest_session(str(self.project_root))
+                if target == "latest"
+                else self.store.get_session(target)
+            )
+            if row is None:
+                self.console.print(
+                    f"[yellow]No session to resume ({target}); starting a new one.[/yellow]"
+                )
+        if row is not None:
+            self.session_id = row["id"]
+            self.resumed = True
+            if not self._provider_override and row.get("model"):
+                self.model_ref = row["model"]
+            self.store.touch_session(self.session_id)
+        else:
+            self.session_id = self.store.create_session(
+                str(self.project_root), machine, self.model_ref
+            )
+
+    def _restore_state(self) -> None:
+        assert self.store and self.context
+        self.context.messages = self.store.messages(self.session_id)
+        self.plan = Plan.from_json(self.store.get_state(self.session_id, "plan"))
+        summary = self.store.get_state(self.session_id, "summary")
+        if summary:
+            from trendlab.context.compaction import CompactionRecord
+
+            self.context.summary = CompactionRecord.model_validate(summary)
+        self.events.emit(
+            EventType.SESSION_RESTORED,
+            session_id=self.session_id,
+            messages=len(self.context.messages),
+            tasks=len(self.plan.tasks),
         )
 
+    async def _start_extensions(self) -> None:
+        """Hooks, skills and MCP servers are optional; failures are reported, never fatal."""
+        try:
+            from trendlab.extensions.hooks import HookRunner
+
+            self.hooks = HookRunner(
+                self.config.hooks, self.project_root, self.events, self.session_id
+            )
+            self.tools.hooks = self.hooks  # type: ignore[union-attr]
+            self.agent.hooks = self.hooks  # type: ignore[union-attr]
+        except ImportError:
+            pass
+        try:
+            from trendlab.extensions.skills import SkillLibrary
+
+            self.skills = SkillLibrary(self.project_root, self.data_dir)
+        except ImportError:
+            pass
+        servers = self.config.mcp_servers()
+        if servers:
+            try:
+                from trendlab.extensions.mcp import McpManager
+
+                self.mcp = McpManager(servers, self.events, self.session_id)
+                await self.mcp.start(self.tools.registry)  # type: ignore[union-attr]
+            except ImportError:
+                pass
+
+    async def _reminder_loop(self, interval: float = 30.0) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            if self.approvals is not None:
+                try:
+                    await self.approvals.send_reminders(
+                        self.config.notifications.reminder_at_fraction
+                    )
+                except Exception:  # noqa: BLE001 — reminders are best effort
+                    pass
+
     async def stop(self) -> None:
+        if self._reminder_task is not None:
+            self._reminder_task.cancel()
+            self._reminder_task = None
+        if self.hooks is not None:
+            await self.hooks.run("session_end")
+        if self.mcp is not None:
+            await self.mcp.stop()
         if self.approvals:
             self.approvals.cancel_all("shutdown")
             for ch in self.approvals.channels:
                 await self.approvals.remove_channel(ch)
-            if self.approvals.notifier:
-                await self.approvals.notifier.close()
-        if self.provider:
-            await self.provider.close()
+        if self.notifier:
+            await self.notifier.close()
+        if self.gateway:
+            await self.gateway.close()
         if self.store:
+            self.store.set_session_status(self.session_id, "closed")
             self.store.close()
 
-    def _persist_event(self, event: Event) -> None:
-        if self.store is not None:
-            rec = event.to_record()
-            self.store.append_event(event.session_id, rec.pop("event"), rec, rec.pop("ts"))
+    # -- running -----------------------------------------------------------------------------------
+    async def run_prompt(self, prompt: str) -> RunResult:
+        assert self.agent is not None
+        self._run_checkpoint = None
+        result = await self.agent.run(prompt)
+        if self._run_checkpoint is not None and self.checkpoints is not None:
+            self.checkpoints.seal(self._run_checkpoint["id"])
+        self._save_state()
+        if self.hooks is not None:
+            await self.hooks.run("task_complete", status=result.status)
+        return result
 
-    # -- remote approval control --------------------------------------------------
+    async def _checkpoint_before_mutation(self, files: list[str]) -> None:
+        if self.checkpoints is None:
+            return
+        if self._run_checkpoint is None:
+            from trendlab.tools.git import git_head
+
+            head = await git_head(self.project_root)
+            self._run_checkpoint = self.checkpoints.create(files, label="auto", git_head=head)
+            self.events.emit(
+                EventType.SESSION_CHECKPOINTED,
+                session_id=self.session_id,
+                checkpoint=self._run_checkpoint["id"],
+                files=files,
+            )
+        else:
+            self.checkpoints.extend(self._run_checkpoint["id"], files)
+
+    async def _summarize(self, messages: list[dict[str, Any]]) -> str:
+        assert self.gateway and self.costs
+        ref = resolve_role(self.config, "summarizer", self.model_ref)
+        response, used = await self.gateway.complete(ref, messages, None)
+        self.costs.record(
+            used,
+            response.usage,
+            0,
+            role="summarizer",
+            local=self.gateway.provider(used).capabilities().local,
+        )
+        return response.text
+
+    def _save_state(self) -> None:
+        if self.store is None:
+            return
+        self.store.set_state(self.session_id, "plan", self.plan.to_json())
+        if self.context and self.context.summary:
+            self.store.set_state(
+                self.session_id, "summary", self.context.summary.model_dump(mode="json")
+            )
+        self.store.touch_session(self.session_id)
+
+    def _persist_message(self, message: dict[str, Any]) -> None:
+        if self.store is not None:
+            self.store.append_message(self.session_id, message)
+
+    def _persist_event(self, event: Event) -> None:
+        if self.store is None:
+            return
+        rec = event.to_record()
+        self.store.append_event(event.session_id, rec.pop("event"), rec, rec.pop("ts"))
+        if event.type == EventType.MODEL_CALL_COMPLETED:
+            d = event.data
+            self.store.record_model_call(
+                self.session_id,
+                d.get("model", "?"),
+                d.get("role", "main"),
+                d.get("input_tokens", 0),
+                d.get("output_tokens", 0),
+                d.get("cached_input_tokens", 0),
+                d.get("latency_ms", 0),
+                d.get("cost_usd", 0.0),
+            )
+        elif event.type == EventType.PLAN_UPDATED:
+            self.store.set_state(self.session_id, "plan", event.data.get("plan"))
+
+    def _notify_run_events(self, event: Event) -> None:
+        """Phone notifications for completion/failure (separate from approvals)."""
+        if self.notifier is None or not self.config.notifications.enabled:
+            return
+        kinds = {
+            EventType.RUN_COMPLETED: "completion",
+            EventType.RUN_FAILED: "failure",
+            EventType.RUN_CANCELED: "failure",
+            EventType.LOOP_DETECTED: "failure",
+        }
+        kind = kinds.get(event.type)
+        if kind is None or kind not in self.config.notifications.notify_on:
+            return
+        if event.data.get("role", "main") != "main":
+            return
+        d = event.data
+        title = {
+            EventType.RUN_COMPLETED: f"{PRODUCT_NAME} — Task completed",
+            EventType.RUN_FAILED: f"{PRODUCT_NAME} — Task stopped",
+            EventType.RUN_CANCELED: f"{PRODUCT_NAME} — Task canceled",
+            EventType.LOOP_DETECTED: f"{PRODUCT_NAME} — No progress",
+        }[event.type]
+        body_lines = [f"Machine: {machine_name(self.config)}", f"Project: {self.project_root.name}"]
+        if d.get("stop_reason"):
+            body_lines.append(f"Reason: {d['stop_reason']}")
+        if d.get("reason"):
+            body_lines.append(f"Loop: {d['reason']}")
+        if d.get("changed_files"):
+            body_lines.append(f"Changed: {', '.join(d['changed_files'][:5])}")
+        if "validated" in d:
+            body_lines.append(f"Validated: {'yes' if d['validated'] else 'no'}")
+        if "cost_usd" in d:
+            body_lines.append(f"Cost: ${d['cost_usd']:.3f}")
+        notification = Notification(
+            title=title, body="\n".join(body_lines), url=None, approval_id="", risk="low"
+        )
+        import asyncio
+
+        async def _send() -> None:
+            try:
+                await self.notifier.send(notification)  # type: ignore[union-attr]
+                self.events.emit(EventType.NOTIFICATION_SENT, session_id=self.session_id, kind=kind)
+            except Exception as exc:  # noqa: BLE001
+                self.events.emit(
+                    EventType.NOTIFICATION_FAILED,
+                    session_id=self.session_id,
+                    kind=kind,
+                    error=str(exc)[:200],
+                )
+
+        try:
+            asyncio.get_running_loop().create_task(_send())
+        except RuntimeError:
+            pass
+
+    # -- model switching ---------------------------------------------------------------------------
+    def switch_model(self, model_ref: str) -> None:
+        assert self.gateway and self.agent and self.context
+        self.gateway.provider(model_ref)  # validates configuration eagerly
+        self.model_ref = model_ref
+        self.agent.set_model(model_ref)
+        if self.subagents is not None:
+            self.subagents.session_model = model_ref
+        info = model_info(self.config, model_ref)
+        self.context.context_window = (
+            info.context_window or self.config.context.default_context_window
+        )
+        if self.store:
+            self.store._conn.execute(
+                "UPDATE sessions SET model=? WHERE id=?", (model_ref, self.session_id)
+            )  # noqa: SLF001
+            self.store._conn.commit()  # noqa: SLF001
+
+    def privacy_label(self, model_ref: str | None = None) -> str:
+        assert self.gateway
+        try:
+            return self.gateway.provider(model_ref or self.model_ref).capabilities().privacy_label
+        except Exception:  # noqa: BLE001
+            return "UNKNOWN"
+
+    # -- remote approval control -------------------------------------------------------------------
     @property
     def token(self) -> str:
         if self._token is None:

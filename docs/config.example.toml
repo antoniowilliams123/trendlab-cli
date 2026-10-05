@@ -7,6 +7,23 @@ permission_mode = "ask"          # plan | ask | auto_edit | trusted
 
 [limits]
 max_iterations = 50
+# max_cost_usd = 5.00
+# max_model_calls = 200
+# max_wall_clock_minutes = 90
+warn_at_fraction = 0.8
+
+[context]
+auto_compact = true
+compact_threshold = 0.75         # of the model's context window
+default_context_window = 128000
+repo_map_max_files = 400
+
+[git]
+respect_gitignore = true
+
+[retry]
+max_attempts = 3
+base_delay_seconds = 1.0
 
 [providers.openai]
 type = "openai_compatible"
@@ -18,9 +35,63 @@ type = "openai_compatible"
 base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"
 
+[providers.moonshot]
+type = "openai_compatible"
+base_url = "https://api.moonshot.ai/v1"
+api_key_env = "MOONSHOT_API_KEY"
+
 [providers.ollama]
 type = "ollama"
 base_url = "http://localhost:11434/v1"
+# tool_calling = "structured"   # force the JSON fallback for models with weak native tool calls
+
+# Model registry (spec §58) — capabilities you know; discovered where APIs expose them.
+[models."deepseek:deepseek-chat"]
+context_window = 64000
+supports_tools = true
+
+[models."ollama:qwen3-coder"]
+context_window = 32000
+local = true
+
+# Pricing per million tokens (spec §40). Keep this current; code never hard-codes prices.
+[pricing."openai:gpt-4o-mini"]
+input_per_million = 0.15
+output_per_million = 0.60
+cached_input_per_million = 0.075
+
+# Role routing (spec §11). Missing roles use the session model. "escalation" is used after loops.
+[routing]
+# explorer = "deepseek:deepseek-chat"
+# summarizer = "ollama:qwen3-coder"
+# reviewer = "openai:gpt-4o"
+# escalation = "openai:gpt-4o"
+
+# Provider fallback for infrastructure failures only (spec §69).
+[fallback]
+# "openai:gpt-4o-mini" = ["deepseek:deepseek-chat"]
+
+# Project validation commands (auto-detected when omitted).
+[project]
+# test_command = "python -m pytest -q"
+# lint_command = "ruff check ."
+
+# Lifecycle hooks (spec §39): session_start, before_model_call, after_model_call, before_tool,
+# after_tool, before_write, after_write, task_complete, session_end.
+# [[hooks]]
+# event = "after_write"
+# command = "ruff format $TRENDLAB_FILES"
+# timeout_seconds = 30
+# [[hooks]]
+# event = "before_write"
+# command = "./scripts/policy-check.sh"
+# blocking = true
+
+# MCP servers (spec §37): tools pass through TrendLab permissions with the given category.
+# [mcp.servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# category = "network"          # read_only | network | shell_write | ...
 
 # ---------------------------------------------------------------------------
 # Remote approval (phone). Disabled until you enable it:
@@ -43,6 +114,8 @@ machine_name = "ThinkPad"
 [notifications]
 enabled = false
 provider = "none"                # none | telegram | ntfy | webhook
+notify_on = ["approval", "question", "completion", "failure"]
+reminder_at_fraction = 0.75      # re-notify when a pending approval reaches 75% of its timeout
 
 [notifications.telegram]
 bot_token_env = "TRENDLAB_TELEGRAM_BOT_TOKEN"

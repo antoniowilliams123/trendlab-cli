@@ -1,4 +1,6 @@
-"""Read-only Git tools behind a controlled adapter (spec §26). Commits are a slash command, never a tool."""
+"""Read-only Git tools behind a controlled adapter (spec §26).
+
+Commits are a slash command, never a model-callable tool."""
 
 from __future__ import annotations
 

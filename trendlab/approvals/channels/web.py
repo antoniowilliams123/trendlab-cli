@@ -283,6 +283,29 @@ class _ApprovalHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "approvals"] and parts[3] == "answer":
+            if not self._authorized():
+                return
+            body = self._read_json()
+            if body is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_body"})
+                return
+            ua = (self.headers.get("User-Agent") or "")[:80]
+            try:
+                result = self.channel.manager.answer(
+                    parts[2],
+                    str(body.get("answer", "")),
+                    via="web",
+                    by=f"{self._client()} {ua}".strip(),
+                    decision_token=str(body.get("decision_token", "")) or None,
+                )
+            except ApprovalError as exc:
+                self._send_json(exc.http_status, {"error": exc.code, "message": str(exc)})
+                return
+            self._send_json(
+                HTTPStatus.OK, {"approval_id": result.approval_id, "status": "answered"}
+            )
+            return
         if (
             len(parts) == 4
             and parts[0] == "api"

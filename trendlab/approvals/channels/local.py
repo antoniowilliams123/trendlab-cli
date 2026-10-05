@@ -66,6 +66,16 @@ class LocalTerminalChannel(ApprovalChannel):
 
     def render(self, request: ApprovalRequest) -> None:
         assert self._manager is not None
+        if request.kind == "question":
+            body = request.explanation
+            if request.options:
+                body += "\n" + "  ".join(f"[{i + 1}] {o}" for i, o in enumerate(request.options))
+            self.console.print(Panel(body, title="❓ TrendLab asks", border_style="cyan"))
+            hint = "  type your answer (or an option number) and press Enter"
+            if self._manager.remote_enabled:
+                hint += "  ·  also answerable on your phone"
+            self.console.print(hint)
+            return
         table = Table.grid(padding=(0, 1))
         table.add_row("[bold]Action:[/bold]", request.summary)
         if request.command:
@@ -105,6 +115,18 @@ class LocalTerminalChannel(ApprovalChannel):
             if text.startswith("/") and self.command_handler is not None:
                 await self.command_handler(text)
                 continue
+            if request.kind == "question":
+                if not text:
+                    continue
+                if text.isdigit() and 1 <= int(text) <= len(request.options):
+                    text = request.options[int(text) - 1]
+                try:
+                    self._manager.answer(
+                        request.approval_id, text, via=self.name, by="terminal", trusted=True
+                    )
+                except ApprovalError as exc:
+                    self.console.print(f"[yellow]Answer not applied: {exc}[/yellow]")
+                return
             lowered = text.lower()
             if lowered in {"y", "yes"}:
                 decision, scope = ApprovalDecision.APPROVE, ApprovalScope.ONCE
@@ -132,6 +154,12 @@ class LocalTerminalChannel(ApprovalChannel):
         if task is not None and not task.done():
             task.cancel()
         where = "remotely" if result.via and result.via != self.name else "locally"
+        if request.kind == "question":
+            if result.status == ApprovalStatus.APPROVED:
+                self.console.print(f"[cyan]Answered {where}:[/cyan] {result.reason}")
+            else:
+                self.console.print(f"[yellow]Question {result.status.value}[/yellow]")
+            return
         if result.status == ApprovalStatus.APPROVED:
             scope = {
                 ApprovalScope.SESSION: " for this session",

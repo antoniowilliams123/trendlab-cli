@@ -1,47 +1,127 @@
-"""The agent loop: model → tool calls → tool runtime → observations → model …
+"""The agent loop (spec §12): context → model → tools → observe → evaluate → repeat.
 
-Permission waits happen *inside* a tool call; the loop simply awaits the tool
-runtime, so a remote approval pauses only that operation while session and
-conversation state stay intact.
+Permission waits happen *inside* a tool call, so a remote approval pauses only
+that operation while session and conversation state stay intact. Completion is
+decided by the evaluator from evidence, not by the model saying "done".
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
+from trendlab.agent.evaluator import CompletionEvaluator, EvidenceSummary, final_report
+from trendlab.agent.loop_detector import LoopDetector
+from trendlab.agent.recovery import (
+    NO_PROGRESS_FEEDBACK,
+    FailureClass,
+    RecoveryAction,
+    classify_provider_error,
+    recovery_for,
+)
 from trendlab.agent.state import AgentState, AgentStateMachine
-from trendlab.providers.base import ModelProvider, ModelResponse, ProviderError
+from trendlab.agent.tasks import Plan
+from trendlab.config.schema import LimitsConfig
+from trendlab.context.manager import ContextManager
+from trendlab.providers.base import ModelResponse, ProviderContextOverflowError, ProviderError
+from trendlab.providers.gateway import ModelGateway
+from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import EventBus, EventType
 from trendlab.tools.runtime import ToolRuntime
+
+TokenCallback = Callable[[str], None]
+MessageCallback = Callable[[dict[str, Any]], None]
+AsyncHook = Callable[..., Awaitable[Any]]
+
+
+@dataclass
+class RunResult:
+    status: str
+    text: str
+    report: str
+    changed_files: list[str] = field(default_factory=list)
+    validation_runs: list[dict[str, Any]] = field(default_factory=list)
+    cost_usd: float = 0.0
+    elapsed_s: float = 0.0
+    model_calls: int = 0
+    iterations: int = 0
+    stop_reason: str | None = None
+    plan: dict[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "text": self.text,
+            "report": self.report,
+            "changed_files": self.changed_files,
+            "validation": self.validation_runs,
+            "cost_usd": round(self.cost_usd, 4),
+            "elapsed_s": round(self.elapsed_s, 1),
+            "model_calls": self.model_calls,
+            "iterations": self.iterations,
+            "stop_reason": self.stop_reason,
+            "plan": self.plan,
+        }
 
 
 class AgentRuntime:
     def __init__(
         self,
         *,
-        provider: ModelProvider,
+        gateway: ModelGateway,
+        model_ref: str,
         tools: ToolRuntime,
+        context: ContextManager,
         events: EventBus,
         session_id: str,
-        system_prompt: str,
-        max_iterations: int = 50,
+        costs: CostTracker | None = None,
+        limits: LimitsConfig | None = None,
+        plan: Plan | None = None,
+        role: str = "main",
+        escalation_model: str | None = None,
+        on_token: TokenCallback | None = None,
+        on_message: MessageCallback | None = None,
+        hooks: Any = None,
+        stream: bool = True,
     ) -> None:
-        self.provider = provider
+        self.gateway = gateway
+        self.model_ref = model_ref
         self.tools = tools
+        self.context = context
         self.events = events
         self.session_id = session_id
-        self.system_prompt = system_prompt
-        self.max_iterations = max_iterations
-        self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        self.costs = costs or CostTracker(gateway.config)
+        self.limits = limits or LimitsConfig()
+        self.plan = plan if plan is not None else Plan()
+        self.role = role
+        self.escalation_model = escalation_model
+        self.on_token = on_token
+        self.on_message = on_message
+        self.hooks = hooks
+        self.stream = stream
         self.state = AgentStateMachine(on_change=self._emit_state)
-        self.total_input_tokens = 0
-        self.total_output_tokens = 0
+        self.evaluator = CompletionEvaluator()
+        self.loops = LoopDetector()
+        self.iterations = 0
+        self._cancel = asyncio.Event()
         self.tools._set_state = self._tool_state_hook  # noqa: SLF001 — wiring
+
+    # -- wiring ----------------------------------------------------------------------------
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        return self.context.messages
 
     def _emit_state(self, old: AgentState, new: AgentState) -> None:
         self.events.emit(
-            EventType.AGENT_STATE_CHANGED, session_id=self.session_id, old=old.value, new=new.value
+            EventType.AGENT_STATE_CHANGED,
+            session_id=self.session_id,
+            old=old.value,
+            new=new.value,
+            role=self.role,
         )
 
     def _tool_state_hook(self, name: str) -> None:
@@ -50,61 +130,284 @@ class AgentRuntime:
         except Exception:  # noqa: BLE001 — hooks never break execution
             pass
 
-    def set_provider(self, provider: ModelProvider) -> None:
-        """Hot model switch: conversation, session and tool state are preserved."""
-        self.provider = provider
+    def _append(self, message: dict[str, Any]) -> None:
+        self.context.messages.append(message)
+        if self.on_message:
+            self.on_message(message)
 
-    async def run(self, prompt: str) -> str:
+    def set_model(self, model_ref: str) -> None:
+        """Hot model switch: conversation, plan, session and tool state are preserved."""
+        self.model_ref = model_ref
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def validation_available(self) -> bool:
+        return bool(self.tools.ctx.validation_commands)
+
+    def evidence(self) -> EvidenceSummary:
+        return EvidenceSummary(
+            list(self.tools.changed_files), list(self.tools.validation_runs), self.plan
+        )
+
+    # -- main loop -------------------------------------------------------------------------
+    async def run(self, prompt: str) -> RunResult:
+        started = time.monotonic()
+        self._cancel.clear()
         if self.state.terminal:
             self.state.transition(AgentState.IDLE)
-        self.messages.append({"role": "user", "content": prompt})
+        self._append({"role": "user", "content": prompt})
+        compaction_attempted = False
+        stop_reason: str | None = None
+        text = ""
+        status = AgentState.FAILED
         try:
-            for _ in range(self.max_iterations):
+            while True:
+                limit_hit = self._limit_hit(started)
+                if limit_hit:
+                    stop_reason, status = limit_hit, AgentState.FAILED
+                    break
+                if self._cancel.is_set():
+                    stop_reason, status = "canceled by user", AgentState.CANCELED
+                    break
+                self.iterations += 1
                 self.state.transition(AgentState.THINKING)
-                response = await self._complete()
-                if response.tool_calls:
-                    self.messages.append(_assistant_message(response))
-                    for call in response.tool_calls:
-                        self.state.transition(AgentState.RUNNING_TOOL)
-                        result = await self.tools.execute(call)
-                        self.messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": call.id,
-                                "name": call.name,
-                                "content": result.output,
-                            }
-                        )
+                self.context.plan_text = self.plan.render() if self.plan.tasks else ""
+                self._sync_structured()
+                if self.context.needs_compaction():
+                    await self.context.compact()
+                try:
+                    response = await self._model_call()
+                except ProviderContextOverflowError:
+                    if compaction_attempted:
+                        stop_reason, status = "context overflow after compaction", AgentState.FAILED
+                        break
+                    compaction_attempted = True
+                    self.events.emit(
+                        EventType.RECOVERY,
+                        session_id=self.session_id,
+                        failure=FailureClass.CONTEXT_OVERFLOW.value,
+                        action="compact",
+                    )
+                    await self.context.compact(keep_last=4, force=True)
+                    self.iterations -= 1
                     continue
-                self.messages.append({"role": "assistant", "content": response.text})
-                self.state.transition(AgentState.COMPLETED)
-                return response.text
-            self.state.transition(AgentState.FAILED)
-            return f"Stopped after {self.max_iterations} iterations without completing."
-        except ProviderError as exc:
-            self.state.transition(AgentState.FAILED)
-            return f"Provider error: {exc}"
+                except ProviderError as exc:
+                    failure = classify_provider_error(exc)
+                    self.events.emit(
+                        EventType.RECOVERY,
+                        session_id=self.session_id,
+                        failure=failure.value,
+                        action="stop",
+                        error=str(exc)[:300],
+                    )
+                    stop_reason, status, text = f"{failure.value}: {exc}", AgentState.FAILED, ""
+                    break
 
-    async def _complete(self) -> ModelResponse:
+                if response.tool_calls:
+                    self._append(_assistant_message(response))
+                    if response.text and self.on_token is None:
+                        pass
+                    stop = await self._run_tools(response)
+                    if stop:
+                        stop_reason, status = stop
+                        break
+                    continue
+
+                # Final text: let the evaluator decide.
+                self.state.transition(AgentState.VALIDATING)
+                verdict = self.evaluator.evaluate(
+                    self.evidence(), response.text, validation_available=self.validation_available
+                )
+                self._append({"role": "assistant", "content": response.text})
+                if verdict.accept:
+                    text, status = response.text, AgentState.COMPLETED
+                    break
+                self.events.emit(
+                    EventType.RECOVERY,
+                    session_id=self.session_id,
+                    failure="UNVERIFIED_COMPLETION",
+                    action="feedback",
+                    reasons=verdict.reasons,
+                )
+                self._append({"role": "user", "content": verdict.nudge})
+        except asyncio.CancelledError:
+            status, stop_reason = AgentState.CANCELED, "canceled"
+        self.state.transition(status)
+        return self._finish(status, text, stop_reason, started)
+
+    def _limit_hit(self, started: float) -> str | None:
+        if self.iterations >= self.limits.max_iterations:
+            return f"max_iterations ({self.limits.max_iterations}) reached"
+        if self.costs.over_budget():
+            self.events.emit(
+                EventType.BUDGET_EXCEEDED,
+                session_id=self.session_id,
+                total_usd=round(self.costs.total_usd, 4),
+                limit=self.limits.max_cost_usd,
+            )
+            return f"cost limit ${self.limits.max_cost_usd:.2f} reached"
+        if self.costs.over_call_limit():
+            return f"max_model_calls ({self.limits.max_model_calls}) reached"
+        if self.limits.max_wall_clock_minutes and (
+            time.monotonic() - started > self.limits.max_wall_clock_minutes * 60
+        ):
+            return f"wall-clock limit ({self.limits.max_wall_clock_minutes} min) reached"
+        return None
+
+    def _sync_structured(self) -> None:
+        self.context.structured = {
+            "changed_files": list(self.tools.changed_files),
+            "validation_runs": self.tools.validation_runs[-5:],
+            "plan": self.plan.render() if self.plan.tasks else "(none)",
+        }
+
+    async def _model_call(self) -> ModelResponse:
+        messages = self.context.build()
+        tools = self.tools.registry.schemas()
+        if self.hooks is not None:
+            await self.hooks.run("before_model_call", model=self.model_ref)
         self.events.emit(
             EventType.MODEL_CALL_STARTED,
             session_id=self.session_id,
-            provider=self.provider.name,
-            model=self.provider.model,
+            model=self.model_ref,
+            role=self.role,
+            messages=len(messages),
+            est_tokens=self.context.estimate(),
         )
-        response = await self.provider.complete(self.messages, self.tools.registry.schemas())
-        self.total_input_tokens += response.usage.input_tokens
-        self.total_output_tokens += response.usage.output_tokens
+        t0 = time.monotonic()
+        used = self.model_ref
+        if self.stream and self.on_token is not None:
+            response: ModelResponse | None = None
+            async for chunk in self.gateway.stream(self.model_ref, messages, tools):
+                if chunk.text:
+                    self.on_token(chunk.text)
+                if chunk.final is not None:
+                    response = chunk.final
+            if response is None:
+                response = ModelResponse(text="")
+        else:
+            response, used = await self.gateway.complete(self.model_ref, messages, tools)
+        latency = int((time.monotonic() - t0) * 1000)
+        caps = self.gateway.provider(used).capabilities()
+        rec = self.costs.record(used, response.usage, latency, role=self.role, local=caps.local)
         self.events.emit(
             EventType.MODEL_CALL_COMPLETED,
             session_id=self.session_id,
-            provider=self.provider.name,
-            model=self.provider.model,
+            model=used,
+            role=self.role,
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            cached_input_tokens=response.usage.cached_input_tokens,
+            latency_ms=latency,
+            cost_usd=round(rec.cost_usd, 6),
             tool_calls=len(response.tool_calls),
+            privacy=caps.privacy_label,
         )
+        self.events.emit(
+            EventType.COST_UPDATED,
+            session_id=self.session_id,
+            total_usd=round(self.costs.total_usd, 6),
+            model_calls=self.costs.model_calls,
+        )
+        if self.costs.should_warn():
+            self.events.emit(
+                EventType.BUDGET_WARNING,
+                session_id=self.session_id,
+                total_usd=round(self.costs.total_usd, 4),
+                limit=self.limits.max_cost_usd,
+            )
+        if self.hooks is not None:
+            await self.hooks.run("after_model_call", model=used, cost_usd=rec.cost_usd)
         return response
+
+    async def _run_tools(self, response: ModelResponse) -> tuple[str, AgentState] | None:
+        for call in response.tool_calls:
+            if self._cancel.is_set():
+                self._append(_tool_message(call, "NOT EXECUTED: run canceled by user"))
+                return "canceled by user", AgentState.CANCELED
+            self.state.transition(AgentState.RUNNING_TOOL)
+            result = await self.tools.execute(call)
+            output = result.output
+            fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
+            reason = self.loops.record(call.name, fingerprint, output, result.ok)
+            if reason:
+                action = recovery_for(
+                    FailureClass.NO_PROGRESS,
+                    compaction_attempted=False,
+                    escalation_available=bool(self.escalation_model),
+                    no_progress_strikes=self.loops.strikes,
+                )
+                self.events.emit(
+                    EventType.LOOP_DETECTED,
+                    session_id=self.session_id,
+                    tool=call.name,
+                    reason=reason,
+                    strikes=self.loops.strikes,
+                    action=action.value,
+                )
+                if action == RecoveryAction.ESCALATE and self.escalation_model:
+                    self.events.emit(
+                        EventType.RECOVERY,
+                        session_id=self.session_id,
+                        failure=FailureClass.NO_PROGRESS.value,
+                        action="escalate",
+                        from_model=self.model_ref,
+                        to_model=self.escalation_model,
+                    )
+                    self.model_ref = self.escalation_model
+                    self.escalation_model = None
+                elif action == RecoveryAction.STOP:
+                    self._append(_tool_message(call, output))
+                    return f"NO_PROGRESS: {reason}", AgentState.FAILED
+                output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
+            self._append(_tool_message(call, output))
+        return None
+
+    def _finish(
+        self, status: AgentState, text: str, stop_reason: str | None, started: float
+    ) -> RunResult:
+        elapsed = time.monotonic() - started
+        ev = self.evidence()
+        body = text if status == AgentState.COMPLETED else (stop_reason or "")
+        report = final_report(
+            ev,
+            body,
+            cost_usd=self.costs.total_usd,
+            elapsed_s=elapsed,
+            status=status.value,
+            model_calls=self.costs.model_calls,
+        )
+        result = RunResult(
+            status=status.value,
+            text=text,
+            report=report,
+            changed_files=ev.changed_files,
+            validation_runs=ev.validation_runs,
+            cost_usd=self.costs.total_usd,
+            elapsed_s=elapsed,
+            model_calls=self.costs.model_calls,
+            iterations=self.iterations,
+            stop_reason=stop_reason,
+            plan=self.plan.to_json(),
+        )
+        event = {
+            AgentState.COMPLETED: EventType.RUN_COMPLETED,
+            AgentState.CANCELED: EventType.RUN_CANCELED,
+        }.get(status, EventType.RUN_FAILED)
+        self.events.emit(
+            event,
+            session_id=self.session_id,
+            role=self.role,
+            stop_reason=stop_reason,
+            changed_files=ev.changed_files,
+            validated=ev.validated,
+            cost_usd=round(self.costs.total_usd, 4),
+            elapsed_s=round(elapsed, 1),
+            iterations=self.iterations,
+        )
+        return result
 
 
 def _assistant_message(response: ModelResponse) -> dict[str, Any]:
@@ -115,8 +418,12 @@ def _assistant_message(response: ModelResponse) -> dict[str, Any]:
             {
                 "id": c.id,
                 "type": "function",
-                "function": {"name": c.name, "arguments": json.dumps(c.arguments)},
+                "function": {"name": c.name, "arguments": json.dumps(c.arguments, default=str)},
             }
             for c in response.tool_calls
         ],
     }
+
+
+def _tool_message(call, content: str) -> dict[str, Any]:
+    return {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": content}
