@@ -27,7 +27,7 @@ or a local Ollama model, switchable mid-session. Every side effect passes throug
 permission engine, and when a decision needs a human the request goes to the terminal **and**
 to a mobile web page on your phone.
 
-It is comparable in spirit to Claude Code and OpenAI's Codex CLI, with three differences: the
+Compared with the hosted coding agents from the big model vendors, three things set it apart: the
 harness is vendor-neutral, the permission system is the center of the design rather than an
 add-on, and approvals are cryptographically bound to the exact operation and can be made from
 another device.

@@ -16,9 +16,9 @@ change by date, including decisions made after the original specification (2026-
 ## 1. Executive Summary
 
 TrendLab CLI is a local-first, model-agnostic agentic coding harness
-designed to provide a workflow comparable in spirit to modern coding
-agents such as Claude Code while remaining independent of any single
-model vendor.
+designed to provide a workflow comparable in spirit to the hosted
+coding agents from the major model vendors while remaining independent
+of any single one of them.
 
 TrendLab runs inside a terminal, understands a software repository, reads
 and edits files, searches code, executes approved shell commands, runs
@@ -669,7 +669,7 @@ OpenAI-compatible shim:
 -   credentials: `ANTHROPIC_API_KEY` from the environment or the secrets
     store (§35); without one the SDK's own resolution (`ant auth login`
     profile, workload identity) applies. API keys come from the Anthropic
-    Console; a Claude.ai or Claude Code subscription does not grant API
+    Console; a consumer chat subscription does not grant API
     access.
 
 ------------------------------------------------------------------------
