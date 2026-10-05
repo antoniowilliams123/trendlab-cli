@@ -46,6 +46,7 @@ class EventType(StrEnum):
     HOOK_BLOCKED = "hook.blocked"
     QUESTION_ASKED = "question.asked"
     QUESTION_ANSWERED = "question.answered"
+    STEERED = "run.steered"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELED = "run.canceled"

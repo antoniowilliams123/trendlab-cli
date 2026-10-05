@@ -21,6 +21,7 @@ Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against
 - [x] Neon-on-black theme for TUI + REPL; TUI live streaming pane, spinner status, F-keys;
       /resume in place, /export, trendlab init, trendlab doctor (2026-10-05)
 - [x] Live on DeepSeek Flash: benchmarks A–E green, long sessions with compaction green (2026-10-05)
+- [x] Steering while running + Esc interrupt (TUI), /stop + typed steering (REPL) (2026-10-05)
 - [x] Anthropic provider (official SDK): content-block translation, same-model thinking-block replay,
       adaptive thinking, effort, server-side refusal fallbacks, cache-aware usage; secrets store +
       `trendlab secret set` (2026-10-05)
@@ -41,7 +42,7 @@ Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against
 - [x] Security regressions: prompt injection, destructive commands, external paths
 
 ## Tests
-133 test functions (≈170 cases with parametrization), all passing (`.venv/bin/python -m pytest -q`,
+199 test cases, all passing (`.venv/bin/python -m pytest -q`,
 ~30 s). `ruff check` and `ruff format --check` clean. Source: ~10k lines in `trendlab/`.
 
 ## Known Issues

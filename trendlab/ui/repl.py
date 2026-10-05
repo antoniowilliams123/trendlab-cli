@@ -68,9 +68,42 @@ class Repl:
     async def _prompt(self, text: str) -> None:
         assert self.app.agent is not None
         self._current = asyncio.create_task(self.app.run_prompt(text))
+        self.console.print(f"[{GREY}]type to steer · /stop interrupts[/]")
+        reader: asyncio.Task | None = None
         try:
-            result = await self._current
+            while not self._current.done():
+                if reader is None:
+                    reader = asyncio.create_task(self.app.console_input.readline())
+                done, _ = await asyncio.wait(
+                    {self._current, reader}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if reader in done:
+                    line = reader.result()
+                    reader = None
+                    typed = (line or "").strip()
+                    if not typed:
+                        continue
+                    if typed.lower() in {"/stop", "/esc", "/interrupt"}:
+                        self.app.agent.cancel()
+                        self._current.cancel()
+                        self.console.print(
+                            "[warning]■ Interrupted — type to continue the same session[/warning]"
+                        )
+                    elif typed.startswith("/"):
+                        await self.handle_command(typed)
+                    else:
+                        self.app.agent.steer(typed)
+                        self.console.print(
+                            f"[accent]↳ steering:[/accent] {typed} "
+                            f"[{GREY}](applied at the next turn)[/]"
+                        )
+            try:
+                result = self._current.result()
+            except asyncio.CancelledError:
+                return
         finally:
+            if reader is not None and not reader.done():
+                reader.cancel()
             self._current = None
         self.console.print()
         self.console.print(

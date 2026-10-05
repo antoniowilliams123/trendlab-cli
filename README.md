@@ -83,7 +83,9 @@ trendlab bench -m deepseek:deepseek-flash  # five fixture repos, objective metri
 ```
 
 Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/resume`, `/export`,
-`/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, Ctrl+C cancel.
+`/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
+current step and keeps the conversation, and **typing while it runs steers it**: your message is
+delivered before the next model call.
 
 ## Approve from your phone
 

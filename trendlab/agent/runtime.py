@@ -108,6 +108,7 @@ class AgentRuntime:
         self.loops = LoopDetector()
         self.iterations = 0
         self._cancel = asyncio.Event()
+        self._steer: list[str] = []
         self.tools._set_state = self._tool_state_hook  # noqa: SLF001 — wiring
 
     # -- wiring ----------------------------------------------------------------------------
@@ -142,6 +143,19 @@ class AgentRuntime:
     def cancel(self) -> None:
         self._cancel.set()
 
+    def steer(self, text: str) -> None:
+        """Queue a message from the user while a run is in progress; it is delivered as the next
+        user turn before the following model call (Claude-Code-style steering)."""
+        text = text.strip()
+        if text:
+            self._steer.append(text)
+
+    def _drain_steering(self) -> None:
+        while self._steer:
+            text = self._steer.pop(0)
+            self._append({"role": "user", "content": text})
+            self.events.emit(EventType.STEERED, session_id=self.session_id, text=text[:300])
+
     @property
     def validation_available(self) -> bool:
         return bool(self.tools.ctx.validation_commands)
@@ -172,6 +186,7 @@ class AgentRuntime:
                     stop_reason, status = "canceled by user", AgentState.CANCELED
                     break
                 self.iterations += 1
+                self._drain_steering()
                 self.state.transition(AgentState.THINKING)
                 self.context.plan_text = self.plan.render() if self.plan.tasks else ""
                 self._sync_structured()

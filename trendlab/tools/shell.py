@@ -75,6 +75,9 @@ class ShellTool(Tool):
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=args.timeout)
+        except asyncio.CancelledError:
+            proc.kill()
+            raise
         except TimeoutError:
             proc.kill()
             await proc.wait()

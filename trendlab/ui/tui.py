@@ -154,6 +154,7 @@ class TrendLabTUI(App[None]):
     CSS = TUI_CSS
     BINDINGS = [
         Binding("ctrl+c", "cancel_or_quit", "cancel / quit", priority=True),
+        Binding("escape", "interrupt", "interrupt", priority=True),
         Binding("ctrl+l", "clear", "clear"),
         Binding("f1", "help", "help"),
         Binding("f2", "plan", "plan"),
@@ -187,7 +188,8 @@ class TrendLabTUI(App[None]):
             yield plan
         yield Static(id="status")
         yield Input(
-            placeholder="Describe a task, or /help  ·  F1 help · F2 plan · F3 cost", id="input"
+            placeholder="Describe a task, or /help · type while it runs to steer · Esc interrupts",
+            id="input",
         )
         yield Footer()
 
@@ -377,6 +379,8 @@ class TrendLabTUI(App[None]):
                 f"[#ffd21f]{t.value}[/] "
                 f"[{GREY}]{d.get('reason') or d.get('error') or d.get('action') or ''}[/]"
             )
+        elif t == EventType.STEERED:
+            self.log_line(f"[bold {MINT}]↳ steering applied[/]")
         elif t == EventType.MODEL_CALL_STARTED:
             self._flush_stream()
         elif (
@@ -427,7 +431,11 @@ class TrendLabTUI(App[None]):
             await self._command(text)
             return
         if self._run_task and not self._run_task.done():
-            self.log_line("[#ffd21f]A task is already running (Ctrl+C to cancel).[/]")
+            self.tl.agent.steer(text)  # type: ignore[union-attr]
+            self.log_line(
+                f"[bold {MINT}]↳ steering:[/] [{MINT}]{text}[/] "
+                f"[{GREY}](applied at the next turn)[/]"
+            )
             return
         self.log_line(f"[bold {MINT}]❯[/] [bold {MINT}]{text}[/]")
         self._started_at = time.monotonic()
@@ -444,6 +452,10 @@ class TrendLabTUI(App[None]):
     async def _run(self, text: str) -> None:
         try:
             result = await self.tl.run_prompt(text)
+        except asyncio.CancelledError:
+            self._flush_stream()
+            self._refresh_header()
+            return
         except Exception as exc:  # noqa: BLE001 — the TUI must survive runtime errors
             self._flush_stream()
             self.log_line(f"[bold {RED}]error:[/] {exc}")
@@ -456,11 +468,18 @@ class TrendLabTUI(App[None]):
         self._refresh_header()
         self._refresh_plan()
 
-    def action_cancel_or_quit(self) -> None:
+    def action_interrupt(self) -> None:
+        """Esc: stop the current model call or tool right now; the conversation stays."""
         if self._run_task and not self._run_task.done():
             self.tl.agent.cancel()  # type: ignore[union-attr]
-            self.log_line("[#ffd21f]Canceling current task… (Ctrl+C again to quit)[/]")
-            self._run_task = None
+            self._run_task.cancel()
+            self.log_line(
+                f"[#ffd21f]■ Interrupted[/] [{GREY}]— type to continue the same session[/]"
+            )
+
+    def action_cancel_or_quit(self) -> None:
+        if self._run_task and not self._run_task.done():
+            self.action_interrupt()
             return
         self.exit()
 

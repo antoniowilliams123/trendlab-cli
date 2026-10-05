@@ -1660,6 +1660,15 @@ transcript, a spinner with elapsed time in the status bar, context size
 with percentage of window, running cost, and the plan with glyphs. F1/F2/F3
 open help, plan and cost. The REPL uses the same Rich theme.
 
+**Steering and interruption (implemented 2026-10-05).** Typing while a
+task runs queues the text as a user turn that is delivered before the
+agent's next model call (`AgentRuntime.steer`, event `run.steered`), so the
+run can be redirected without stopping it. `Esc` interrupts the current
+model call or tool at once (a running shell subprocess is killed); the
+conversation, plan and session are kept and the next input continues the
+same session. In the REPL, lines typed during a run steer and `/stop`
+interrupts.
+
 The header carries a five-row **TRENDLAB** banner built from full-block
 characters only (`█`), chosen after half-block art proved font-dependent:
 full blocks draw as solid pixels in every monospace terminal font. Version,
@@ -3678,3 +3687,6 @@ decisions taken after the original specification. Newest last.
 -   Owner's scoring rule: unexercised real-world mileage is not counted
     against the product; existing rules (unsafe default, hard boundaries,
     destructive prompt, audit, checkpoints) unchanged.
+-   Steering while running and `Esc` interruption in the TUI (typed lines
+    and `/stop` in the REPL), modelled on the interaction the owner likes in
+    his daily driver; shell subprocesses are killed on interrupt.
