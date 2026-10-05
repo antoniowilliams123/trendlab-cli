@@ -150,9 +150,19 @@ Screen {{
 }}
 #input {{
     dock: bottom;
+    height: auto;
+    min-height: 3;
+    max-height: 9;
     background: {BLACK};
     color: {NEON};
     border: tall {NEON_DIM};
+}}
+#input .text-area--cursor-line {{
+    background: {BLACK};
+}}
+#input .text-area--cursor {{
+    background: {NEON};
+    color: {BLACK};
 }}
 #input:focus {{
     border: tall {NEON};

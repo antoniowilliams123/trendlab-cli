@@ -63,6 +63,7 @@ class StreamChunk(BaseModel):
     """One incremental piece of a streamed response. ``final`` carries the full response."""
 
     text: str = ""
+    thinking: str = ""  # model reasoning summary, when the provider exposes it
     final: ModelResponse | None = None
 
 

@@ -3,14 +3,14 @@
 from pathlib import Path
 
 from rich.console import Console
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import RichLog, Static
 
 from trendlab.app import TrendLabApp
 from trendlab.config.loader import load_config
 from trendlab.config.schema import PermissionMode, RemoteApprovalConfig
 from trendlab.providers.base import ModelResponse, ToolCall
 from trendlab.providers.scripted import ScriptedProvider
-from trendlab.ui.tui import ApprovalModal, TrendLabTUI
+from trendlab.ui.tui import ApprovalModal, PromptInput, TrendLabTUI
 
 
 def _tl(project: Path, provider, mode=PermissionMode.ASK):
@@ -34,14 +34,14 @@ async def test_tui_runs_a_prompt_and_slash_commands(project: Path, _trendlab_hom
         await pilot.pause()
         header = tui.query_one("#header", Static).content
         assert "scripted:m" in str(header) and "ASK" in str(header)
-        inp = tui.query_one("#input", Input)
-        inp.value = "/status"
+        inp = tui.query_one("#input", PromptInput)
+        inp.text = "/status"
         await pilot.press("enter")
         await pilot.pause()
         log = tui.query_one("#transcript", RichLog)
         text = "\n".join(str(line) for line in log.lines)
         assert "Mode" in text or "Model" in text
-        inp.value = "say hi"
+        inp.text = "say hi"
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause(0.02)
@@ -69,7 +69,7 @@ async def test_tui_approval_modal_approves_and_continues(project: Path, _trendla
     tui = TrendLabTUI(tl)
     async with tui.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        tui.query_one("#input", Input).value = "write t.py"
+        tui.query_one("#input", PromptInput).text = "write t.py"
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause(0.02)
@@ -107,7 +107,7 @@ async def test_tui_question_modal_answers(project: Path, _trendlab_home: Path):
     tui = TrendLabTUI(tl)
     async with tui.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        tui.query_one("#input", Input).value = "ask me"
+        tui.query_one("#input", PromptInput).text = "ask me"
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause(0.02)

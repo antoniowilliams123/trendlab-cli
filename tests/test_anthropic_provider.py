@@ -183,10 +183,16 @@ def test_translate_tools_thinking_fallbacks():
             "input_schema": TOOLS[0]["function"]["parameters"],
         }
     ]
-    assert thinking_param("claude-opus-5", "auto") == {"type": "adaptive"}
-    assert thinking_param("claude-sonnet-5", "auto") == {"type": "adaptive"}
+    assert thinking_param("claude-opus-5", "auto") == {"type": "adaptive", "display": "summarized"}
+    assert thinking_param("claude-sonnet-5", "auto") == {
+        "type": "adaptive",
+        "display": "summarized",
+    }
     assert thinking_param("claude-haiku-4-5", "auto") is None
-    assert thinking_param("claude-haiku-4-5", "adaptive") == {"type": "adaptive"}
+    assert thinking_param("claude-haiku-4-5", "adaptive") == {
+        "type": "adaptive",
+        "display": "summarized",
+    }
     assert thinking_param("claude-opus-5", "off") is None
     assert fallbacks_enabled("claude-opus-5", "auto") and fallbacks_enabled(
         "claude-fable-5-1", "auto"
@@ -234,9 +240,9 @@ async def test_complete_maps_tool_calls_usage_and_params():
         == [{"type": "text", "text": "S", "cache_control": {"type": "ephemeral"}}]
         and params["max_tokens"] == 16000
     )
-    assert params["thinking"] == {"type": "adaptive"} and params["output_config"] == {
-        "effort": "high"
-    }
+    assert params["thinking"] == {"type": "adaptive", "display": "summarized"} and params[
+        "output_config"
+    ] == {"effort": "high"}
     assert params["tools"][0]["name"] == "read_file" and params["messages"][0]["role"] == "user"
     assert params["extra_headers"] == {"anthropic-beta": "server-side-fallback-2026-07-01"}
     assert params["extra_body"] == {"fallbacks": "default"}

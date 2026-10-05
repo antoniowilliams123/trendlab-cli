@@ -26,11 +26,28 @@ Rules:
 """
 
 
+INSTRUCTION_FILES = (PROJECT_INSTRUCTIONS_FILE, "AGENTS.md", "CLAUDE.md")
+
+
+def project_instructions(project_root: Path, *, max_chars: int = 8000) -> list[tuple[str, str]]:
+    """Instruction files found at the project root, in priority order, deduplicated by content."""
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name in INSTRUCTION_FILES:
+        path = project_root / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        found.append((name, text[:max_chars]))
+    return found
+
+
 def build_system_prompt(project_root: Path) -> str:
     parts = [_POLICY]
-    instructions = project_root / PROJECT_INSTRUCTIONS_FILE
-    if instructions.is_file():
-        text = instructions.read_text(encoding="utf-8", errors="replace")[:8000]
-        parts.append(f"\nProject instructions from {PROJECT_INSTRUCTIONS_FILE}:\n{text}")
+    for name, text in project_instructions(project_root):
+        parts.append(f"\nProject instructions from {name}:\n{text}")
     parts.append(f"\nProject root: {project_root}")
     return "\n".join(parts)

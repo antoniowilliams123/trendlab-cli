@@ -17,8 +17,9 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, RichLog, Static
+from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
 
 from trendlab import PRODUCT_NAME, __version__
 from trendlab.app import TrendLabApp
@@ -149,6 +150,33 @@ def _mode_badge(tl: TrendLabApp) -> str:
     return f"[bold {NEON}]{tl.engine.mode.value.upper()}[/]"
 
 
+class PromptInput(TextArea):
+    """Multi-line prompt: Enter submits; Shift+Enter, Ctrl+J or a trailing backslash add a line."""
+
+    class Submitted(Message):
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    BINDINGS = [
+        Binding("enter", "submit_prompt", "send", show=False, priority=True),
+        Binding("shift+enter", "newline", "newline", show=False, priority=True),
+        Binding("ctrl+j", "newline", "newline", show=False, priority=True),
+    ]
+
+    def action_submit_prompt(self) -> None:
+        text = self.text
+        if text.rstrip().endswith("\\"):
+            # "...\<Enter>" continues on the next line (works in every terminal).
+            self.text = text.rstrip()[:-1].rstrip() + "\n"
+            self.move_cursor(self.document.end)
+            return
+        self.post_message(self.Submitted(text))
+
+    def action_newline(self) -> None:
+        self.insert("\n")
+
+
 class TrendLabTUI(App[None]):
     TITLE = PRODUCT_NAME
     CSS = TUI_CSS
@@ -159,6 +187,7 @@ class TrendLabTUI(App[None]):
         Binding("f1", "help", "help"),
         Binding("f2", "plan", "plan"),
         Binding("f3", "cost", "cost"),
+        Binding("ctrl+e", "external_editor", "editor"),
     ]
 
     def __init__(self, tl_app: TrendLabApp) -> None:
@@ -167,6 +196,7 @@ class TrendLabTUI(App[None]):
         self._run_task: asyncio.Task | None = None
         self._modals: dict[str, ApprovalModal] = {}
         self._stream_buf: list[str] = []
+        self._think_buf: list[str] = []
         self._spin = 0
         self._started_at: float | None = None
         self.console_out = make_console(record=True, width=100, force_terminal=False)
@@ -187,23 +217,24 @@ class TrendLabTUI(App[None]):
             plan.border_title = "plan"
             yield plan
         yield Static(id="status")
-        yield Input(
-            placeholder="Describe a task, or /help · type while it runs to steer · Esc interrupts",
-            id="input",
+        yield PromptInput(
+            id="input", show_line_numbers=False, soft_wrap=True, tab_behavior="indent"
         )
         yield Footer()
 
     async def on_mount(self) -> None:
         channel = TextualChannel(self._present_approval, self._withdraw_approval)
         self.tl.on_token = self._on_token
+        self.tl.on_thinking = self._on_thinking
         await self.tl.start(interactive=False, command_handler=self.commands.dispatch)
         await self.tl.approvals.add_channel(channel)  # type: ignore[union-attr]
         self.tl.agent.on_token = self._on_token  # type: ignore[union-attr]
+        self.tl.agent.on_thinking = self._on_thinking  # type: ignore[union-attr]
         self.tl.agent.stream = True  # type: ignore[union-attr]
         self.tl.events.subscribe(self._on_event)
         self._refresh_header()
         self._refresh_plan()
-        self.query_one("#input", Input).focus()
+        self.query_one("#input", PromptInput).focus()
         self.set_interval(0.25, self._tick)
         self.log_line(
             f"[bold {NEON}]{PRODUCT_NAME}[/] [{GREY}]v{__version__}[/] ready — "
@@ -306,17 +337,30 @@ class TrendLabTUI(App[None]):
     # -- streaming ---------------------------------------------------------------------------------
     def _on_token(self, text: str) -> None:
         self._stream_buf.append(text)
+        self._render_stream()
+
+    def _on_thinking(self, text: str) -> None:
+        self._think_buf.append(text)
+        self._render_stream()
+
+    def _render_stream(self) -> None:
         pane = self.query_one("#stream", Static)
         pane.add_class("visible")
-        joined = "".join(self._stream_buf)
-        tail = joined[-1500:]
-        pane.update(Text(tail, style=NEON))
+        out = Text()
+        if self._think_buf and not self._stream_buf:
+            thinking = "".join(self._think_buf)[-900:]
+            out.append("💭 thinking  ", style=f"bold {GREY}")
+            out.append(thinking, style=f"italic {GREY}")
+        elif self._stream_buf:
+            out.append("".join(self._stream_buf)[-1500:], style=NEON)
+        pane.update(out)
 
     def _flush_stream(self) -> None:
         pane = self.query_one("#stream", Static)
         pane.remove_class("visible")
         pane.update("")
         self._stream_buf.clear()
+        self._think_buf.clear()
 
     # -- events ------------------------------------------------------------------------------------
     def _on_event(self, event: Event) -> None:
@@ -421,10 +465,10 @@ class TrendLabTUI(App[None]):
         self._refresh_status()
 
     # -- input -------------------------------------------------------------------------------------
-    @on(Input.Submitted, "#input")
-    async def _submitted(self, event: Input.Submitted) -> None:
+    @on(PromptInput.Submitted)
+    async def _submitted(self, event: PromptInput.Submitted) -> None:
         text = event.value.strip()
-        event.input.value = ""
+        self.query_one("#input", PromptInput).text = ""
         if not text:
             return
         if text.startswith("/"):
@@ -485,6 +529,19 @@ class TrendLabTUI(App[None]):
 
     def action_clear(self) -> None:
         self._clear_log()
+
+    def action_external_editor(self) -> None:
+        from trendlab.ui.editor import edit_in_external_editor
+
+        box = self.query_one("#input", PromptInput)
+        with self.suspend():
+            edited = edit_in_external_editor(box.text)
+        if edited is None:
+            self.log_line("[#ffd21f]no editor found — set $EDITOR (e.g. export EDITOR=nano)[/]")
+            return
+        box.text = edited.rstrip("\n")
+        box.move_cursor(box.document.end)
+        box.focus()
 
     async def action_help(self) -> None:
         await self._command("/help")

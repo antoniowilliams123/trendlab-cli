@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from trendlab.ui.attachments import text_of
+
 SUMMARY_FIELDS = (
     "OBJECTIVE",
     "CURRENT STATUS",
@@ -40,7 +42,7 @@ def compaction_prompt(
         role = m.get("role")
         if role == "system":
             continue
-        content = m.get("content") or ""
+        content = text_of(m.get("content"))
         if m.get("tool_calls"):
             content += " " + "; ".join(
                 f"CALL {c['function']['name']}({c['function']['arguments'][:200]})"
@@ -68,11 +70,7 @@ def compaction_prompt(
 
 def deterministic_summary(messages: list[dict[str, Any]], structured: dict[str, Any]) -> str:
     """Fallback when no summarizer model is available: pull facts straight from the transcript."""
-    user_msgs = [
-        m["content"]
-        for m in messages
-        if m.get("role") == "user" and isinstance(m.get("content"), str)
-    ]
+    user_msgs = [text_of(m.get("content")) for m in messages if m.get("role") == "user"]
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     failures = [
         m["content"][:200]

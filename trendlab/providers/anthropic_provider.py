@@ -28,6 +28,7 @@ from trendlab.providers.base import (
     ToolCall,
 )
 from trendlab.security.secrets import resolve_secret
+from trendlab.ui.attachments import encode_image
 
 DEFAULT_MODEL = "claude-opus-5"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -49,7 +50,8 @@ def thinking_param(model: str, mode: str) -> dict[str, Any] | None:
     if mode == "off":
         return None
     if mode == "adaptive" or any(model.startswith(f) for f in _ADAPTIVE_FAMILIES):
-        return {"type": "adaptive"}
+        # display=summarized returns a readable reasoning summary (the API default is omitted).
+        return {"type": "adaptive", "display": "summarized"}
     return None
 
 
@@ -109,7 +111,7 @@ def translate_messages(
         if role == "user":
             text = m.get("content")
             if isinstance(text, list):
-                out.append({"role": "user", "content": text})
+                out.append({"role": "user", "content": _user_parts(text)})
             elif text:
                 out.append({"role": "user", "content": [{"type": "text", "text": str(text)}]})
             continue
@@ -140,6 +142,25 @@ def translate_messages(
     if out and out[0]["role"] != "user":
         out.insert(0, {"role": "user", "content": [{"type": "text", "text": "Continue."}]})
     return ("\n\n".join(system_parts) or None), out
+
+
+def _user_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for part in parts:
+        if part.get("type") == "image_path":
+            try:
+                media, data = encode_image(part["path"])
+            except ValueError as exc:
+                out.append({"type": "text", "text": f"[image unavailable: {exc}]"})
+                continue
+            out.append(
+                {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+            )
+        elif part.get("type") == "text" and part.get("text"):
+            out.append({"type": "text", "text": part["text"]})
+        else:
+            out.append(part)
+    return out
 
 
 class AnthropicProvider(ModelProvider):
@@ -240,8 +261,16 @@ class AnthropicProvider(ModelProvider):
         try:
             async with client.messages.stream(**self._params(messages, tools)) as stream:
                 async for event in stream:
-                    if getattr(event, "type", None) == "text" and getattr(event, "text", ""):
+                    etype = getattr(event, "type", None)
+                    if etype == "text" and getattr(event, "text", ""):
                         yield StreamChunk(text=event.text)
+                    elif etype == "thinking" and getattr(event, "thinking", ""):
+                        yield StreamChunk(thinking=event.thinking)
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        if getattr(delta, "type", None) == "thinking_delta":
+                            if getattr(delta, "thinking", ""):
+                                yield StreamChunk(thinking=delta.thinking)
                 message = await stream.get_final_message()
         except ProviderError:
             raise
@@ -274,6 +303,7 @@ def _mark_cache(message: dict[str, Any]) -> None:
 
 def _to_response(message: Any) -> ModelResponse:
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     calls: list[ToolCall] = []
     raw_blocks: list[dict[str, Any]] = []
     for block in message.content:
@@ -283,6 +313,8 @@ def _to_response(message: Any) -> ModelResponse:
         )
         if btype == "text":
             text_parts.append(block.text)
+        elif btype == "thinking" and getattr(block, "thinking", ""):
+            thinking_parts.append(block.thinking)
         elif btype == "tool_use":
             inp = block.input if isinstance(block.input, dict) else {"_malformed_json": block.input}
             calls.append(ToolCall(id=block.id, name=block.name, arguments=inp))
@@ -316,6 +348,7 @@ def _to_response(message: Any) -> ModelResponse:
             "provider_content": raw_blocks,
             "provider_model": getattr(message, "model", None),
             "stop_reason": stop,
+            "thinking": "".join(thinking_parts),
         },
     )
 

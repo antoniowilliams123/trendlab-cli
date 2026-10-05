@@ -28,6 +28,7 @@ from trendlab.providers.base import (
     ToolCall,
 )
 from trendlab.security.secrets import resolve_secret
+from trendlab.ui.attachments import encode_image
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
 
@@ -80,7 +81,16 @@ class OpenAICompatibleProvider(ModelProvider):
         return headers
 
     def _payload(self, messages, tools, stream: bool) -> dict[str, Any]:
-        clean = [{k: v for k, v in m.items() if not k.startswith("_")} for m in messages]
+        clean = []
+        for m in messages:
+            c = {k: v for k, v in m.items() if not k.startswith("_")}
+            if isinstance(c.get("content"), list):
+                c["content"] = _openai_parts(c["content"])
+            # DeepSeek thinking models need the reasoning of earlier tool-call turns sent back;
+            # replay it only to the model that produced it.
+            if m.get("_reasoning_content") and m.get("_provider_model") == self.model:
+                c["reasoning_content"] = m["_reasoning_content"]
+            clean.append(c)
         payload: dict[str, Any] = {"model": self.model, "messages": clean}
         if tools and self._caps.native_tools:
             payload["tools"] = tools
@@ -139,11 +149,18 @@ class OpenAICompatibleProvider(ModelProvider):
             tool_calls=_parse_tool_calls(message.get("tool_calls") or []),
             usage=_parse_usage(data.get("usage")),
             finish_reason=choice.get("finish_reason"),
-            raw_metadata={"id": data.get("id"), "model": data.get("model")},
+            raw_metadata={
+                "id": data.get("id"),
+                "model": data.get("model"),
+                "thinking": message.get("reasoning_content") or "",
+                "reasoning_content": message.get("reasoning_content") or "",
+                "provider_model": self.model,
+            },
         )
 
     async def stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         pending_calls: dict[int, dict[str, Any]] = {}
         usage = TokenUsage()
         finish: str | None = None
@@ -171,6 +188,9 @@ class OpenAICompatibleProvider(ModelProvider):
                         usage = _parse_usage(obj["usage"])
                     for choice in obj.get("choices") or []:
                         delta = choice.get("delta") or {}
+                        if delta.get("reasoning_content"):
+                            reasoning_parts.append(delta["reasoning_content"])
+                            yield StreamChunk(thinking=delta["reasoning_content"])
                         if delta.get("content"):
                             text_parts.append(delta["content"])
                             yield StreamChunk(text=delta["content"])
@@ -198,17 +218,41 @@ class OpenAICompatibleProvider(ModelProvider):
             }
             for i, c in sorted(pending_calls.items())
         ]
+        reasoning = "".join(reasoning_parts)
+
         yield StreamChunk(
             final=ModelResponse(
                 text="".join(text_parts),
                 tool_calls=_parse_tool_calls(calls),
                 usage=usage,
                 finish_reason=finish,
+                raw_metadata={
+                    "thinking": reasoning,
+                    "reasoning_content": reasoning,
+                    "provider_model": self.model,
+                },
             )
         )
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+def _openai_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for part in parts:
+        if part.get("type") == "image_path":
+            try:
+                media, data = encode_image(part["path"])
+            except ValueError as exc:
+                out.append({"type": "text", "text": f"[image unavailable: {exc}]"})
+                continue
+            out.append({"type": "image_url", "image_url": {"url": f"data:{media};base64,{data}"}})
+        elif part.get("type") == "text":
+            out.append({"type": "text", "text": part.get("text", "")})
+        else:
+            out.append(part)
+    return out
 
 
 def _parse_tool_calls(raw: list[dict[str, Any]]) -> list[ToolCall]:

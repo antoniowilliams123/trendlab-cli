@@ -47,6 +47,7 @@ class EventType(StrEnum):
     QUESTION_ASKED = "question.asked"
     QUESTION_ANSWERED = "question.answered"
     STEERED = "run.steered"
+    IMAGES_ATTACHED = "run.images_attached"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELED = "run.canceled"

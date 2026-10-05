@@ -31,11 +31,15 @@ HELP = """\
 /checkpoint                List checkpoints                /undo [id] [force]   Restore a checkpoint
 /sessions | /resume <id|latest> | /new      Session management (resume switches in place)
 /export [path]             Write this session as Markdown (.trendlab/exports/)
+/edit                      Compose the next prompt in $EDITOR (TUI: Ctrl+E); end a line with \\
+                           to continue on the next line
 /model <provider:model>    Hot-switch the model            /models   Configured providers/models
 /review                    Run the reviewer sub-agent on the current diff
 /init                      Detect project tooling and draft TRENDLAB.md
 /skills [use <name>]       Reusable instruction packs      /hooks    Configured hooks
 /mcp                       MCP servers and their tools
+/paste                     Attach the clipboard image to your next prompt (WSL/Linux/macOS)
+/image <path>              Attach an image file to your next prompt (or write @file.png)
 /remote [status|enable|disable|url]   Phone approval server
 /approvals [approve <id> [session]|deny <id>|history]   Pending approvals
 /clear                     Clear the screen               /quit     Exit
@@ -83,6 +87,8 @@ class CommandRouter:
             "/skills": self._skills,
             "/hooks": self._hooks,
             "/mcp": self._mcp,
+            "/paste": self._paste,
+            "/image": self._image,
             "/remote": self._remote,
             "/approvals": self._approvals,
             "/clear": self._clear,
@@ -529,6 +535,35 @@ class CommandRouter:
         for name, info in self.app.mcp.status().items():
             t.add_row(name, info["status"], ", ".join(info["tools"]) or "-")
         self.console.print(t)
+
+    async def _paste(self, args: list[str]) -> None:
+        from trendlab.ui.attachments import grab_clipboard_image
+
+        path = grab_clipboard_image()
+        if path is None:
+            self.console.print(
+                "[warning]no image on the clipboard (or no clipboard tool found)[/warning]"
+            )
+            return
+        self.app.pending_images.append(path)
+        self.console.print(f"[ok]attached[/ok] {path.name} — it goes with your next prompt")
+
+    async def _image(self, args: list[str]) -> None:
+        from pathlib import Path
+
+        from trendlab.ui.attachments import IMAGE_EXTS
+
+        if not args:
+            self.console.print("[red]usage: /image <path>[/red]")
+            return
+        path = Path(args[0]).expanduser()
+        if not path.is_absolute():
+            path = self.app.project_root / path
+        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTS:
+            self.console.print(f"[red]not an image file: {args[0]}[/red]")
+            return
+        self.app.pending_images.append(path.resolve())
+        self.console.print(f"[ok]attached[/ok] {path.name} — it goes with your next prompt")
 
     # -- remote / approvals ------------------------------------------------------------------------
     async def _remote(self, args: list[str]) -> None:

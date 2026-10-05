@@ -190,6 +190,7 @@ def main_callback(
         permission_mode=mode,
         resume=resume,
         on_token=lambda t: console.print(t, end="", highlight=False),
+        on_thinking=lambda t: console.print(t, end="", style="dim italic", highlight=False),
         allow_destructive=allow_destructive,
     )
     from trendlab.ui.repl import Repl

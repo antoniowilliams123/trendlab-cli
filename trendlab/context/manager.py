@@ -13,6 +13,7 @@ from typing import Any
 from trendlab.config.schema import ContextConfig
 from trendlab.context.compaction import CompactionRecord, compaction_prompt, deterministic_summary
 from trendlab.telemetry.events import EventBus, EventType
+from trendlab.ui.attachments import image_count, text_of
 
 Summarizer = Callable[[list[dict[str, Any]]], Awaitable[str]]
 
@@ -22,7 +23,8 @@ def estimate_tokens(text: str) -> int:
 
 
 def message_tokens(m: dict[str, Any]) -> int:
-    total = estimate_tokens(str(m.get("content") or ""))
+    content = m.get("content")
+    total = estimate_tokens(text_of(content)) + 1200 * image_count(content)
     for tc in m.get("tool_calls") or []:
         total += estimate_tokens(tc["function"]["arguments"]) + 10
     return total + 4

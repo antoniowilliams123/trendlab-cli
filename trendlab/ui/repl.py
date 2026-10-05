@@ -31,9 +31,26 @@ class Repl:
                 line = await self.app.console_input.readline()
                 if line is None:
                     break
-                text = line.strip()
+                text = line.rstrip()
+                while text.endswith("\\"):  # trailing backslash: continue on the next line
+                    self.console.print(f"[{GREY}]…[/] ", end="")
+                    more = await self.app.console_input.readline()
+                    if more is None:
+                        break
+                    text = text[:-1].rstrip() + "\n" + more.rstrip()
+                text = text.strip()
                 if not text:
                     continue
+                if text.startswith("/edit"):
+                    from trendlab.ui.editor import edit_in_external_editor
+
+                    edited = edit_in_external_editor(text[5:].strip())
+                    if edited is None:
+                        self.console.print("[warning]no editor found — set $EDITOR[/warning]")
+                        continue
+                    text = edited.strip()
+                    if not text:
+                        continue
                 if text.startswith("/"):
                     await self.handle_command(text)
                 else:

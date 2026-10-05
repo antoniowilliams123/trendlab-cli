@@ -42,6 +42,7 @@ from trendlab.tools.base import ToolContext
 from trendlab.tools.registry import default_registry
 from trendlab.tools.runtime import ToolRuntime
 from trendlab.tools.task_tool import TaskTool
+from trendlab.ui.attachments import build_user_content, text_of
 from trendlab.ui.console import ConsoleInput
 
 
@@ -63,6 +64,7 @@ class TrendLabApp:
         data_dir: Path | None = None,
         resume: str | None = None,
         on_token: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
         allow_destructive: bool = False,
     ) -> None:
         self.project_root = project_root.resolve()
@@ -75,6 +77,7 @@ class TrendLabApp:
         self.data_dir = data_dir or trendlab_home()
         self.resume_target = resume
         self.on_token = on_token
+        self.on_thinking = on_thinking
         self.events = EventBus()
         self.store: SessionStore | None = None
         self.session_id: str = ""
@@ -102,6 +105,7 @@ class TrendLabApp:
         self._token: str | None = None
         self._run_checkpoint: dict[str, Any] | None = None
         self._reminder_task: asyncio.Task | None = None
+        self.pending_images: list[Path] = []  # attached via /paste or /image for the next prompt
 
     # -- lifecycle -----------------------------------------------------------------------------
     async def start(self, *, interactive: bool = True, command_handler=None) -> None:
@@ -199,6 +203,7 @@ class TrendLabApp:
             plan=self.plan,
             escalation_model=self.config.routing.get("escalation"),
             on_token=self.on_token,
+            on_thinking=self.on_thinking,
             on_message=self._persist_message,
             stream=self.on_token is not None,
         )
@@ -319,10 +324,20 @@ class TrendLabApp:
             self.store.close()
 
     # -- running -----------------------------------------------------------------------------------
-    async def run_prompt(self, prompt: str) -> RunResult:
+    async def run_prompt(self, prompt: str, *, images: list[Path] | None = None) -> RunResult:
+        """Run a prompt; ``@file.png`` references in the text and ``images`` become vision parts."""
         assert self.agent is not None
         self._run_checkpoint = None
-        result = await self.agent.run(prompt)
+        images = [*self.pending_images, *(images or [])]
+        self.pending_images = []
+        content = build_user_content(prompt, self.project_root, images)
+        if isinstance(content, list):
+            self.events.emit(
+                EventType.IMAGES_ATTACHED,
+                session_id=self.session_id,
+                images=[Path(p["path"]).name for p in content if p.get("type") == "image_path"],
+            )
+        result = await self.agent.run(content)
         if self._run_checkpoint is not None and self.checkpoints is not None:
             self.checkpoints.seal(self._run_checkpoint["id"])
         self._save_state()
@@ -525,7 +540,7 @@ class TrendLabApp:
         for m in self.store.messages(self.session_id):
             role = m.get("role")
             if role == "user":
-                lines += [f"**You:** {m.get('content')}", ""]
+                lines += [f"**You:** {text_of(m.get('content'))}", ""]
             elif role == "assistant":
                 if m.get("content"):
                     lines += [f"**TrendLab:** {m['content']}", ""]

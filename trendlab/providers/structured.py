@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from trendlab.providers.base import ModelCapabilities, ModelProvider, ModelResponse, ToolCall
+from trendlab.ui.attachments import text_of
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
 _DONE_MARKER = "FINAL:"
@@ -90,7 +91,7 @@ def _rewrite(messages: list[dict[str, Any]], tools) -> list[dict[str, Any]]:
                 }
             )
         else:
-            out.append({"role": role, "content": m.get("content") or ""})
+            out.append({"role": role, "content": text_of(m.get("content"))})
     if not any(m["role"] == "system" for m in out):
         out.insert(0, {"role": "system", "content": _INSTRUCTIONS + _tool_catalog(tools)})
     return out

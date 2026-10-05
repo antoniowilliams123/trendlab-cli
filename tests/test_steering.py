@@ -1,12 +1,12 @@
 import asyncio
 from pathlib import Path
 
-from textual.widgets import Input, RichLog
+from textual.widgets import RichLog
 
 from trendlab.providers.base import ModelResponse, ToolCall
 from trendlab.providers.scripted import ScriptedProvider
 from trendlab.telemetry.events import EventType
-from trendlab.ui.tui import TrendLabTUI
+from trendlab.ui.tui import PromptInput, TrendLabTUI
 
 from .test_agent_runtime import make_agent
 from .test_tui import _tl
@@ -107,11 +107,11 @@ async def test_tui_typing_during_run_steers_and_escape_interrupts(
     tui = TrendLabTUI(_tl(project, provider))
     async with tui.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        inp = tui.query_one("#input", Input)
-        inp.value = "do the task"
+        inp = tui.query_one("#input", PromptInput)
+        inp.text = "do the task"
         await pilot.press("enter")
         await first_started.wait()
-        inp.value = "also update the docs"
+        inp.text = "also update the docs"
         await pilot.press("enter")
         await pilot.pause()
         text = "\n".join(str(line) for line in tui.query_one("#transcript", RichLog).lines)
@@ -125,7 +125,7 @@ async def test_tui_typing_during_run_steers_and_escape_interrupts(
             -1
         ] == "also update the docs"
         # Third run hangs; Esc interrupts it and the UI stays usable.
-        inp.value = "another task"
+        inp.text = "another task"
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause(0.02)
@@ -140,4 +140,4 @@ async def test_tui_typing_during_run_steers_and_escape_interrupts(
         text = "\n".join(str(line) for line in tui.query_one("#transcript", RichLog).lines)
         assert "Interrupted" in text
         assert tui.tl.agent.state.state.value == "CANCELED"
-        assert tui.query_one("#input", Input).has_focus or True  # input remains available
+        assert tui.query_one("#input", PromptInput).has_focus or True  # input remains available

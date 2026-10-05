@@ -84,6 +84,7 @@ class AgentRuntime:
         role: str = "main",
         escalation_model: str | None = None,
         on_token: TokenCallback | None = None,
+        on_thinking: TokenCallback | None = None,
         on_message: MessageCallback | None = None,
         hooks: Any = None,
         stream: bool = True,
@@ -100,6 +101,7 @@ class AgentRuntime:
         self.role = role
         self.escalation_model = escalation_model
         self.on_token = on_token
+        self.on_thinking = on_thinking
         self.on_message = on_message
         self.hooks = hooks
         self.stream = stream
@@ -166,7 +168,7 @@ class AgentRuntime:
         )
 
     # -- main loop -------------------------------------------------------------------------
-    async def run(self, prompt: str) -> RunResult:
+    async def run(self, prompt: str | list[dict[str, Any]]) -> RunResult:
         started = time.monotonic()
         self._cancel.clear()
         if self.state.terminal:
@@ -296,6 +298,8 @@ class AgentRuntime:
         if self.stream and self.on_token is not None:
             response: ModelResponse | None = None
             async for chunk in self.gateway.stream(self.model_ref, messages, tools):
+                if chunk.thinking and self.on_thinking is not None:
+                    self.on_thinking(chunk.thinking)
                 if chunk.text:
                     self.on_token(chunk.text)
                 if chunk.final is not None:
@@ -434,6 +438,9 @@ def _assistant_message(response: ModelResponse) -> dict[str, Any]:
         # Providers with richer turns (e.g. Anthropic thinking blocks) replay these verbatim
         # when the same model continues; other providers ignore underscore keys.
         message["_provider_content"] = response.raw_metadata["provider_content"]
+        message["_provider_model"] = response.raw_metadata.get("provider_model")
+    if response.raw_metadata.get("reasoning_content"):
+        message["_reasoning_content"] = response.raw_metadata["reasoning_content"]
         message["_provider_model"] = response.raw_metadata.get("provider_model")
     message["tool_calls"] = [
         {
