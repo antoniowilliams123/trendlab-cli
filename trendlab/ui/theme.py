@@ -51,7 +51,7 @@ RICH_THEME = Theme(
     }
 )
 
-WORDMARK = "▌TRENDLAB"
+WORDMARK = "▌ T R E N D L A B"
 
 
 def make_console(**kwargs) -> Console:
