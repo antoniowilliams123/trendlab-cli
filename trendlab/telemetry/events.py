@@ -1,0 +1,133 @@
+"""Event bus for TrendLab CLI.
+
+The runtime emits structured events; the UI, the audit log and tests subscribe.
+Nothing in the runtime depends on who is listening, which is what lets remote
+approval, the terminal UI and future interfaces coexist.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from collections.abc import Callable
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from trendlab.security.redaction import redact_structure
+
+
+class EventType(StrEnum):
+    # Agent / runtime
+    AGENT_STATE_CHANGED = "agent.state_changed"
+    MODEL_CALL_STARTED = "model.call_started"
+    MODEL_CALL_COMPLETED = "model.call_completed"
+    TOOL_REQUESTED = "tool.requested"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
+    FILE_CHANGED = "file.changed"
+    # Permissions
+    PERMISSION_REQUESTED = "permission.requested"
+    PERMISSION_DECIDED = "permission.decided"
+    # Approvals (remote-capable)
+    APPROVAL_REQUESTED = "approval.requested"
+    APPROVAL_DISPATCHED = "approval.dispatched"
+    APPROVAL_DELIVERY_FAILED = "approval.delivery_failed"
+    APPROVAL_RECEIVED = "approval.received"
+    APPROVAL_APPROVED = "approval.approved"
+    APPROVAL_DENIED = "approval.denied"
+    APPROVAL_EXPIRED = "approval.expired"
+    APPROVAL_CANCELED = "approval.canceled"
+    APPROVAL_SUPERSEDED = "approval.superseded"
+    APPROVAL_REJECTED = "approval.rejected"  # invalid/replayed/mismatched decision attempt
+    # Remote channel lifecycle
+    REMOTE_CHANNEL_STARTED = "remote.channel_started"
+    REMOTE_CHANNEL_STOPPED = "remote.channel_stopped"
+    REMOTE_AUTH_FAILED = "remote.auth_failed"
+    # Session
+    SESSION_STARTED = "session.started"
+    SESSION_RESUMED = "session.resumed"
+
+
+class Event(BaseModel):
+    type: EventType
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    session_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    def to_record(self) -> dict[str, Any]:
+        rec = {
+            "event": self.type.value,
+            "ts": self.timestamp.isoformat(),
+            "session_id": self.session_id,
+        }
+        rec.update(redact_structure(self.data))
+        return rec
+
+
+Subscriber = Callable[[Event], None]
+
+
+class EventBus:
+    """Synchronous, thread-safe publish/subscribe bus."""
+
+    def __init__(self) -> None:
+        self._subscribers: list[Subscriber] = []
+        self._lock = threading.Lock()
+
+    def subscribe(self, fn: Subscriber) -> Callable[[], None]:
+        with self._lock:
+            self._subscribers.append(fn)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if fn in self._subscribers:
+                    self._subscribers.remove(fn)
+
+        return unsubscribe
+
+    def emit(
+        self,
+        type_: EventType,
+        session_id: str | None = None,
+        **data: Any,
+    ) -> Event:
+        event = Event(type=type_, session_id=session_id, data=data)
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for fn in subscribers:
+            try:
+                fn(event)
+            except Exception:  # noqa: BLE001 — a bad subscriber must not break the runtime
+                pass
+        return event
+
+
+class JsonlEventSink:
+    """Appends every event as one redacted JSON line — the audit log."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def __call__(self, event: Event) -> None:
+        line = json.dumps(event.to_record(), default=str)
+        with self._lock, self.path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+
+class EventRecorder:
+    """In-memory subscriber used by tests and the ``/approvals`` command."""
+
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def __call__(self, event: Event) -> None:
+        self.events.append(event)
+
+    def of_type(self, type_: EventType) -> list[Event]:
+        return [e for e in self.events if e.type == type_]

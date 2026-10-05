@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trendlab-cli"
+version = "0.1.0"
+description = "TrendLab CLI — a local-first, model-agnostic agentic coding harness with remote approvals."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Tony Williams", email = "antoniowilliams123@gmail.com" }]
+dependencies = [
+  "typer>=0.12",
+  "rich>=13",
+  "pydantic>=2.6",
+  "httpx>=0.27",
+  "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+trendlab = "trendlab.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["trendlab*"]
+
+[tool.setuptools.package-data]
+"trendlab.approvals.channels" = ["*.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"trendlab/cli.py" = ["B008"]  # typer.Option defaults are the framework idiom

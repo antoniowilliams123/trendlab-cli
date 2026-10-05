@@ -1,0 +1,56 @@
+# ~/.trendlab/config.toml — TrendLab CLI example configuration.
+# Secrets are NEVER stored here; they are referenced by environment-variable name.
+
+[defaults]
+model = "openai:gpt-4o-mini"
+permission_mode = "ask"          # plan | ask | auto_edit | trusted
+
+[limits]
+max_iterations = 50
+
+[providers.openai]
+type = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.deepseek]
+type = "openai_compatible"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[providers.ollama]
+type = "ollama"
+base_url = "http://localhost:11434/v1"
+
+# ---------------------------------------------------------------------------
+# Remote approval (phone). Disabled until you enable it:
+#   trendlab remote enable --host <tailscale-ip> --allow-insecure-http
+# ---------------------------------------------------------------------------
+[remote_approval]
+enabled = false
+channel = "web"
+host = "127.0.0.1"               # your Tailscale IP / LAN IP to reach it from a phone
+port = 8787
+# public_url = "https://thinkpad.tailnet.ts.net:8787"
+request_timeout_minutes = 30
+allow_high_risk = false          # destructive ops stay terminal-only unless true
+allow_session_scope = true
+# tls_cert = "/home/me/.trendlab/cert.pem"
+# tls_key  = "/home/me/.trendlab/key.pem"
+allow_insecure_http = false      # must be true to bind a non-loopback address without TLS
+machine_name = "ThinkPad"
+
+[notifications]
+enabled = false
+provider = "none"                # none | telegram | ntfy | webhook
+
+[notifications.telegram]
+bot_token_env = "TRENDLAB_TELEGRAM_BOT_TOKEN"
+chat_id = ""
+
+[notifications.ntfy]
+server = "https://ntfy.sh"
+topic = ""                       # pick something unguessable, e.g. "trendlab-7f3a9c"
+
+[notifications.webhook]
+url = ""

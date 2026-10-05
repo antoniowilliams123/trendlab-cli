@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>TrendLab CLI — Approvals</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#111; --muted:#667; --line:#dde1e6;
+          --ok:#1b7f3b; --bad:#b3261e; --warn:#a05a00; --accent:#1c2530; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1317; --card:#171c22; --fg:#e8ebef; --muted:#9aa4b0; --line:#2a323b; --accent:#9fb3c8; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 16px/1.45 -apple-system, system-ui, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--fg); padding:16px; }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  h1 { font-size:18px; margin:0; letter-spacing:.2px; }
+  .meta { color:var(--muted); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin:12px 0; }
+  .row { display:flex; justify-content:space-between; gap:8px; margin:4px 0; font-size:14px; }
+  .k { color:var(--muted); min-width:72px; }
+  .v { text-align:right; word-break:break-word; }
+  .cmd { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:rgba(127,127,127,.12); padding:8px 10px; border-radius:8px; white-space:pre-wrap; word-break:break-all; margin:8px 0; }
+  .risk { font-weight:600; text-transform:uppercase; font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid currentColor; }
+  .risk.low { color:var(--ok); } .risk.medium { color:var(--warn); } .risk.high { color:var(--bad); }
+  .actions { display:grid; grid-template-columns:1fr; gap:8px; margin-top:12px; }
+  button { font:inherit; font-weight:600; padding:14px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.approve { background:var(--ok); color:#fff; border-color:var(--ok); }
+  button.session { color:var(--ok); border-color:var(--ok); }
+  button.deny { color:var(--bad); border-color:var(--bad); }
+  button:disabled { opacity:.5; }
+  .empty { text-align:center; color:var(--muted); padding:36px 12px; }
+  .banner { padding:10px 12px; border-radius:10px; font-size:14px; margin-bottom:12px; }
+  .banner.err { background:rgba(179,38,30,.12); color:var(--bad); }
+  .banner.ok { background:rgba(27,127,59,.12); color:var(--ok); }
+  .confirm { border:1px dashed var(--bad); padding:10px; border-radius:10px; margin-top:10px; font-size:14px; }
+  .files { font-size:13px; color:var(--muted); word-break:break-all; }
+  footer { color:var(--muted); font-size:12px; text-align:center; margin-top:24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TrendLab CLI — Approvals</h1>
+  <div class="meta" id="machine"></div>
+</header>
+<div id="banner"></div>
+<main id="list"><div class="empty">Loading…</div></main>
+<footer>Decisions are single-use and bound to the exact operation shown. <span id="status"></span></footer>
+<script>
+(function () {
+  var KEY = 'trendlab_remote_token';
+  var hash = location.hash || '';
+  if (hash.indexOf('#t=') === 0) {
+    try { localStorage.setItem(KEY, decodeURIComponent(hash.slice(3))); } catch (e) {}
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  var token = null;
+  try { token = localStorage.getItem(KEY); } catch (e) {}
+  var banner = document.getElementById('banner');
+  var list = document.getElementById('list');
+  var statusEl = document.getElementById('status');
+  var machineEl = document.getElementById('machine');
+  var busy = {};
+  var confirming = {};
+
+  function show(kind, text) { banner.innerHTML = ''; if (!text) return; var d = document.createElement('div'); d.className = 'banner ' + kind; d.textContent = text; banner.appendChild(d); }
+  function esc(s) { return String(s == null ? '' : s); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  if (!token) {
+    list.innerHTML = '';
+    list.appendChild(el('div', 'empty', 'This device is not paired. On the computer running TrendLab, run "trendlab remote url" (or /remote url) and open the printed link on this phone.'));
+    return;
+  }
+
+  function api(method, path, body) {
+    return fetch(path, { method: method, headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, json: j }; }); });
+  }
+
+  function render(data) {
+    machineEl.textContent = (data.machine || '') + (data.project ? ' · ' + data.project : '');
+    list.innerHTML = '';
+    var items = data.approvals || [];
+    if (!items.length) {
+      var msg = 'No approvals waiting.';
+      if (data.local_only_pending) msg += ' ' + data.local_only_pending + ' high-risk request(s) must be approved at the terminal.';
+      list.appendChild(el('div', 'empty', msg));
+      return;
+    }
+    items.forEach(function (a) {
+      var card = el('div', 'card');
+      var top = el('div', 'row');
+      top.appendChild(el('strong', null, a.summary));
+      top.appendChild(el('span', 'risk ' + a.risk, a.risk));
+      card.appendChild(top);
+      if (a.command) card.appendChild(el('div', 'cmd', a.command));
+      function row(k, v) { if (v == null || v === '') return; var r = el('div', 'row'); r.appendChild(el('span', 'k', k)); r.appendChild(el('span', 'v', v)); card.appendChild(r); }
+      row('Tool', a.tool); row('Directory', a.cwd); row('Expires in', Math.max(0, Math.round(a.seconds_remaining / 60)) + ' min');
+      if (a.affected_files && a.affected_files.length) { card.appendChild(el('div', 'files', 'Files: ' + a.affected_files.join(', '))); }
+      if (a.explanation) { var ex = el('div', 'files', 'Agent says: ' + a.explanation); ex.style.marginTop = '6px'; card.appendChild(ex); }
+      var actions = el('div', 'actions');
+      var isHigh = a.risk === 'high';
+      function decide(decision, scope) {
+        if (busy[a.approval_id]) return;
+        if (isHigh && decision === 'approve' && !confirming[a.approval_id]) {
+          confirming[a.approval_id] = true;
+          var c = el('div', 'confirm', 'High-risk operation. Tap "Approve Once" again to confirm.');
+          card.appendChild(c);
+          return;
+        }
+        busy[a.approval_id] = true;
+        Array.prototype.forEach.call(actions.querySelectorAll('button'), function (b) { b.disabled = true; });
+        api('POST', '/api/approvals/' + encodeURIComponent(a.approval_id) + '/decision',
+            { decision: decision, scope: scope, decision_token: a.decision_token, fingerprint: a.fingerprint })
+          .then(function (res) {
+            if (res.status === 200) { show('ok', (decision === 'approve' ? 'Approved' : 'Denied') + ': ' + a.summary); }
+            else { show('err', 'Rejected (' + (res.json.error || res.status) + '): ' + (res.json.message || '')); }
+            delete busy[a.approval_id]; delete confirming[a.approval_id];
+            refresh();
+          })
+          .catch(function () { show('err', 'Network error — TrendLab may be unreachable.'); delete busy[a.approval_id]; });
+      }
+      var b1 = el('button', 'approve', 'Approve Once'); b1.onclick = function () { decide('approve', 'once'); }; actions.appendChild(b1);
+      if (a.session_scope_allowed && !isHigh) { var b2 = el('button', 'session', 'Approve for Session'); b2.onclick = function () { decide('approve', 'session'); }; actions.appendChild(b2); }
+      var b3 = el('button', 'deny', 'Deny'); b3.onclick = function () { decide('deny', 'once'); }; actions.appendChild(b3);
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+  }
+
+  function refresh() {
+    api('GET', '/api/approvals').then(function (res) {
+      if (res.status === 401) { show('err', 'Not authorized. Re-pair this device with a fresh link from "trendlab remote url".'); return; }
+      if (res.status === 429) { show('err', 'Too many failed attempts; restart TrendLab remote to reset.'); return; }
+      if (res.status !== 200) { show('err', 'Server error ' + res.status); return; }
+      statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      render(res.json);
+    }).catch(function () { statusEl.textContent = 'Offline — retrying…'; });
+  }
+  refresh();
+  setInterval(refresh, 3000);
+})();
+</script>
+</body>
+</html>
