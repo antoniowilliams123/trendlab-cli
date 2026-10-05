@@ -1466,6 +1466,31 @@ Potential commands:
 Commits must never occur silently unless the user has explicitly enabled
 that behavior.
 
+
+### Implemented Workflow (2026-10-05)
+
+-   `/commit [message]`: stages everything and commits. Without a message
+    the summarizer-role model writes a conventional-commit message from the
+    diff (deterministic fallback if the model is unavailable). The commit
+    runs through the shell tool, so permissions and the audit log apply;
+    TrendLab's own state (`.trendlab/`) is kept out of git via
+    `.git/info/exclude`.
+-   `/pr [title] [--draft]`: refuses with uncommitted changes; creates a
+    `trendlab/<slug>` branch when on the default branch; pushes with `-u`;
+    generates a Markdown body (Summary / Changes / Testing) from the commits
+    and diff stat; opens the PR with `gh pr create`; appends `Closes #N`
+    when an issue is loaded.
+-   `/issue <n>`: reads the issue with `gh issue view --json`, appends its
+    title, state, labels and body to the conversation as context and
+    remembers it for `/pr`.
+-   `/worktree start [name] | done | list | remove <name>` and
+    `trendlab --worktree <name>`: a throwaway checkout under
+    `.trendlab/worktrees/<name>` on branch `trendlab/<name>`; tools,
+    checkpoints, repository map and project rules are re-pointed at it, so
+    the main checkout is never mid-edit.
+-   Commits and pushes remain user commands; no model-callable tool can
+    commit, push or open a PR.
+
 ------------------------------------------------------------------------
 
 ## 27. Session Persistence
@@ -1659,6 +1684,16 @@ and the UNSAFE badge. The TUI shows a live streaming pane under the
 transcript, a spinner with elapsed time in the status bar, context size
 with percentage of window, running cost, and the plan with glyphs. F1/F2/F3
 open help, plan and cost. The REPL uses the same Rich theme.
+
+**Input (implemented 2026-10-05).** The prompt is multi-line: Enter sends;
+Shift+Enter, Ctrl+J or a trailing backslash continue on the next line;
+Ctrl+E (TUI) and `/edit` (REPL) compose in `$EDITOR`. Images attach by
+writing `@file.png` in the prompt, `/image <path>`, or `/paste` (clipboard
+via PowerShell on WSL, wl-paste/xclip on Linux, pngpaste on macOS); only
+the path is stored, providers encode the file at request time. The model's
+reasoning summary streams dimmed in the transcript pane while it works
+(Anthropic summarized thinking; DeepSeek `reasoning_content`, replayed to
+the same model on later turns).
 
 **Steering and interruption (implemented 2026-10-05).** Typing while a
 task runs queues the text as a user turn that is delivered before the
@@ -1915,6 +1950,12 @@ Example:
 
 TrendLab should discover instructions from the repository root and
 optionally nested directories.
+
+
+Implemented: `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md` at the project
+root are all loaded, in that order, deduplicated by content and each
+labelled in the system prompt, so repositories prepared for other agents
+work without copying instructions.
 
 ------------------------------------------------------------------------
 
@@ -2817,6 +2858,16 @@ user-supplied webhook) and carry only redacted summaries. The inbound
 approval server accepts decisions on pending operations only; it exposes
 no file, shell or model capability.
 
+
+### Implemented Tools (2026-10-05)
+
+`web_search` (configurable HTML search endpoint, DuckDuckGo by default; no
+paid API) and `web_fetch` (any public http(s) page, HTML stripped to text,
+size-capped, secrets redacted) are NETWORK-category tools: they ask in
+`ask` mode, show the URL or query in the approval preview, and are
+approvable from the phone. Local, loopback, link-local and private-range
+addresses are refused.
+
 ------------------------------------------------------------------------
 
 ## 65. Review Agent
@@ -3690,3 +3741,12 @@ decisions taken after the original specification. Newest last.
 -   Steering while running and `Esc` interruption in the TUI (typed lines
     and `/stop` in the REPL), modelled on the interaction the owner likes in
     his daily driver; shell subprocesses are killed on interrupt.
+
+### 2026-10-05 — Daily-driver features
+-   Steering while running and Esc interruption.
+-   Image input (`@file.png`, `/image`, `/paste`), multi-line prompt with
+    `$EDITOR`, reasoning display, `AGENTS.md`/`CLAUDE.md` support (§29, §34).
+-   Git and GitHub workflow: `/commit` with generated messages, `/pr`
+    through `gh`, `/issue` context, worktree isolation (§26).
+-   `web_search` and `web_fetch` tools in the NETWORK category (§64).
+-   Test suite: 219 cases.

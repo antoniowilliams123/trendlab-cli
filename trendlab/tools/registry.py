@@ -56,6 +56,7 @@ def default_registry() -> ToolRegistry:
     from trendlab.tools.git import GitDiffTool, GitLogTool, GitStatusTool
     from trendlab.tools.shell import ShellTool
     from trendlab.tools.tests import RunTestsTool
+    from trendlab.tools.web import WebFetchTool, WebSearchTool
 
     reg = ToolRegistry()
     for tool in (
@@ -72,6 +73,8 @@ def default_registry() -> ToolRegistry:
         GitDiffTool(),
         GitLogTool(),
         RunTestsTool(),
+        WebFetchTool(),
+        WebSearchTool(),
     ):
         reg.register(tool)
     return reg

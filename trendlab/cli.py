@@ -119,6 +119,9 @@ def main_callback(
     safe: bool = typer.Option(
         False, "--safe", help="Shortcut for --mode ask (approval prompts on)."
     ),
+    worktree: str | None = typer.Option(
+        None, "--worktree", help="Create a throwaway git worktree with this name and work there."
+    ),
     allow_destructive: bool = typer.Option(
         False,
         "--allow-destructive",
@@ -152,6 +155,15 @@ def main_callback(
         console.print(unsafe_banner(allow_destructive))
     from trendlab.app import TrendLabApp
 
+    if worktree:
+        from trendlab.orchestration.gitflow import WorktreeManager
+
+        try:
+            project = WorktreeManager(project.resolve()).create_sync(worktree)
+        except RuntimeError as exc:
+            console.print(f"[danger]{exc}[/danger]")
+            raise typer.Exit(2) from exc
+        console.print(f"[ok]working in worktree[/ok] {project}")
     if prompt:
         _first_run_check(config, model or config.defaults.model)
         tl_app = TrendLabApp(

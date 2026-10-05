@@ -16,6 +16,7 @@ from trendlab.config.schema import PermissionMode
 from trendlab.providers.base import ProviderError
 from trendlab.tools.git import run_git
 from trendlab.ui.diff_view import render_diff
+from trendlab.ui.theme import GREY
 
 HELP = """\
 /help                      Show this help
@@ -27,7 +28,11 @@ HELP = """\
 /compact                   Compact older conversation into a structured summary
 /cost                      Session cost by model        /cost-limit <usd>   Set a hard budget
 /diff [file]               Changes made this session (or git diff of a file)
-/git <status|diff|log>     Read-only git commands         /commit "<msg>"   Commit (explicit only)
+/git <status|diff|log>     Read-only git commands
+/commit [msg]              Commit everything; the message is written from the diff when omitted
+/pr [title] [--draft]      Push the branch and open a pull request with gh (body generated)
+/issue <n>                 Pull a GitHub issue into the conversation; /pr adds "Closes #n"
+/worktree start [name] | done | list | remove <name>   Work on a throwaway git worktree
 /checkpoint                List checkpoints                /undo [id] [force]   Restore a checkpoint
 /sessions | /resume <id|latest> | /new      Session management (resume switches in place)
 /export [path]             Write this session as Markdown (.trendlab/exports/)
@@ -73,6 +78,9 @@ class CommandRouter:
             "/diff": self._diff,
             "/git": self._git,
             "/commit": self._commit,
+            "/pr": self._pr,
+            "/issue": self._issue,
+            "/worktree": self._worktree,
             "/checkpoint": self._checkpoint,
             "/undo": self._undo,
             "/sessions": self._sessions,
@@ -283,21 +291,87 @@ class CommandRouter:
         )
 
     async def _commit(self, args: list[str]) -> None:
-        if not args:
-            self.console.print(
-                '[red]usage: /commit "message"[/red] — commits never happen implicitly'
-            )
+        from trendlab.orchestration.gitflow import commit
+
+        message = " ".join(args) if args else None
+        if message is None:
+            self.console.print(f"[{GREY}]generating a commit message from the diff…[/]")
+        res = await commit(self.app, message)
+        if not res["ok"]:
+            self.console.print(f"[red]{res['error']}[/red]")
             return
-        code, out = await run_git(self.app.project_root, "add", "-A")
-        if code != 0:
-            self.console.print(f"[red]{out}[/red]")
+        self.console.print(f"[ok]committed {res['head']}[/ok]")
+        self.console.print(res["message"])
+
+    async def _pr(self, args: list[str]) -> None:
+        from trendlab.orchestration.gitflow import create_pr
+
+        draft = "--draft" in args
+        title = " ".join(a for a in args if a != "--draft") or None
+        self.console.print(f"[{GREY}]pushing branch and opening a pull request…[/]")
+        res = await create_pr(self.app, title, draft=draft)
+        if not res["ok"]:
+            self.console.print(f"[red]{res['error']}[/red]")
             return
-        code, out = await run_git(self.app.project_root, "commit", "-m", " ".join(args))
         self.console.print(
-            out.strip()
-            if out.strip()
-            else ("[green]committed[/green]" if code == 0 else "[red]commit failed[/red]")
+            f"[ok]pull request opened[/ok] {res['url']}  ({res['branch']} → {res['base']})"
         )
+
+    async def _issue(self, args: list[str]) -> None:
+        from trendlab.orchestration.gitflow import load_issue
+
+        if not args or not args[0].lstrip("#").isdigit():
+            self.console.print("[red]usage: /issue <number>[/red]")
+            return
+        res = await load_issue(self.app, int(args[0].lstrip("#")))
+        if not res["ok"]:
+            self.console.print(f"[red]{res['error']}[/red]")
+            return
+        self.console.print(
+            f"[ok]loaded issue #{res['issue']['number']}[/ok] {res['issue'].get('title', '')}"
+        )
+        self.console.print(
+            f"[{GREY}]its text is now in the conversation; /pr will add 'Closes #N'[/]"
+        )
+
+    async def _worktree(self, args: list[str]) -> None:
+        from trendlab.orchestration.gitflow import WorktreeManager
+
+        wm = WorktreeManager(self.app.main_project_root)
+        sub = args[0] if args else "list"
+        if sub == "start":
+            name = " ".join(args[1:]) if len(args) > 1 else self.app.session_id
+            try:
+                path = await wm.create(name)
+            except RuntimeError as exc:
+                self.console.print(f"[red]{exc}[/red]")
+                return
+            self.app.switch_project_root(path)
+            self.console.print(f"[ok]working in worktree[/ok] {path} (branch trendlab/{name})")
+        elif sub == "done":
+            self.app.switch_project_root(self.app.main_project_root)
+            self.console.print(
+                f"[ok]back to[/ok] {self.app.main_project_root}  "
+                f"[{GREY}](worktree kept; /worktree remove <name> to delete)[/]"
+            )
+        elif sub == "remove" and len(args) > 1:
+            try:
+                path = await wm.remove(args[1], force="--force" in args)
+            except RuntimeError as exc:
+                self.console.print(f"[red]{exc}[/red]")
+                return
+            if str(self.app.project_root) == path:
+                self.app.switch_project_root(self.app.main_project_root)
+            self.console.print(f"[ok]removed[/ok] {path}")
+        else:
+            rows = await wm.list()
+            t = Table(title="Worktrees")
+            t.add_column("path")
+            t.add_column("branch")
+            for r in rows:
+                mark = " ◀" if str(self.app.project_root) == r["path"] else ""
+                t.add_row(r["path"] + mark, r.get("branch", "-"))
+            self.console.print(t)
 
     # -- checkpoints / sessions --------------------------------------------------------------------
     async def _checkpoint(self, args: list[str]) -> None:

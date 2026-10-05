@@ -106,6 +106,8 @@ class TrendLabApp:
         self._run_checkpoint: dict[str, Any] | None = None
         self._reminder_task: asyncio.Task | None = None
         self.pending_images: list[Path] = []  # attached via /paste or /image for the next prompt
+        self.current_issue: dict[str, Any] | None = None
+        self.main_project_root: Path = self.project_root
 
     # -- lifecycle -----------------------------------------------------------------------------
     async def start(self, *, interactive: bool = True, command_handler=None) -> None:
@@ -164,6 +166,12 @@ class TrendLabApp:
             self.config.context.repo_map_budget_tokens * 4
         )
         self.checkpoints = CheckpointManager(self.project_root, self.store, self.session_id)
+        try:
+            from trendlab.orchestration.gitflow import ensure_excluded
+
+            ensure_excluded(self.project_root)
+        except OSError:
+            pass
         if self.resumed:
             self._restore_state()
 
@@ -568,6 +576,33 @@ class TrendLabApp:
 
         path.write_text(redact_text("\n".join(lines)), encoding="utf-8")
         return path
+
+    # -- worktrees ------------------------------------------------------------------------------
+    def switch_project_root(self, new_root: Path) -> None:
+        """Point tools, checkpoints, repo map and permissions at another checkout (a worktree)."""
+        assert self.tools and self.context and self.store
+        new_root = new_root.resolve()
+        self.project_root = new_root
+        rules = IgnoreRules.for_project(
+            new_root, respect_gitignore=self.config.git.respect_gitignore
+        )
+        self.tools.ctx.project_root = new_root
+        self.tools.ctx.ignore_rules = rules
+        self.tools.ctx.validation_commands = validation_commands(self.config, new_root)
+        self.engine.project_rules = ProjectRules(new_root)
+        self.repo_map = RepositoryMap(
+            new_root, rules, max_files=self.config.context.repo_map_max_files
+        ).build()
+        self.context.repo_map_text = self.repo_map.render(
+            self.config.context.repo_map_budget_tokens * 4
+        )
+        self.context.system_prompt = build_system_prompt(new_root)
+        self.checkpoints = CheckpointManager(new_root, self.store, self.session_id)
+        if self.subagents is not None:
+            self.subagents.parent_ctx = self.tools.ctx
+        self.events.emit(
+            EventType.PROJECT_ROOT_CHANGED, session_id=self.session_id, root=str(new_root)
+        )
 
     # -- model switching ---------------------------------------------------------------------------
     def switch_model(self, model_ref: str) -> None:

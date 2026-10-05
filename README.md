@@ -42,7 +42,10 @@ another device.
 | **Real editing** | Exact-text `patch_file`, unified-diff `apply_patch` (multi-file, all-or-nothing), atomic writes with hash conflict protection, automatic checkpoints and `/undo`. |
 | **Long sessions** | Repository map, token budgeting, structured compaction, SQLite persistence, resume in place. |
 | **Safety that survives autonomy** | `sudo` and paths outside the project are denied in every mode. Destructive commands keep a prompt. Writes that look like secrets are blocked. Everything is logged with secrets redacted. |
-| **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. |
+| **Git and GitHub** | `/commit` writes the message from the diff, `/pr` pushes a branch and opens a pull request through `gh`, `/issue N` pulls an issue into the conversation (the PR closes it), `/worktree` runs a task on a throwaway checkout. |
+| **Looks things up** | `web_search` and `web_fetch` tools (network category, so they prompt in ask mode) for docs, changelogs and error sources. |
+| **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, `@file.png` or `/paste` to attach screenshots, type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
+| **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
 
 ## Screenshots
 
@@ -79,11 +82,12 @@ trendlab -m anthropic:claude-opus-5        # pick provider:model for this sessio
 trendlab --safe                            # approval prompts on (the default mode is unsafe)
 trendlab -p "Run the tests and fix failures" --output json    # headless, for CI
 trendlab --resume latest                   # continue the last session in this project
+trendlab --worktree spike                  # work on a throwaway git worktree + branch trendlab/spike
 trendlab bench -m deepseek:deepseek-flash  # five fixture repos, objective metrics per model
 ```
 
-Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/resume`, `/export`,
-`/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
+Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/commit`, `/pr`,
+`/issue`, `/worktree`, `/resume`, `/export`, `/image`, `/paste`, `/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
 current step and keeps the conversation, and **typing while it runs steers it**: your message is
 delivered before the next model call.
 
