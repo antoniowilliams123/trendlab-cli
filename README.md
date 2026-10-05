@@ -1,123 +1,167 @@
-# TrendLab CLI
+<p align="center">
+  <img src="docs/screenshots/tui-main.png" alt="TrendLab CLI — the full-screen TUI after an autonomous fix" width="920">
+</p>
 
-**TrendLab CLI** is a local-first, model-agnostic agentic coding harness: a terminal agent that
-inspects a repository, plans, edits files, runs commands and tests, recovers from failures, and
-stops only when there is evidence the task is done. Every risky operation passes through a
-permission engine you control, and you can approve, deny or answer questions **from your phone**.
+<h1 align="center">TrendLab CLI</h1>
 
-```text
-⏳ Waiting for approval
-   Action:   Patch src/orders.py (+3 -1)
-   Risk:     MEDIUM
-Remote approval request sent — decide here or on your phone.
-```
+<p align="center">
+  A local-first, model-agnostic agentic coding harness.<br>
+  Give it a task, walk away, and approve the risky parts from your phone.
+</p>
 
-## What it does
+<p align="center">
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-196%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.3%20%C2%B7%2089%20sections-39ff14?style=flat-square&labelColor=000000"></a>
+</p>
 
-- **Any model.** Anthropic (Claude Opus 5, Sonnet 5, Haiku 4.5 via the official SDK), OpenAI,
-  DeepSeek, Moonshot/Kimi, Ollama or any OpenAI-compatible endpoint behind one gateway with retries, fallback, streaming, cost tracking and a JSON fallback for models
-  with weak native tool calling. Hot-switch with `/model`; route roles with `[routing]`.
-- **Real tools.** read/list/glob/search, atomic `write_file` and targeted `patch_file` with diff
-  previews and hash conflict protection, `shell` with risk classification, `run_tests` with
-  auto-detected validation commands, read-only git tools, `task` plan, `delegate` sub-agents,
-  `ask_user`, and MCP servers as first-class tools.
-- **Evidence-based completion.** A structured plan, a completion evaluator that refuses "done"
-  without validation, loop detection with model escalation, iteration/cost/time limits,
-  automatic checkpoints and `/undo`.
-- **Long sessions.** Repository map, token budgeting, structured compaction, SQLite persistence
-  and `--resume`.
-- **Remote approval.** Authenticated mobile web page, Telegram/ntfy/webhook notifications,
-  expiry reminders, completion/failure pings, questions answered from the phone, full audit trail.
-- **Two interfaces, one look.** A full-screen TUI (default) and a Rich REPL (`--plain`), both
-  jet-black with neon-green text: live token streaming, plan panel, spinner status bar with
-  context and cost, inline diffs, and approval/question modals. Headless `-p "..." --output json`
-  for CI.
-- **Edits that land.** Exact-text `patch_file` for small changes, unified-diff `apply_patch` for
-  multi-hunk, multi-file changes (all-or-nothing), and a secret scanner that refuses to write
-  keys into the repository.
+---
 
-## Install
+## What it is
 
-```bash
-git clone <this repo> && cd trendlab-cli
-python3 -m venv --without-pip .venv            # or a normal venv if ensurepip is available
-pip3 --python .venv/bin/python install -e ".[dev]"
-.venv/bin/trendlab --version
-```
+TrendLab CLI is a terminal coding agent you own end to end. It inspects a repository, plans,
+edits files, runs the tests, reads the failures and iterates, and it stops only when there is
+evidence the task is done. The model is a swappable part: Claude, DeepSeek, OpenAI, Moonshot,
+or a local Ollama model, switchable mid-session. Every side effect passes through one
+permission engine, and when a decision needs a human the request goes to the terminal **and**
+to a mobile web page on your phone.
 
-Configuration: `~/.trendlab/config.toml` (global) and `.trendlab/config.toml` (per project).
-Secrets are referenced by name only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) and resolved from
-the environment or from `trendlab secret set NAME` (stored under `~/.trendlab/secrets`, mode 0600,
-never echoed). Start from `docs/config.example.toml`. Project instructions live in `TRENDLAB.md` (`/init` drafts one).
+It is comparable in spirit to Claude Code and OpenAI's Codex CLI, with three differences: the
+harness is vendor-neutral, the permission system is the center of the design rather than an
+add-on, and approvals are cryptographically bound to the exact operation and can be made from
+another device.
 
-## Use
+## Highlights
 
-```bash
-trendlab                                  # full-screen TUI in the current project
-trendlab --plain                          # Rich REPL
-trendlab -m anthropic:claude-opus-5       # pick provider:model
-trendlab -m deepseek:deepseek-chat
-trendlab -p "Run the tests and fix failures" --auto-edit --output json   # headless / CI
-trendlab --safe                           # approval prompts on (default is UNSAFE: no prompts)
-trendlab --allow-destructive              # unsafe + rm -rf / destructive git without asking
-trendlab --resume latest                  # continue the last session for this project
-trendlab init                             # first-run wizard: provider, key, config
-trendlab doctor                           # check config, keys, tools, remote settings
-trendlab sessions | trendlab approvals    # history
-trendlab bench -m ollama:qwen3-coder      # benchmark fixtures A–E on a model
-```
+| | |
+|---|---|
+| **Evidence-based completion** | A completion evaluator refuses "done" when files changed without validation or plan items are still open. Loop detection escalates to a stronger model or stops. |
+| **Remote approval** | Authenticated phone page with the proposed diff inline, single-use decisions bound to an operation fingerprint, expiry, reminders, and a full audit trail. Questions from the agent can be answered from the phone too. |
+| **Any model** | Anthropic (official SDK, adaptive thinking, prompt caching), OpenAI-compatible endpoints, Ollama. Role routing sends research to a cheap model and review to a strong one. Provider fallback on infrastructure failures. |
+| **Real editing** | Exact-text `patch_file`, unified-diff `apply_patch` (multi-file, all-or-nothing), atomic writes with hash conflict protection, automatic checkpoints and `/undo`. |
+| **Long sessions** | Repository map, token budgeting, structured compaction, SQLite persistence, resume in place. |
+| **Safety that survives autonomy** | `sudo` and paths outside the project are denied in every mode. Destructive commands keep a prompt. Writes that look like secrets are blocked. Everything is logged with secrets redacted. |
+| **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. |
 
-**Permissions default to UNSAFE**: edits, shell, installs, network and deletes run without prompts;
-`sudo` and paths outside the project are always denied, destructive commands still ask, every
-auto-approval is logged, and `/undo` restores the pre-edit checkpoint. `--safe`, `/mode ask`, or
-`permission_mode = "ask"` in config turn prompts on.
+## Screenshots
 
-Slash commands: `/help /status /mode /permissions /plan /context /compact /cost /cost-limit
-/diff /git /commit /checkpoint /undo /sessions /resume /new /export /model /models /review /init
-/skills /hooks /mcp /remote /approvals /clear /quit`. TUI keys: F1 help, F2 plan, F3 cost,
-Ctrl+L clear, Ctrl+C cancel (twice to quit).
+<p align="center">
+  <img src="docs/screenshots/tui-approval.png" alt="Approval modal with the proposed diff inline" width="920">
+  <br><sub>An approval request: the exact diff, risk level, expiry, and one-key decisions. The same request is waiting on your phone.</sub>
+</p>
 
-## Remote approval from your phone
+<p align="center">
+  <img src="docs/screenshots/tui-idle.png" alt="Idle TUI" width="920">
+  <br><sub>Jet-black, neon-green, nothing else. Plan panel, live streaming pane, status bar with context size and running cost.</sub>
+</p>
 
-**On the laptop (one time):**
+## Quick start
 
 ```bash
-# Bind to an address your phone can reach. Tailscale is the recommended transport:
-trendlab remote enable --host 100.x.y.z --allow-insecure-http --machine-name ThinkPad
-# (or set tls_cert + tls_key / public_url in config for HTTPS)
-trendlab remote url        # prints the pairing link — open it ONCE on your phone
+git clone https://github.com/antoniowilliams123/trendlab-cli && cd trendlab-cli
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/trendlab init          # pick a provider, store the key safely, write config
+.venv/bin/trendlab doctor        # check keys, tools and settings
+cd ~/some-project && trendlab    # type a task
 ```
 
-Optional notifications (pick one provider in `[notifications]`; see `docs/config.example.toml`):
+Keys never live in config files. `trendlab init` (or `trendlab secret set NAME`) stores them under
+`~/.trendlab/secrets/` with mode 0600, and the environment variable of the same name takes
+precedence if set.
 
-```toml
-[notifications]
-enabled = true
-provider = "ntfy"          # or "telegram" / "webhook"
-notify_on = ["approval", "question", "completion", "failure"]
-[notifications.ntfy]
-topic = "trendlab-<random>"
+### Everyday commands
+
+```bash
+trendlab                                   # full-screen TUI, default model from config
+trendlab --plain                           # Rich REPL instead of the TUI
+trendlab -m anthropic:claude-opus-5        # pick provider:model for this session
+trendlab --safe                            # approval prompts on (the default mode is unsafe)
+trendlab -p "Run the tests and fix failures" --output json    # headless, for CI
+trendlab --resume latest                   # continue the last session in this project
+trendlab bench -m deepseek:deepseek-flash  # five fixture repos, objective metrics per model
 ```
 
-**On the phone:** open the pairing link once (the token is stored in the browser), then open the
-same URL whenever a notification arrives. Each card shows machine, project, action, command,
-risk, directory, expiry and the proposed diff, with **Approve Once / Approve for Session / Deny**.
-Questions from the agent appear as cards with option buttons or a text box.
+Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/resume`, `/export`,
+`/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, Ctrl+C cancel.
 
-**Security model (short version):** bearer-token API with lockout, per-request decision tokens,
-SHA-256 operation fingerprint binding, single-use decisions, expiry (default 30 min), high-risk
-operations terminal-only by default, project-scope rules terminal-only, redaction of secrets
-everywhere, full audit trail (`~/.trendlab/logs/events.jsonl` + SQLite). A restarted TrendLab
-cancels stale pending approvals instead of executing them. Details: `docs/TRENDLAB_CLI_SPEC.md`
-§17, §35, §36.
+## Approve from your phone
+
+```bash
+trendlab remote enable --host <tailscale-ip> --allow-insecure-http --machine-name ThinkPad
+trendlab remote url        # open the pairing link once on your phone
+```
+
+Then add a notification provider (ntfy, Telegram, or a webhook) in `~/.trendlab/config.toml` and
+you will be pinged when the agent needs a decision, asks a question, finishes, or stalls.
+
+**How approval is protected:** a per-install bearer token with lockout, a per-request decision
+token, a SHA-256 fingerprint of tool + arguments + directory that the decision must match,
+single-use decisions, expiry, high-risk operations kept terminal-only by default, and a restart
+that cancels stale approvals instead of executing them. Details in the
+[spec, sections 17, 35 and 36](docs/TRENDLAB_CLI_SPEC.md).
+
+## Permission modes
+
+| Mode | Behaviour |
+|---|---|
+| `unsafe` (default) | No prompts. `sudo` and outside-project paths denied; destructive commands still ask; every auto-approval audited; pre-edit checkpoint mandatory. |
+| `trusted` | Ordinary project operations run; network, deletes and destructive commands ask. |
+| `auto_edit` | File edits run; shell, installs, network and deletes ask. |
+| `ask` | Edits and risky commands ask. |
+| `plan` | Read-only. |
+
+Switch with `--mode`, `--safe`, or `/mode`. The default lives in `[defaults] permission_mode`.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    UI["Textual TUI · Rich REPL · headless JSON"] --> APP["TrendLabApp"]
+    APP --> AGENT["Agent runtime<br/>plan · evaluate · loop detection · limits"]
+    AGENT --> CTX["Context engine<br/>repo map · budgets · compaction"]
+    AGENT --> TOOLS["Tool runtime"]
+    TOOLS --> PERM["Permission engine<br/>classify · policy · rules"]
+    PERM -->|ASK| APPR["Approval manager<br/>fingerprint · tokens · expiry · audit"]
+    APPR --> CH1["Terminal / TUI channel"]
+    APPR --> CH2["Phone web channel"]
+    APPR --> NOTIF["Notifications<br/>ntfy · Telegram · webhook"]
+    TOOLS --> FS["files · shell · git · tests · MCP"]
+    AGENT --> GW["Model gateway<br/>retry · fallback · routing · cost"]
+    GW --> P1["Anthropic"]
+    GW --> P2["OpenAI-compatible<br/>DeepSeek · OpenAI · Moonshot"]
+    GW --> P3["Ollama"]
+    APP --> DB["SQLite sessions · checkpoints · JSONL audit"]
+```
+
+Package layout follows the spec: `config/ permissions/ approvals/ telemetry/ sessions/ tools/
+providers/ agent/ context/ orchestration/ extensions/ benchmarks/ ui/ security/`.
+
+## Measured
+
+Live runs on DeepSeek Flash, the default model:
+
+| Fixture | Task | Result |
+|---|---|---|
+| A | single-file arithmetic bug | fixed, 5 calls, 6.5 s, $0.0018 |
+| B | multi-file API status bug | fixed, 5 calls, 6.5 s, $0.0018 |
+| C | broken import | fixed, 6 calls, 8.8 s, $0.0021 |
+| D | edge case needing a new test | fixed + test added, 4 calls, 7.1 s, $0.0020 |
+| E | refactor with tests | done, 4 calls, 5.7 s, $0.0015 |
+
+Run your own with `trendlab bench -m provider:model`.
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q          # 196 tests, mocked providers, no network
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-Layout follows the spec (`docs/TRENDLAB_CLI_SPEC.md` §9): `config/ permissions/ approvals/
-telemetry/ sessions/ tools/ providers/ agent/ context/ orchestration/ extensions/ benchmarks/
-ui/ security/`. Build history: `BUILD_STATUS.md`.
+The product specification, including a dated implementation record of every change, is in
+[`docs/TRENDLAB_CLI_SPEC.md`](docs/TRENDLAB_CLI_SPEC.md). Build history is in
+[`BUILD_STATUS.md`](BUILD_STATUS.md).
+
+## License
+
+MIT
