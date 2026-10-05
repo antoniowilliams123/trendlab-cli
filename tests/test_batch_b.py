@@ -254,3 +254,49 @@ async def test_background_processes_die_with_the_session(project: Path, _trendla
     assert "sleeper" in console.export_text(clear=True)
     await tl.stop()
     assert not bp.running
+
+
+# -- mouse / copy-paste ------------------------------------------------------------------------------
+async def test_tui_releases_mouse_by_default_and_keys_scroll_transcript(
+    project: Path, _trendlab_home: Path
+):
+    tl = _tl(project, ScriptedProvider([ModelResponse(text="ok")]))
+    tui = TrendLabTUI(tl)
+    async with tui.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        assert tui.mouse_capture is False
+        status = str(tui.query_one("#status").content)
+        assert "drag selects" in status
+        log = tui.query_one("#transcript", RichLog)
+        for i in range(80):
+            tui.log_line(f"line {i}")
+        await pilot.pause()
+        assert log.max_scroll_y > 0
+        bottom = log.scroll_y
+        inp = tui.query_one("#input", PromptInput)
+        inp.focus()
+        await pilot.press("up", "up", "up")  # wheel-up arrives as ↑ with the mouse released
+        await pilot.pause()
+        assert log.scroll_y < bottom
+        after_up = log.scroll_y
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert log.scroll_y < after_up
+        after_page = log.scroll_y
+        await pilot.press("pagedown", "down", "down")
+        await pilot.pause()
+        assert log.scroll_y > after_page
+        # Multi-line text: ↑ still moves the cursor when it can.
+        inp.text = "a\nb"
+        inp.move_cursor((1, 1))
+        await pilot.press("up")
+        assert inp.cursor_location[0] == 0
+        await pilot.press("f4")
+        await pilot.pause()
+        assert tui.mouse_capture is True and "app" in str(tui.query_one("#status").content)
+        inp.text = "/mouse off"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert tui.mouse_capture is False
+        text = "\n".join(str(line) for line in log.lines)
+        assert "mouse off" in text or "terminal" in text

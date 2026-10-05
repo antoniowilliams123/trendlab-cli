@@ -54,6 +54,8 @@ HELP = """\
 /image <path>              Attach an image file to your next prompt (or write @file.png)
 /remote [status|enable|disable|url]   Phone approval server
 /approvals [approve <id> [session]|deny <id>|history]   Pending approvals
+/mouse [on|off]            TUI: off (default) leaves the mouse to the terminal so drag-select and
+                           copy work like any terminal; on gives the app wheel scroll + clicks (F4)
 /clear                     Clear the screen               /quit     Exit
 """
 
@@ -116,6 +118,10 @@ class CommandRouter:
             "/quit": self._quit,
             "/exit": self._quit,
         }
+
+    def register(self, name: str, handler: Callable[[list[str]], Awaitable[None]]) -> None:
+        """Let a UI add a command of its own (the TUI registers /mouse)."""
+        self._handlers[name.lower()] = handler
 
     async def dispatch(self, text: str) -> None:
         try:

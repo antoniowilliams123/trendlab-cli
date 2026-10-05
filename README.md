@@ -98,9 +98,14 @@ Install globally with `pipx install git+https://github.com/antoniowilliams123/tr
 
 Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/commit`, `/pr`,
 `/issue`, `/worktree`, `/branch`, `/tree`, `/bg`, `/commands`, `/resume`, `/export`, `/image`,
-`/paste`, `/remote`, `/approvals`, `/help`. Type `@` and a few letters to pick a file to attach. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
-current step and keeps the conversation, and **typing while it runs steers it**: your message is
-delivered before the next model call.
+`/paste`, `/remote`, `/approvals`, `/help`. Type `@` and a few letters to pick a file to attach.
+TUI keys: F1 help, F2 plan, F3 cost, F4 mouse, **Esc interrupts** the current step and keeps the
+conversation, and **typing while it runs steers it**: your message is delivered before the next
+model call.
+
+The TUI leaves the mouse to your terminal, so drag-select and copy (Ctrl+Shift+C, right-click)
+work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. Press F4 (or
+`/mouse on`) when you want the app to take the mouse for clicking buttons.
 
 ## Approve from your phone
 
@@ -176,7 +181,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 244 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 245 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

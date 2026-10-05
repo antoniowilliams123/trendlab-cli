@@ -195,6 +195,8 @@ class PromptInput(TextArea):
         Binding("tab", "pick_or_indent", "pick file", show=False, priority=True),
         Binding("up", "pick_up", "", show=False, priority=True),
         Binding("down", "pick_down", "", show=False, priority=True),
+        Binding("pageup", "transcript_page_up", "", show=False, priority=True),
+        Binding("pagedown", "transcript_page_down", "", show=False, priority=True),
     ]
 
     class PickRequested(Message):
@@ -235,10 +237,19 @@ class PromptInput(TextArea):
             return
         self.insert("\t" if self.indent_type == "tabs" else " " * self.indent_width)
 
+    def _scroll_transcript(self, lines: int) -> bool:
+        scroller = getattr(self.app, "scroll_transcript", None)
+        if scroller is None:
+            return False
+        scroller(lines)
+        return True
+
     def action_pick_up(self) -> None:
         picker = self._picker()
         if picker is not None:
             picker.action_cursor_up()
+        elif self.cursor_location[0] == 0 and self._scroll_transcript(-3):
+            return  # wheel-up / ↑ on the first line scrolls the transcript (mouse released)
         else:
             self.action_cursor_up()
 
@@ -246,8 +257,16 @@ class PromptInput(TextArea):
         picker = self._picker()
         if picker is not None:
             picker.action_cursor_down()
+        elif self.cursor_location[0] >= self.document.line_count - 1 and self._scroll_transcript(3):
+            return
         else:
             self.action_cursor_down()
+
+    def action_transcript_page_up(self) -> None:
+        self._scroll_transcript(-1000)
+
+    def action_transcript_page_down(self) -> None:
+        self._scroll_transcript(1000)
 
     def action_submit_prompt(self) -> None:
         picker = self._picker()
@@ -309,12 +328,17 @@ class TrendLabTUI(App[None]):
         Binding("f1", "help", "help"),
         Binding("f2", "plan", "plan"),
         Binding("f3", "cost", "cost"),
+        Binding("f4", "toggle_mouse", "mouse"),
         Binding("ctrl+e", "external_editor", "editor"),
     ]
 
     def __init__(self, tl_app: TrendLabApp) -> None:
         super().__init__()
         self.tl = tl_app
+        # Like Claude Code, the terminal keeps the mouse by default: drag selects text and the
+        # terminal's own copy (Ctrl+Shift+C / right-click) works. F4 or /mouse on hands the mouse
+        # to the app for wheel scrolling and clicking.
+        self.mouse_capture = False
         self._run_task: asyncio.Task | None = None
         self._modals: dict[str, ApprovalModal] = {}
         self._stream_buf: list[str] = []
@@ -329,6 +353,7 @@ class TrendLabTUI(App[None]):
             clear_cb=self._clear_log,
             prompt_cb=self._start_prompt,
         )
+        self.commands.register("/mouse", self._mouse_command)
         self.file_index = FileIndex(tl_app.project_root)
 
     # -- layout ------------------------------------------------------------------------------------
@@ -365,6 +390,7 @@ class TrendLabTUI(App[None]):
         self._refresh_header()
         self._refresh_plan()
         self.query_one("#input", PromptInput).focus()
+        self.set_mouse_capture(False)
         self.set_interval(0.25, self._tick)
         self.log_line(
             f"[bold {NEON}]{PRODUCT_NAME}[/] [{GREY}]v{__version__}[/] ready — "
@@ -378,7 +404,61 @@ class TrendLabTUI(App[None]):
             )
 
     async def on_unmount(self) -> None:
+        self._write_terminal("\x1b[?1007l")  # leave alternate-scroll mode tidy
         await self.tl.stop()
+
+    # -- mouse / selection ----------------------------------------------------------------------
+    def _write_terminal(self, seq: str) -> None:
+        driver = self._driver
+        if driver is None or getattr(driver, "is_headless", False):
+            return
+        try:
+            driver.write(seq)
+            driver.flush()
+        except Exception:  # noqa: BLE001 — cosmetic; never break the app over a terminal quirk
+            pass
+
+    def set_mouse_capture(self, on: bool) -> None:
+        """Hand the mouse to the app (wheel + clicks) or back to the terminal (select + copy)."""
+        self.mouse_capture = on
+        driver = self._driver
+        if driver is not None and hasattr(driver, "_enable_mouse_support"):
+            try:
+                if on:
+                    driver._mouse = True
+                    driver._enable_mouse_support()
+                else:
+                    driver._disable_mouse_support()
+                    driver._mouse = False  # stays off across $EDITOR suspend/resume too
+            except Exception:  # noqa: BLE001
+                pass
+        # Alternate-scroll: with the mouse released, terminals (Windows Terminal, xterm, kitty)
+        # turn wheel movement into ↑/↓ keys, which the prompt turns into transcript scrolling.
+        self._write_terminal("\x1b[?1007h" if not on else "\x1b[?1007l")
+        if self.is_mounted:
+            self._refresh_status()
+
+    def action_toggle_mouse(self) -> None:
+        self.set_mouse_capture(not self.mouse_capture)
+        self.log_line(
+            f"[{GREY}]mouse captured by TrendLab — wheel scrolls, buttons click; F4 releases it[/]"
+            if self.mouse_capture
+            else f"[{GREY}]mouse released — drag to select, copy with your terminal "
+            f"(Ctrl+Shift+C / right-click); ↑↓ PgUp PgDn scroll the transcript; F4 captures[/]"
+        )
+
+    async def _mouse_command(self, args: list[str]) -> None:
+        if args and args[0] in {"on", "off"}:
+            self.set_mouse_capture(args[0] == "on")
+        state = "on (app has the mouse)" if self.mouse_capture else "off (terminal selects/copies)"
+        self.console_out.print(f"mouse {state} · F4 toggles")
+
+    def scroll_transcript(self, lines: int) -> None:
+        log = self.query_one("#transcript", RichLog)
+        if lines in {1000, -1000}:
+            (log.scroll_page_down if lines > 0 else log.scroll_page_up)(animate=False)
+        else:
+            log.scroll_relative(y=lines, animate=False)
 
     # -- rendering ---------------------------------------------------------------------------------
     def log_line(self, text) -> None:
@@ -436,6 +516,8 @@ class TrendLabTUI(App[None]):
         ]
         if pending:
             parts.append(f"[bold #ffd21f]⏳ {pending} pending[/]")
+        mouse = "app" if self.mouse_capture else "terminal · drag selects"
+        parts.append(f"[{NEON_DIM}]mouse[/] [{GREY}]{mouse}[/]")
         self.query_one("#status", Static).update("  │  ".join(parts))
 
     def _refresh_plan(self) -> None:

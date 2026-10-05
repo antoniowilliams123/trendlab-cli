@@ -3791,6 +3791,9 @@ decisions taken after the original specification. Newest last.
     binaries and bare remotes live under `/tmp`.
 -   Test suite: 244 cases (bubblewrap integration test skips when `bwrap`
     is absent).
+-   Same day, owner's report "I'm not able to copy and paste text from the
+    terminal": TUI now releases the mouse by default; F4 / `/mouse`
+    toggles capture; keys scroll the transcript (§90.11). 245 cases.
 
 ------------------------------------------------------------------------
 
@@ -3906,6 +3909,22 @@ ApprovalManager still enforces expiry, single use, remote-allowed (high
 risk stays local) and the operation fingerprint. The message is edited to
 show the outcome when the request is decided anywhere. The plain Telegram
 notification is suppressed for approvals when the channel is on.
+
+### 90.11 Mouse Left to the Terminal (copy and paste like Claude Code)
+
+Owner's report: text in the TUI could not be selected and copied the way it
+can under Claude Code. Cause: Textual enables terminal mouse tracking, so
+the terminal never sees a drag. Fix: the TUI **releases the mouse by
+default** (`mouse_capture = False`; the driver's tracking is switched off
+after mount and stays off across `$EDITOR` suspend/resume). Drag-select,
+Ctrl+Shift+C, right-click copy/paste and bracketed paste then belong to
+the terminal, exactly as in a plain CLI. Alternate-scroll mode (`DECSET
+1007`) is enabled so wheel movement arrives as ↑/↓; the prompt turns ↑ on
+its first line, ↓ on its last line, PgUp and PgDn into transcript
+scrolling. **F4** or `/mouse on|off` hands the mouse to the app (wheel
+inside widgets, clickable buttons) and back; the status bar shows which
+side has it. The approval modal and picker are fully keyboard-driven, so
+nothing requires the mouse. `--plain` was never affected.
 
 ### 90.10 Packaging and Updates
 
