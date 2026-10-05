@@ -32,6 +32,7 @@ class ToolContext:
     validation_commands: dict[str, str] | None = None
     agent_role: str = "main"
     sandbox: Any = None  # trendlab.security.sandbox.Sandbox
+    background: Any = None  # trendlab.tools.background.BackgroundProcessManager
 
     def resolve(self, raw: str) -> Path:
         """Resolve ``raw`` inside the project root, following symlinks; reject escapes."""

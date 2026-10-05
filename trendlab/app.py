@@ -39,6 +39,7 @@ from trendlab.sessions.store import SessionStore
 from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import Event, EventBus, EventType, JsonlEventSink
 from trendlab.tools.ask_user import AskUserTool
+from trendlab.tools.background import BackgroundProcessManager
 from trendlab.tools.base import ToolContext
 from trendlab.tools.diagnostics import Diagnostics
 from trendlab.tools.registry import default_registry
@@ -46,6 +47,7 @@ from trendlab.tools.runtime import ToolRuntime
 from trendlab.tools.task_tool import TaskTool
 from trendlab.ui.attachments import build_user_content, text_of
 from trendlab.ui.console import ConsoleInput
+from trendlab.ui.file_refs import expand_file_refs
 
 
 def machine_name(config: AppConfig) -> str:
@@ -105,6 +107,8 @@ class TrendLabApp:
         self.notifier: NotificationProvider | None = None
         self.subagents: SubAgentRunner | None = None
         self.sandbox: Sandbox | None = None
+        self.background: BackgroundProcessManager | None = None
+        self.custom_commands: Any = None
         self._token: str | None = None
         self._run_checkpoint: dict[str, Any] | None = None
         self._reminder_task: asyncio.Task | None = None
@@ -185,7 +189,9 @@ class TrendLabApp:
             ignore_rules=rules,
             validation_commands=validation_commands(self.config, self.project_root),
             sandbox=self.sandbox,
+            background=BackgroundProcessManager(self.project_root),
         )
+        self.background = ctx.background
         registry = default_registry()
         registry.register(TaskTool(self.plan, self.events))
         registry.register(AskUserTool(self.approvals))
@@ -302,6 +308,12 @@ class TrendLabApp:
             self.skills = SkillLibrary(self.project_root, self.data_dir)
         except ImportError:
             pass
+        try:
+            from trendlab.extensions.commands import CustomCommandLibrary
+
+            self.custom_commands = CustomCommandLibrary(self.project_root, self.data_dir)
+        except ImportError:
+            pass
         servers = self.config.mcp_servers()
         if servers:
             try:
@@ -331,6 +343,8 @@ class TrendLabApp:
             await self.hooks.run("session_end")
         if self.mcp is not None:
             await self.mcp.stop()
+        if self.background is not None:
+            await self.background.stop_all()
         if self.approvals:
             self.approvals.cancel_all("shutdown")
             for ch in self.approvals.channels:
@@ -350,6 +364,9 @@ class TrendLabApp:
         self._run_checkpoint = None
         images = [*self.pending_images, *(images or [])]
         self.pending_images = []
+        prompt, attached = expand_file_refs(prompt, self.project_root)
+        if attached:
+            self.events.emit(EventType.FILES_ATTACHED, session_id=self.session_id, files=attached)
         content = build_user_content(prompt, self.project_root, images)
         if isinstance(content, list):
             self.events.emit(
@@ -604,6 +621,9 @@ class TrendLabApp:
         self.engine.project_rules = ProjectRules(new_root)
         self.sandbox = Sandbox(self.config.sandbox, new_root)
         self.tools.ctx.sandbox = self.sandbox
+        self.background = self.tools.ctx.background = BackgroundProcessManager(new_root)
+        if self.custom_commands is not None:
+            self.custom_commands = type(self.custom_commands)(new_root, self.data_dir)
         self.tools.diagnostics = Diagnostics(self.config.diagnostics, new_root)
         self.repo_map = RepositoryMap(
             new_root, rules, max_files=self.config.context.repo_map_max_files

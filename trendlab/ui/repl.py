@@ -19,7 +19,7 @@ class Repl:
         self.console = console or app.console
         self._running = True
         self._current: asyncio.Task | None = None
-        self.commands = CommandRouter(app, self.console, quit_cb=self._quit)
+        self.commands = CommandRouter(app, self.console, quit_cb=self._quit, prompt_cb=self._prompt)
 
     # -- entry point ------------------------------------------------------------------------
     async def run(self) -> None:

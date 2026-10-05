@@ -14,6 +14,7 @@ from trendlab.approvals.models import ApprovalDecision, ApprovalError, ApprovalS
 from trendlab.config.loader import ConfigError
 from trendlab.config.schema import PermissionMode
 from trendlab.providers.base import ProviderError
+from trendlab.telemetry.events import EventType
 from trendlab.tools.git import run_git
 from trendlab.ui.diff_view import render_diff
 from trendlab.ui.theme import GREY
@@ -42,6 +43,9 @@ HELP = """\
 /review                    Run the reviewer sub-agent on the current diff
 /init                      Detect project tooling and draft TRENDLAB.md
 /skills [use <name>]       Reusable instruction packs      /hooks    Configured hooks
+/commands [new <name>|reload]   Your own slash commands from .trendlab/commands/*.md
+/bg [logs <id> [n]|stop <id>]   Background processes started by the agent (dev servers, watchers)
+@path                      In any prompt: attach a file (or folder listing); TUI: Tab picks a match
 /mcp                       MCP servers and their tools
 /paste                     Attach the clipboard image to your next prompt (WSL/Linux/macOS)
 /image <path>              Attach an image file to your next prompt (or write @file.png)
@@ -59,11 +63,13 @@ class CommandRouter:
         *,
         quit_cb: Callable[[], None] | None = None,
         clear_cb: Callable[[], None] | None = None,
+        prompt_cb: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.app = app
         self.console = console
         self._quit_cb = quit_cb
         self._clear_cb = clear_cb
+        self._prompt_cb = prompt_cb  # how this UI runs a prompt (custom commands expand to one)
         self._handlers: dict[str, Callable[[list[str]], Awaitable[None]]] = {
             "/help": self._help,
             "/status": self._status,
@@ -93,6 +99,8 @@ class CommandRouter:
             "/review": self._review,
             "/init": self._init,
             "/skills": self._skills,
+            "/commands": self._commands,
+            "/bg": self._bg,
             "/hooks": self._hooks,
             "/mcp": self._mcp,
             "/paste": self._paste,
@@ -114,9 +122,29 @@ class CommandRouter:
         cmd, args = parts[0].lower(), parts[1:]
         handler = self._handlers.get(cmd)
         if handler is None:
+            if await self._run_custom(cmd, text):
+                return
             self.console.print(f"[red]unknown command {cmd}[/red] — try /help")
             return
         await handler(args)
+
+    async def _run_custom(self, cmd: str, text: str) -> bool:
+        lib = self.app.custom_commands
+        if lib is None or lib.get(cmd) is None:
+            return False
+        arg_text = text.strip()[len(cmd) :].strip() if text.strip().lower().startswith(cmd) else ""
+        prompt = lib.render(cmd, arg_text)
+        if not prompt:
+            return False
+        self.app.events.emit(
+            EventType.CUSTOM_COMMAND, session_id=self.app.session_id, command=cmd, chars=len(prompt)
+        )
+        if self._prompt_cb is None:
+            self.console.print(f"[red]{cmd} is a prompt command; this UI cannot run prompts[/red]")
+            return True
+        self.console.print(f"[{GREY}]{cmd} → prompt ({len(prompt)} chars)[/]")
+        await self._prompt_cb(prompt)
+        return True
 
     # -- basics -------------------------------------------------------------------------------
     async def _help(self, args: list[str]) -> None:
@@ -584,6 +612,73 @@ class CommandRouter:
         self.console.print(
             t if lib.list() else "[dim]no skills found (~/.trendlab/skills/<name>/SKILL.md)[/dim]"
         )
+
+    async def _commands(self, args: list[str]) -> None:
+        lib = self.app.custom_commands
+        if lib is None:
+            self.console.print("[red]custom commands not available[/red]")
+            return
+        if args and args[0] == "reload":
+            lib.reload()
+        elif args and args[0] == "new" and len(args) > 1:
+            try:
+                path = lib.scaffold(args[1], project=not (len(args) > 2 and args[2] == "--global"))
+            except ValueError as exc:
+                self.console.print(f"[red]{exc}[/red]")
+                return
+            self.console.print(f"[green]wrote {path}[/green] — edit it, then type /{args[1]}")
+            return
+        cmds = lib.list()
+        if not cmds:
+            self.console.print(
+                f"[dim]no custom commands — /commands new <name> writes "
+                f"{lib.project_dir.relative_to(self.app.project_root)}/<name>.md[/dim]"
+            )
+            return
+        t = Table(title="Custom commands")
+        for col in ("command", "description", "source", "file"):
+            t.add_column(col)
+        for c in cmds:
+            t.add_row(f"/{c.name}", c.description, c.source, str(c.path))
+        self.console.print(t)
+
+    async def _bg(self, args: list[str]) -> None:
+        mgr = self.app.background
+        if mgr is None:
+            self.console.print("[red]background processes not available[/red]")
+            return
+        if args and args[0] == "stop" and len(args) > 1:
+            st = await mgr.stop(args[1])
+            self.console.print(
+                f"[green]stopped {args[1]}[/green]" if st else f"[red]no process {args[1]}[/red]"
+            )
+            return
+        if args and args[0] == "logs" and len(args) > 1:
+            bp = mgr.get(args[1])
+            if bp is None:
+                self.console.print(f"[red]no process {args[1]}[/red]")
+                return
+            n = int(args[2]) if len(args) > 2 and args[2].isdigit() else 40
+            self.console.print(bp.tail(n) or "[dim](no output yet)[/dim]")
+            return
+        procs = mgr.list()
+        if not procs:
+            self.console.print("[dim]no background processes[/dim]")
+            return
+        t = Table(title="Background processes")
+        for col in ("id", "name", "state", "uptime", "command", "log"):
+            t.add_column(col)
+        for p in procs:
+            st = p.status()
+            t.add_row(
+                st["id"],
+                st["name"],
+                "running" if st["running"] else f"exit {st['exit_code']}",
+                f"{st['uptime_s']}s",
+                st["command"][:50],
+                str(p.log_path.name),
+            )
+        self.console.print(t)
 
     async def _hooks(self, args: list[str]) -> None:
         hooks = self.app.config.hooks

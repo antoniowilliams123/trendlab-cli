@@ -16,10 +16,10 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
+from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static, TextArea
 
 from trendlab import PRODUCT_NAME, __version__
 from trendlab.app import TrendLabApp
@@ -36,6 +36,7 @@ from trendlab.config.schema import AppConfig, PermissionMode
 from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
+from trendlab.ui.file_refs import FileIndex, current_at_token
 from trendlab.ui.theme import (
     BANNER,
     BANNER_WIDTH,
@@ -57,6 +58,10 @@ class ApprovalModal(ModalScreen[None]):
         Binding("s", "session", "session"),
         Binding("p", "project", "project"),
         Binding("n", "deny", "deny"),
+        Binding("j", "preview_down", "scroll diff", show=False),
+        Binding("k", "preview_up", "scroll diff", show=False),
+        Binding("pagedown", "preview_page_down", "page", show=False),
+        Binding("pageup", "preview_page_up", "page", show=False),
     ]
 
     def __init__(self, request: ApprovalRequest, decide) -> None:
@@ -92,9 +97,12 @@ class ApprovalModal(ModalScreen[None]):
             if r.explanation:
                 yield Static(Text(f"Agent says: {r.explanation}", style=GREY))
             if r.preview:
-                yield Static(
-                    render_diff(r.preview, title="proposed change", max_lines=60), id="preview"
-                )
+                n_lines = len(r.preview.splitlines())
+                title = f"proposed change · {n_lines} lines"
+                if n_lines > 18:
+                    title += " · j/k · PgUp/PgDn · wheel to scroll"
+                with VerticalScroll(id="preview"):
+                    yield Static(render_diff(r.preview, title=title, max_lines=2000))
             with Horizontal(id="buttons"):
                 yield Button("Approve once  y", id="once", variant="success")
                 if r.session_scope_allowed:
@@ -115,6 +123,28 @@ class ApprovalModal(ModalScreen[None]):
 
     def action_deny(self) -> None:
         self._decide(ApprovalDecision.DENY, ApprovalScope.ONCE)
+
+    def _preview(self) -> VerticalScroll | None:
+        try:
+            return self.query_one("#preview", VerticalScroll)
+        except Exception:  # noqa: BLE001 — no diff on this request
+            return None
+
+    def action_preview_down(self) -> None:
+        if (pv := self._preview()) is not None:
+            pv.scroll_relative(y=3, animate=False)
+
+    def action_preview_up(self) -> None:
+        if (pv := self._preview()) is not None:
+            pv.scroll_relative(y=-3, animate=False)
+
+    def action_preview_page_down(self) -> None:
+        if (pv := self._preview()) is not None:
+            pv.scroll_page_down(animate=False)
+
+    def action_preview_page_up(self) -> None:
+        if (pv := self._preview()) is not None:
+            pv.scroll_page_up(animate=False)
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
@@ -162,9 +192,68 @@ class PromptInput(TextArea):
         Binding("enter", "submit_prompt", "send", show=False, priority=True),
         Binding("shift+enter", "newline", "newline", show=False, priority=True),
         Binding("ctrl+j", "newline", "newline", show=False, priority=True),
+        Binding("tab", "pick_or_indent", "pick file", show=False, priority=True),
+        Binding("up", "pick_up", "", show=False, priority=True),
+        Binding("down", "pick_down", "", show=False, priority=True),
     ]
 
+    class PickRequested(Message):
+        """Posted when the word under the cursor is an ``@`` file reference."""
+
+        def __init__(self, query: str | None) -> None:
+            super().__init__()
+            self.query = query
+
+    def _at_token(self) -> tuple[int, str] | None:
+        row, col = self.cursor_location
+        return current_at_token(self.document.get_line(row), col)
+
+    def _on_text_area_changed(self, event: TextArea.Changed) -> None:
+        tok = self._at_token()
+        self.post_message(self.PickRequested(tok[1] if tok else None))
+
+    def _picker(self) -> FilePicker | None:
+        try:
+            picker = self.app.query_one("#picker", FilePicker)
+        except Exception:  # noqa: BLE001
+            return None
+        return picker if picker.has_class("visible") else None
+
+    def accept_pick(self, path: str) -> None:
+        tok = self._at_token()
+        if tok is None:
+            return
+        row, col = self.cursor_location
+        start, token = tok
+        self.replace(f"@{path} ", (row, start), (row, start + len(token)))
+        self.post_message(self.PickRequested(None))
+
+    def action_pick_or_indent(self) -> None:
+        picker = self._picker()
+        if picker is not None and picker.choice():
+            self.accept_pick(picker.choice())  # type: ignore[arg-type]
+            return
+        self.insert("\t" if self.indent_type == "tabs" else " " * self.indent_width)
+
+    def action_pick_up(self) -> None:
+        picker = self._picker()
+        if picker is not None:
+            picker.action_cursor_up()
+        else:
+            self.action_cursor_up()
+
+    def action_pick_down(self) -> None:
+        picker = self._picker()
+        if picker is not None:
+            picker.action_cursor_down()
+        else:
+            self.action_cursor_down()
+
     def action_submit_prompt(self) -> None:
+        picker = self._picker()
+        if picker is not None and picker.choice():
+            self.accept_pick(picker.choice())  # type: ignore[arg-type]
+            return
         text = self.text
         if text.rstrip().endswith("\\"):
             # "...\<Enter>" continues on the next line (works in every terminal).
@@ -175,6 +264,39 @@ class PromptInput(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+
+class FilePicker(OptionList):
+    """Fuzzy ``@file`` suggestions shown above the prompt while an ``@`` token is being typed."""
+
+    def __init__(self, index: FileIndex) -> None:
+        super().__init__(id="picker")
+        self.index = index
+        self._matches: list[str] = []
+
+    def update_query(self, query: str | None) -> None:
+        if query is None:
+            self.hide()
+            return
+        self._matches = self.index.search(query, limit=8)
+        if not self._matches:
+            self.hide()
+            return
+        self.clear_options()
+        self.add_options(self._matches)
+        self.highlighted = 0
+        self.border_title = f"@ files · {len(self.index.files())} indexed · Tab/Enter picks"
+        self.add_class("visible")
+
+    def hide(self) -> None:
+        self.remove_class("visible")
+        self._matches = []
+
+    def choice(self) -> str | None:
+        if not self._matches:
+            return None
+        idx = self.highlighted if self.highlighted is not None else 0
+        return self._matches[min(idx, len(self._matches) - 1)]
 
 
 class TrendLabTUI(App[None]):
@@ -201,8 +323,13 @@ class TrendLabTUI(App[None]):
         self._started_at: float | None = None
         self.console_out = make_console(record=True, width=100, force_terminal=False)
         self.commands = CommandRouter(
-            tl_app, self.console_out, quit_cb=self.exit, clear_cb=self._clear_log
+            tl_app,
+            self.console_out,
+            quit_cb=self.exit,
+            clear_cb=self._clear_log,
+            prompt_cb=self._start_prompt,
         )
+        self.file_index = FileIndex(tl_app.project_root)
 
     # -- layout ------------------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -217,6 +344,9 @@ class TrendLabTUI(App[None]):
             plan.border_title = "plan"
             yield plan
         yield Static(id="status")
+        picker = FilePicker(self.file_index)
+        picker.border_title = "@ files"
+        yield picker
         yield PromptInput(
             id="input", show_line_numbers=False, soft_wrap=True, tab_behavior="indent"
         )
@@ -481,9 +611,31 @@ class TrendLabTUI(App[None]):
                 f"[{GREY}](applied at the next turn)[/]"
             )
             return
-        self.log_line(f"[bold {MINT}]❯[/] [bold {MINT}]{text}[/]")
+        await self._start_prompt(text)
+
+    async def _start_prompt(self, text: str) -> None:
+        """Run ``text`` as a prompt (typed, or expanded from a custom slash command)."""
+        if self._run_task and not self._run_task.done():
+            self.tl.agent.steer(text)  # type: ignore[union-attr]
+            self.log_line(f"[bold {MINT}]↳ steering:[/] [{MINT}]{text[:200]}[/]")
+            return
+        shown = text if len(text) <= 400 else text[:400] + " …"
+        self.log_line(f"[bold {MINT}]❯[/] [bold {MINT}]{shown}[/]")
         self._started_at = time.monotonic()
         self._run_task = asyncio.create_task(self._run(text))
+
+    @on(PromptInput.PickRequested)
+    def _pick_requested(self, event: PromptInput.PickRequested) -> None:
+        self.file_index.root = self.tl.project_root
+        self.query_one("#picker", FilePicker).update_query(event.query)
+
+    @on(OptionList.OptionSelected, "#picker")
+    def _pick_selected(self, event: OptionList.OptionSelected) -> None:
+        picker = self.query_one("#picker", FilePicker)
+        choice = picker.choice()
+        if choice:
+            self.query_one("#input", PromptInput).accept_pick(choice)
+        self.query_one("#input", PromptInput).focus()
 
     async def _command(self, text: str) -> None:
         await self.commands.dispatch(text)

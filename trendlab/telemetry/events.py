@@ -44,6 +44,8 @@ class EventType(StrEnum):
     SECRET_WRITE_BLOCKED = "security.secret_write_blocked"
     DIAGNOSTICS = "tool.diagnostics"
     TOOLS_PARALLEL = "tool.parallel"
+    FILES_ATTACHED = "prompt.files_attached"
+    CUSTOM_COMMAND = "prompt.custom_command"
     SANDBOX_STATUS = "security.sandbox"
     HOOK_RUN = "hook.run"
     HOOK_BLOCKED = "hook.blocked"

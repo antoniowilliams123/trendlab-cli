@@ -44,6 +44,7 @@ READ_ONLY_TOOLS = [
 
 def default_registry() -> ToolRegistry:
     from trendlab.tools.apply_patch import ApplyPatchTool
+    from trendlab.tools.background import BackgroundProcessTool
     from trendlab.tools.files import (
         DeleteFileTool,
         GlobTool,
@@ -75,6 +76,7 @@ def default_registry() -> ToolRegistry:
         RunTestsTool(),
         WebFetchTool(),
         WebSearchTool(),
+        BackgroundProcessTool(),
     ):
         reg.register(tool)
     return reg

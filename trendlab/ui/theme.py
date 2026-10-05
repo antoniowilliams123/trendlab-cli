@@ -239,8 +239,33 @@ ApprovalModal {{
     border: tall {MINT};
 }}
 #preview {{
-    max-height: 20;
+    height: auto;
+    max-height: 22;
     border: round {NEON_DIM};
+    scrollbar-color: {NEON_DIM};
+    scrollbar-color-hover: {NEON};
+    scrollbar-background: {BLACK};
+}}
+#picker {{
+    display: none;
+    height: auto;
+    max-height: 10;
+    background: {BLACK};
+    color: {NEON};
+    border: round {NEON_DIM};
+    border-title-color: {NEON};
+    margin: 0 1;
+}}
+#picker.visible {{
+    display: block;
+}}
+#picker > .option-list--option-highlighted {{
+    background: #0b2a0b;
+    color: {NEON};
+    text-style: bold;
+}}
+#picker > .option-list--option {{
+    color: {NEON_SOFT};
 }}
 #answer {{
     background: {BLACK};
