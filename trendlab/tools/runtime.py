@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from trendlab.approvals.manager import ApprovalManager
 from trendlab.approvals.models import ApprovalScope, ApprovalStatus
 from trendlab.permissions.engine import PermissionEngine, PermissionRequest
-from trendlab.permissions.models import Decision, operation_fingerprint
+from trendlab.permissions.models import Decision, OperationCategory, operation_fingerprint
 from trendlab.providers.base import ToolCall
 from trendlab.telemetry.events import EventBus, EventType
 from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, ToolResult
@@ -40,6 +40,9 @@ class ToolRuntime:
         self.events = events
         self.ctx = ctx
         self._set_state = state_hook or (lambda _s: None)
+        self.changed_files: dict[str, list[str]] = {}  # rel path → diffs this session
+        self.validation_runs: list[dict[str, Any]] = []
+        self.hooks: Any = None  # trendlab.hooks.HookRunner, attached by the app
 
     async def execute(self, call: ToolCall) -> ToolResult:
         tool = self.registry.get(call.name)
@@ -49,8 +52,25 @@ class ToolRuntime:
             tool=call.name,
             call_id=call.id,
         )
+        if call.name == "_malformed":
+            return ToolResult(
+                ok=False,
+                output="MALFORMED TOOL CALL: "
+                + str(call.arguments.get("error"))
+                + ". Reply with a valid call; available tools: "
+                + ", ".join(self.registry.names()),
+            )
+        if "_malformed_json" in call.arguments:
+            return ToolResult(
+                ok=False,
+                output=f"MALFORMED TOOL CALL: arguments for {call.name} were not valid JSON. "
+                "Resend the call with corrected arguments.",
+            )
         if tool is None:
-            return ToolResult(ok=False, output=f"unknown tool: {call.name}")
+            return ToolResult(
+                ok=False,
+                output=f"unknown tool: {call.name}; available: " + ", ".join(self.registry.names()),
+            )
         try:
             args = tool.parse(call.arguments)
         except ValidationError as exc:
@@ -79,7 +99,14 @@ class ToolRuntime:
             granted = await self._ask(perm)
             if granted is not None:
                 return granted
-        return await self._run(tool, args, perm)
+        if self.hooks is not None:
+            blocked = await self.hooks.before_tool(tool.name, perm)
+            if blocked:
+                return ToolResult(ok=False, output=f"BLOCKED by hook: {blocked}")
+        result = await self._run(tool, args, perm)
+        if self.hooks is not None:
+            await self.hooks.after_tool(tool.name, perm, result)
+        return result
 
     async def _ask(self, perm: PermissionRequest) -> ToolResult | None:
         """Resolve an ASK verdict. Returns a ToolResult to short-circuit, or None to proceed."""
@@ -125,6 +152,9 @@ class ToolRuntime:
             )
         if result.scope == ApprovalScope.SESSION:
             self.engine.add_session_rule(perm, Decision.ALLOW)
+        elif result.scope == ApprovalScope.PROJECT:
+            self.engine.add_session_rule(perm, Decision.ALLOW)
+            self.engine.add_project_rule(perm, Decision.ALLOW)
         return None
 
     async def _run(self, tool: Tool, args: BaseModel, perm: PermissionRequest) -> ToolResult:
@@ -150,12 +180,28 @@ class ToolRuntime:
             duration_ms=int((time.monotonic() - started) * 1000),
             **{k: v for k, v in result.data.items() if k in {"exit_code", "sha256"}},
         )
-        if result.ok and tool.name in {"write_file", "delete_file"}:
+        if result.ok and tool.name in {"write_file", "patch_file", "delete_file"}:
             self.events.emit(
                 EventType.FILE_CHANGED,
                 session_id=self.ctx.session_id,
                 files=perm.affected_files,
                 tool=tool.name,
+                diff=result.data.get("diff"),
+            )
+            for f in perm.affected_files:
+                self.changed_files.setdefault(f, []).append(result.data.get("diff") or "")
+        ran_validation = "exit_code" in result.data and (
+            tool.name == "run_tests"
+            or (tool.name == "shell" and perm.category == OperationCategory.RUN_TESTS)
+        )
+        if ran_validation:
+            self.validation_runs.append(
+                {
+                    "command": perm.command,
+                    "ok": result.ok,
+                    "exit_code": result.data.get("exit_code"),
+                    "tail": result.output[-600:],
+                }
             )
         return result
 

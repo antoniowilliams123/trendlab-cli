@@ -309,9 +309,14 @@ class ApprovalManager:
                         "the operation presented differs from the pending operation",
                         409,
                     )
+            if scope == ApprovalScope.PROJECT and not trusted:
+                self._reject(approval_id, via, by, "scope_not_allowed")
+                raise ApprovalError(
+                    "scope_not_allowed", "project scope can only be granted at the terminal", 403
+                )
             if (
                 decision == ApprovalDecision.APPROVE
-                and scope == ApprovalScope.SESSION
+                and scope in {ApprovalScope.SESSION, ApprovalScope.PROJECT}
                 and not request.session_scope_allowed
             ):
                 self._reject(approval_id, via, by, "scope_not_allowed")

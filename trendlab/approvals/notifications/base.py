@@ -54,6 +54,14 @@ def build_notification(
         if len(request.affected_files) > 5:
             shown += f" (+{len(request.affected_files) - 5} more)"
         lines.append(f"Files: {shown}")
+    if request.preview and request.preview.startswith("---"):
+        added = sum(
+            1 for l in request.preview.splitlines() if l.startswith("+") and not l.startswith("+++")
+        )
+        removed = sum(
+            1 for l in request.preview.splitlines() if l.startswith("-") and not l.startswith("---")
+        )
+        lines.append(f"Change: +{added} -{removed} lines (diff on the approval page)")
     lines.append(f"Risk: {request.risk.value.capitalize()}")
     lines.append(f"Expires in: {max(1, request.seconds_remaining() // 60)} min")
     if not request.remote_allowed:

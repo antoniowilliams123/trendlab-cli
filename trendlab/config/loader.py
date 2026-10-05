@@ -72,7 +72,15 @@ def load_config(project_root: Path | None = None) -> AppConfig:
 
 def update_global_config(section: str, values: dict[str, Any]) -> Path:
     """Merge ``values`` into ``[section]`` of the global config file and write it back."""
-    path = global_config_path()
+    return _update_config_file(global_config_path(), section, values)
+
+
+def update_project_config(project_root: Path, section: str, values: dict[str, Any]) -> Path:
+    """Merge ``values`` into ``[section]`` of ``<project>/.trendlab/config.toml``."""
+    return _update_config_file(project_config_path(project_root), section, values)
+
+
+def _update_config_file(path: Path, section: str, values: dict[str, Any]) -> Path:
     data = _read_toml(path)
     data[section] = _deep_merge(data.get(section, {}), values)
     # Validate the merged result before persisting.

@@ -27,6 +27,64 @@ class DefaultsConfig(BaseModel):
 class LimitsConfig(BaseModel):
     max_cost_usd: float | None = None
     max_iterations: int = 50
+    max_model_calls: int | None = None
+    max_wall_clock_minutes: int | None = None
+    # Warn when session cost reaches this fraction of max_cost_usd.
+    warn_at_fraction: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class ContextConfig(BaseModel):
+    max_file_bytes: int = 500_000
+    auto_compact: bool = True
+    # Compact when the estimated prompt exceeds this fraction of the model's context window.
+    compact_threshold: float = Field(default=0.75, ge=0.1, le=0.95)
+    default_context_window: int = 128_000
+    repo_map_max_files: int = 400
+    repo_map_budget_tokens: int = 3_000
+    recent_messages_budget_tokens: int = 60_000
+
+
+class GitConfig(BaseModel):
+    respect_gitignore: bool = True
+    auto_commit: bool = False
+
+
+class RetryConfig(BaseModel):
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    base_delay_seconds: float = 1.0
+    max_delay_seconds: float = 20.0
+
+
+class ModelInfo(BaseModel):
+    """Capability metadata for one provider:model reference (spec §58)."""
+
+    context_window: int | None = None
+    supports_tools: bool = True
+    supports_streaming: bool = True
+    local: bool | None = None  # inferred from provider when None
+
+
+class ModelPricing(BaseModel):
+    input_per_million: float = 0.0
+    output_per_million: float = 0.0
+    cached_input_per_million: float | None = None
+
+
+class HookConfig(BaseModel):
+    event: str
+    command: str
+    timeout_seconds: int = Field(default=30, ge=1, le=600)
+    # before_* hooks may block the operation by exiting non-zero when true.
+    blocking: bool = False
+
+
+class McpServerConfig(BaseModel):
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    # Permission category applied to every tool from this server.
+    category: str = "network"
+    timeout_seconds: int = 30
 
 
 class ProviderConfig(BaseModel):
@@ -34,6 +92,16 @@ class ProviderConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key_env: str | None = "OPENAI_API_KEY"
     default_model: str | None = None
+    # Force the structured-JSON tool-calling fallback for every model of this provider.
+    tool_calling: str = "auto"  # auto | native | structured
+    timeout_seconds: float = 120.0
+
+    @field_validator("tool_calling")
+    @classmethod
+    def _tool_calling(cls, v: str) -> str:
+        if v not in {"auto", "native", "structured"}:
+            raise ValueError("tool_calling must be auto, native or structured")
+        return v
 
 
 class RemoteApprovalConfig(BaseModel):
@@ -87,6 +155,12 @@ class NotificationsConfig(BaseModel):
     enabled: bool = False
     provider: str = "none"
     timeout_seconds: float = 10.0
+    # Which runtime moments produce a phone notification.
+    notify_on: list[str] = Field(
+        default_factory=lambda: ["approval", "question", "completion", "failure"]
+    )
+    # Send a reminder when a pending approval reaches this fraction of its timeout (0 disables).
+    reminder_at_fraction: float = Field(default=0.75, ge=0.0, le=1.0)
     telegram: TelegramNotificationConfig = TelegramNotificationConfig()
     ntfy: NtfyNotificationConfig = NtfyNotificationConfig()
     webhook: WebhookNotificationConfig = WebhookNotificationConfig()
@@ -102,10 +176,25 @@ class NotificationsConfig(BaseModel):
 class AppConfig(BaseModel):
     defaults: DefaultsConfig = DefaultsConfig()
     limits: LimitsConfig = LimitsConfig()
+    context: ContextConfig = ContextConfig()
+    git: GitConfig = GitConfig()
+    retry: RetryConfig = RetryConfig()
     providers: dict[str, ProviderConfig] = Field(
         default_factory=lambda: {"openai": ProviderConfig()}
     )
+    # Role → provider:model (spec §11). Roles: default, planning, explorer, debugger,
+    # tester, reviewer, summarizer. Missing roles use the session model.
+    routing: dict[str, str] = Field(default_factory=dict)
+    # provider:model → ordered fallbacks used only for infrastructure failures (spec §69).
+    fallback: dict[str, list[str]] = Field(default_factory=dict)
+    models: dict[str, ModelInfo] = Field(default_factory=dict)
+    pricing: dict[str, ModelPricing] = Field(default_factory=dict)
+    hooks: list[HookConfig] = Field(default_factory=list)
+    mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()
     notifications: NotificationsConfig = NotificationsConfig()
-    # Project-level test/lint commands (optional).
+    # Project-level validation commands: test_command, lint_command, typecheck_command, build_command.
     project: dict[str, str] = Field(default_factory=dict)
+
+    def mcp_servers(self) -> dict[str, McpServerConfig]:
+        return self.mcp.get("servers", {})

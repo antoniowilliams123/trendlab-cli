@@ -93,6 +93,13 @@
       top.appendChild(el('span', 'risk ' + a.risk, a.risk));
       card.appendChild(top);
       if (a.command) card.appendChild(el('div', 'cmd', a.command));
+      if (a.preview) {
+        var det = document.createElement('details'); var sum = el('summary', null, 'Show proposed change'); sum.style.cursor = 'pointer'; sum.style.fontSize = '14px';
+        det.appendChild(sum); var pre = el('pre', 'cmd diff'); pre.style.maxHeight = '45vh'; pre.style.overflow = 'auto';
+        a.preview.split('\n').forEach(function (ln) { var s = document.createElement('span'); s.textContent = ln + '\n';
+          if (ln.indexOf('+') === 0 && ln.indexOf('+++') !== 0) s.style.color = 'var(--ok)'; else if (ln.indexOf('-') === 0 && ln.indexOf('---') !== 0) s.style.color = 'var(--bad)'; else if (ln.indexOf('@@') === 0) s.style.color = 'var(--muted)'; pre.appendChild(s); });
+        det.appendChild(pre); card.appendChild(det);
+      }
       function row(k, v) { if (v == null || v === '') return; var r = el('div', 'row'); r.appendChild(el('span', 'k', k)); r.appendChild(el('span', 'v', v)); card.appendChild(r); }
       row('Tool', a.tool); row('Directory', a.cwd); row('Expires in', Math.max(0, Math.round(a.seconds_remaining / 60)) + ' min');
       if (a.affected_files && a.affected_files.length) { card.appendChild(el('div', 'files', 'Files: ' + a.affected_files.join(', '))); }

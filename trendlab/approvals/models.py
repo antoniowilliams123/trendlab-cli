@@ -32,6 +32,7 @@ class ApprovalStatus(StrEnum):
 class ApprovalScope(StrEnum):
     ONCE = "once"
     SESSION = "session"
+    PROJECT = "project"  # persisted in .trendlab/permissions.toml; local channels only
 
 
 class ApprovalDecision(StrEnum):
@@ -66,6 +67,7 @@ class ApprovalRequest(BaseModel):
     cwd: str
     affected_files: list[str] = Field(default_factory=list)
     explanation: str = ""
+    preview: str | None = None  # redacted unified diff or operation preview
     requested_scope: ApprovalScope = ApprovalScope.ONCE
     machine: str
     fingerprint: str
@@ -103,6 +105,7 @@ class ApprovalRequest(BaseModel):
             cwd=req.cwd,
             affected_files=[redact_text(p) for p in req.affected_files],
             explanation=redact_text(req.explanation),
+            preview=redact_text(req.preview)[:20_000] if req.preview else None,
             machine=machine,
             fingerprint=req.fingerprint,
             remote_allowed=remote_allowed,
@@ -132,6 +135,7 @@ class ApprovalRequest(BaseModel):
             "cwd": self.cwd,
             "affected_files": list(self.affected_files),
             "explanation": self.explanation,
+            "preview": self.preview,
             "requested_scope": self.requested_scope.value,
             "machine": self.machine,
             "fingerprint": self.fingerprint,
@@ -159,6 +163,7 @@ class ApprovalRequest(BaseModel):
             "cwd": self.cwd,
             "affected_files": list(self.affected_files),
             "explanation": self.explanation,
+            "preview": self.preview,
             "requested_scope": self.requested_scope.value,
             "machine": self.machine,
             "fingerprint": self.fingerprint,

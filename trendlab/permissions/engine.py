@@ -21,6 +21,7 @@ from trendlab.permissions.models import (
     RiskLevel,
     operation_fingerprint,
 )
+from trendlab.permissions.rules import ProjectRules
 
 # Policy per mode. Categories absent from a mode's table fall back to ASK.
 _POLICY: dict[PermissionMode, dict[OperationCategory, Decision]] = {
@@ -97,6 +98,7 @@ class PermissionRequest(BaseModel):
     cwd: str
     affected_files: list[str] = Field(default_factory=list)
     explanation: str = ""  # why the agent wants to do this (model-supplied, untrusted)
+    preview: str | None = None  # e.g. unified diff for file edits; shown to approvers
     args: dict[str, Any] = Field(default_factory=dict)
     task_id: str | None = None
 
@@ -130,6 +132,8 @@ class PermissionEngine:
     mode: PermissionMode = PermissionMode.ASK
     _session_rules: dict[str, Decision] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # Rules persisted in <project>/.trendlab/permissions.toml ("always for this project").
+    project_rules: ProjectRules | None = None
 
     def evaluate(self, request: PermissionRequest) -> Verdict:
         table = _POLICY[self.mode]
@@ -148,6 +152,10 @@ class PermissionEngine:
             rule = self._session_rules.get(key)
         if rule is not None and request.category not in NON_PERSISTABLE:
             return Verdict(rule, "matched session rule", risk, matched_rule=key)
+        if self.project_rules is not None and request.category not in NON_PERSISTABLE:
+            project_rule = self.project_rules.lookup(key)
+            if project_rule is not None:
+                return Verdict(project_rule, "matched project rule", risk, matched_rule=key)
         return Verdict(Decision.ASK, f"{request.category.value} requires approval", risk)
 
     def can_persist(self, request: PermissionRequest) -> bool:
@@ -160,6 +168,14 @@ class PermissionEngine:
         key = request.rule_key()
         with self._lock:
             self._session_rules[key] = decision
+        return key
+
+    def add_project_rule(self, request: PermissionRequest, decision: Decision) -> str | None:
+        """Persist a decision for this project. Returns the rule key, or None if refused."""
+        if self.project_rules is None or not self.can_persist(request) or decision == Decision.ASK:
+            return None
+        key = request.rule_key()
+        self.project_rules.add(key, decision)
         return key
 
     def session_rules(self) -> dict[str, Decision]:

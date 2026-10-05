@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     cwd TEXT NOT NULL,
     affected_files TEXT NOT NULL,
     explanation TEXT NOT NULL,
+    preview TEXT,
     requested_scope TEXT NOT NULL,
     machine TEXT NOT NULL,
     fingerprint TEXT NOT NULL,

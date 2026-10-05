@@ -89,7 +89,9 @@ class LocalTerminalChannel(ApprovalChannel):
             self.console.print("[dim]High-risk operation: local approval required.[/dim]")
         keys = "[bold]y[/bold] approve once"
         if request.session_scope_allowed:
-            keys += "  ·  [bold]s[/bold] approve for session"
+            keys += (
+                "  ·  [bold]s[/bold] approve for session  ·  [bold]p[/bold] always for this project"
+            )
         keys += "  ·  [bold]n[/bold] deny"
         self.console.print(f"  {keys}  [dim](id {request.approval_id[:8]})[/dim]")
 
@@ -108,10 +110,14 @@ class LocalTerminalChannel(ApprovalChannel):
                 decision, scope = ApprovalDecision.APPROVE, ApprovalScope.ONCE
             elif lowered in {"s", "session"} and request.session_scope_allowed:
                 decision, scope = ApprovalDecision.APPROVE, ApprovalScope.SESSION
+            elif lowered in {"p", "project", "a", "always"} and request.session_scope_allowed:
+                decision, scope = ApprovalDecision.APPROVE, ApprovalScope.PROJECT
             elif lowered in {"n", "no", "deny"}:
                 decision, scope = ApprovalDecision.DENY, ApprovalScope.ONCE
             else:
-                self.console.print("[dim]Type y (once), s (session) or n (deny).[/dim]")
+                self.console.print(
+                    "[dim]Type y (once), s (session), p (project) or n (deny).[/dim]"
+                )
                 continue
             try:
                 self._manager.decide(
@@ -127,7 +133,10 @@ class LocalTerminalChannel(ApprovalChannel):
             task.cancel()
         where = "remotely" if result.via and result.via != self.name else "locally"
         if result.status == ApprovalStatus.APPROVED:
-            scope = " for this session" if result.scope == ApprovalScope.SESSION else ""
+            scope = {
+                ApprovalScope.SESSION: " for this session",
+                ApprovalScope.PROJECT: " for this project",
+            }.get(result.scope, "")
             self.console.print(
                 f"[green]✓ Approved {where}{scope}[/green]\n[dim]Continuing...[/dim]"
             )
