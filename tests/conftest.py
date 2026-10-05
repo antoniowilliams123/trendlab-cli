@@ -25,6 +25,7 @@ def _trendlab_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Tests use fake binaries and bare remotes under the host /tmp, which a sandboxed shell
     # cannot see; sandbox-specific tests opt back in with TRENDLAB_SANDBOX=on.
     monkeypatch.setenv("TRENDLAB_SANDBOX", "off")
+    monkeypatch.setenv("TRENDLAB_NO_UPDATE_CHECK", "1")  # no network from CLI tests
     return home
 
 

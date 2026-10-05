@@ -2,8 +2,10 @@
 
 ## Product Requirements & Technical Specification
 
-**Version 1.3 — the complete record of what was built. §89 (Implementation Record) lists every
-change by date, including decisions made after the original specification (2026-10-05).**
+**Version 1.4 — the complete record of what was built. §89 (Implementation Record) lists every
+change by date, including decisions made after the original specification (2026-10-05). §90
+specifies the second round of daily-driver features (sandbox, diagnostics, parallel tools, custom
+commands, `@file`, background processes, branching, plan gate, Telegram buttons, packaging).**
 
 **Version:** 1.0\
 **Status:** Build-ready specification\
@@ -1793,6 +1795,18 @@ Useful future commands:
 Shell equivalents: `trendlab remote status|enable|disable|url|rotate-token`
 and `trendlab approvals` (cross-session audit view).
 
+### Implemented Additions (2026-10-05, §90)
+
+``` text
+/commands [new <name>|reload]   custom slash commands from .trendlab/commands/*.md
+/<name> [args]                  run such a command (expands to a prompt)
+/bg [logs <id> [n]|stop <id>]   background processes started by the agent
+/branch [label] [--keep N]      fork the conversation into a child session
+/tree                           sessions of this project as a branch tree
+/plan gate on|off               plan-approval gate for this session
+@path                           in any prompt: attach a file or folder listing
+```
+
 ------------------------------------------------------------------------
 
 ## 32. Non-Interactive Mode
@@ -1828,6 +1842,10 @@ trendlab approvals            # cross-session audit view
 trendlab sessions [--all]     # saved sessions; resume with --resume <id>
 trendlab secret set|list|rm   # secrets store (§35)
 trendlab bench -m provider:model [--fixture A..E] [--output json]
+trendlab --plan-gate          # ask for a go-ahead before the first change of each run
+trendlab --worktree <name>    # run on a throwaway git worktree
+trendlab update [--run]       # check PyPI / GitHub Releases for a newer version
+trendlab doctor               # includes the sandbox (bubblewrap) status
 ```
 
 `--output json` prints `{status, text, report, changed_files, validation,
@@ -3477,11 +3495,13 @@ The workflow remains portable even when model vendors change.
 Potential post-V1 capabilities (remote/mobile approval via the web
 channel is now part of V1; the items below extend it):
 
--   native mobile app and chat-platform approval channels (Slack,
-    Discord, Telegram inline buttons) on the `ApprovalChannel` abstraction;
+-   native mobile app and further chat-platform approval channels (Slack,
+    Discord) on the `ApprovalChannel` abstraction — Telegram inline buttons
+    shipped 2026-10-05 (§90.9);
 -   push notifications with provider-side delivery receipts;
--   plan-approval gate (approve the plan from the phone before any edit);
--   secret scanning on writes; transcript export; container sandboxing;
+-   plan-approval gate — shipped 2026-10-05 (§90.8);
+-   secret scanning on writes and transcript export — shipped; OS sandbox
+    (bubblewrap) shipped 2026-10-05 (§90.1), full container execution still open;
 -   **Jev (parked 2026-10-05).** A TypeSafe decision model reached through
     OpenRouter's Decisions API (`POST /api/alpha/decisions`, model
     `typesafe/jev-1.13`): send `state` text plus typed `questions`
@@ -3750,3 +3770,152 @@ decisions taken after the original specification. Newest last.
     through `gh`, `/issue` context, worktree isolation (§26).
 -   `web_search` and `web_fetch` tools in the NETWORK category (§64).
 -   Test suite: 219 cases.
+
+### 2026-10-05 — Daily-driver features, round two (§90)
+-   Owner's instruction: "add all of these and update the spec" for the gap
+    list against the leading coding agents. Delivered in four batches, each
+    committed with the full suite green:
+    -   **A** OS-level sandbox for shell commands (bubblewrap), diagnostics
+        after every edit, parallel execution of read-only tool calls.
+    -   **B** custom slash commands from Markdown, `@file` attachment with a
+        fuzzy picker in the TUI, background processes (`background_process`
+        tool + `/bg`), scrollable diff in the approval modal.
+    -   **C** session branching (`/branch`, `/tree`, parent links in the
+        sessions table — schema v3), plan-approval gate (`--plan-gate`,
+        `/plan gate`), Telegram inline-button approval channel.
+    -   **D** wheel packaging (`pipx install`), `trendlab update` + daily
+        update hint, GitHub release v0.1.0 with the wheel, docs.
+-   Fixes found while wiring the sandbox: commit and PR bodies are passed
+    inline (`-m` / `--body`) because the host's `/tmp` is invisible inside
+    the sandbox; tests run with `TRENDLAB_SANDBOX=off` because their fake
+    binaries and bare remotes live under `/tmp`.
+-   Test suite: 244 cases (bubblewrap integration test skips when `bwrap`
+    is absent).
+
+------------------------------------------------------------------------
+
+## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
+
+Everything in this section is implemented and tested. Config keys are in
+`docs/config.example.toml`.
+
+### 90.1 OS-Level Sandbox (`trendlab/security/sandbox.py`)
+
+Shell commands run inside **bubblewrap** when it is installed (`mode =
+"auto"`, the default; `"on"` fails loudly without `bwrap`; `"off"`
+disables). Inside the sandbox the whole filesystem is read-only except
+the project root and `sandbox.writable_paths` (default `~/.cache`);
+`/tmp` is a private tmpfs; PID, IPC and UTS namespaces are separate; the
+process dies with TrendLab. **Network is off** unless the command is one
+that exists to use it: NETWORK / PACKAGE_INSTALL classification (curl,
+git push, pip install …) or a known network client at the head of a
+segment (gh, npm, cargo, go, uv, pipx …), or `sandbox.allow_network =
+true`. The sandbox is defence in depth under the permission engine: the
+command still has to pass the policy table first. `TRENDLAB_SANDBOX`
+(`off|on|auto`) overrides the config; `trendlab doctor` shows the status.
+Background processes are sandboxed the same way but with network on
+(dev servers need a port).
+
+Limits: bubblewrap is Linux-only (works in WSL2); macOS and Windows run
+unsandboxed with a doctor warning. Projects under `/tmp` are still bound
+read-write because binds are applied after the tmpfs.
+
+### 90.2 Diagnostics After Every Edit (`trendlab/tools/diagnostics.py`)
+
+After each successful `write_file` / `patch_file` / `apply_patch` the
+runtime runs the linters/type-checkers that apply to the touched files —
+`ruff check` and `pyright` for Python, `tsc --noEmit` and `eslint` for
+TS/JS, `cargo check`, `go vet` — skipping tools that are not installed.
+Problems are appended to the tool result as *"Diagnostics after edit (fix
+before moving on)"*, so the model fixes them in the same turn instead of
+discovering them at test time. `[diagnostics] commands = {".py" = ["…
+{files}"]}` overrides per extension; `enabled = false` turns it off. Runs
+inside the sandbox when active. Event: `tool.diagnostics`.
+
+### 90.3 Parallel Read-Only Tool Calls
+
+When the model returns several tool calls in one response, consecutive
+**read-only** calls (`read_file`, `list_directory`, `glob`, `search_text`,
+`git_*`) run concurrently in groups of `limits.parallel_tools` (default
+6). Mutations and shell commands stay strictly sequential, and the tool
+messages are appended in the model's original order so transcripts are
+deterministic. Event: `tool.parallel {count}`.
+
+### 90.4 Custom Slash Commands (`trendlab/extensions/commands.py`)
+
+`~/.trendlab/commands/<name>.md` and `<project>/.trendlab/commands/<name>.md`
+become `/<name>`. The body is a prompt template with `$ARGUMENTS` and
+`$1..$9`; without placeholders the arguments are appended. Optional
+front matter (`description`, `model`). Project commands override global
+ones; built-ins always win. `/commands` lists, `/commands new <name>`
+scaffolds, `/commands reload` re-reads. Event: `prompt.custom_command`.
+
+### 90.5 `@file` References and the Picker (`trendlab/ui/file_refs.py`)
+
+`@src/app.py` in any prompt attaches that file (fenced, ≤60 KB per file,
+≤240 KB per prompt, binaries and paths outside the project refused);
+`@src/` attaches a listing. Images keep the existing vision path. In the
+TUI a fuzzy picker opens above the input while an `@` token is being
+typed (subsequence match with basename/word-boundary/contiguity
+bonuses); **Tab or Enter** completes, ↑/↓ move, Tab with the picker
+closed indents as before. Event: `prompt.files_attached`.
+
+### 90.6 Background Processes (`trendlab/tools/background.py`)
+
+`background_process` tool: `start(command, name)` → id, `status`, `logs
+(lines)`, `stop`, `list`. Output streams to `.trendlab/bg/<id>.log`; at
+most 8 live processes; killed (whole process group) when the session
+ends. Permission: `start` is classified like the shell command (never
+below SHELL_WRITE — a lingering process is more than a read), `stop` is
+SHELL_WRITE, the rest READ_ONLY. `/bg`, `/bg logs <id> [n]`, `/bg stop
+<id>` for the human.
+
+### 90.7 Session Branching
+
+`/branch [label] [--keep N]` forks the current conversation into a
+child session: messages (optionally minus the last N), plan and summary
+are copied; the child records `parent_id`, `branch_point` and `label`
+(sessions table v3, migrated in place). The parent is untouched;
+`/resume <parent>` goes back; `/tree` draws the project's sessions as a
+tree; `/sessions` shows the parent column. Event: `session.branched`.
+
+### 90.8 Plan-Approval Gate (`trendlab/agent/plan_gate.py`)
+
+`[plan_gate] enabled = true`, `--plan-gate`, or `/plan gate on`: the
+first mutation of every run is held while the plan (or, with no explicit
+plan, the files about to change) is presented as a PROJECT_WRITE approval
+on **every** channel — terminal modal, phone web page, Telegram buttons.
+Approve once and the run proceeds; deny and every mutation in that run
+returns *PLAN REJECTED* and the run stops with the reason, so you can
+steer before any edit. One ask per run, independent of the permission
+mode (it also works in UNSAFE). Events: `plan.gate_requested`,
+`plan.approved`, `plan.rejected`.
+
+### 90.9 Telegram Inline-Button Approvals (`trendlab/approvals/channels/telegram.py`)
+
+`remote_approval.telegram = true` (bot token via `notifications.telegram.
+bot_token_env` in the secrets store, `chat_id` configured) adds a remote
+channel: each approval is a message with **✅ Approve once · ✅ Session ·
+⛔ Deny** buttons; questions get one button per option and accept a text
+reply to the message. Decisions arrive through `getUpdates` long polling
+— no public URL or webhook needed. Security: only the configured chat is
+honoured (others are ignored and audited as `wrong_chat`); `callback_data`
+carries an HMAC of `approval_id:action` keyed by the per-request decision
+token (forged or cross-request buttons fail `invalid_token`); the
+ApprovalManager still enforces expiry, single use, remote-allowed (high
+risk stays local) and the operation fingerprint. The message is edited to
+show the outcome when the request is decided anywhere. The plain Telegram
+notification is suppressed for approvals when the channel is on.
+
+### 90.10 Packaging and Updates
+
+`python -m build --wheel` produces `trendlab_cli-<ver>-py3-none-any.whl`
+(no tests, HTML page included); `pipx install <wheel>` or `pipx install
+git+https://github.com/antoniowilliams123/trendlab-cli.git` gives a
+global `trendlab`. `trendlab update` checks PyPI, then GitHub Releases,
+and prints the matching upgrade command (`--run` executes it); interactive
+starts show a dim one-line hint at most once a day (cache
+`~/.trendlab/update_check.json`; `TRENDLAB_NO_UPDATE_CHECK=1` disables).
+Release v0.1.0 carries the wheel. PyPI publication is pending a PyPI
+account; the checker already handles both sources.
+

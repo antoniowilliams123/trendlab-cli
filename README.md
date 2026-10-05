@@ -44,6 +44,11 @@ another device.
 | **Safety that survives autonomy** | `sudo` and paths outside the project are denied in every mode. Destructive commands keep a prompt. Writes that look like secrets are blocked. Everything is logged with secrets redacted. |
 | **Git and GitHub** | `/commit` writes the message from the diff, `/pr` pushes a branch and opens a pull request through `gh`, `/issue N` pulls an issue into the conversation (the PR closes it), `/worktree` runs a task on a throwaway checkout. |
 | **Looks things up** | `web_search` and `web_fetch` tools (network category, so they prompt in ask mode) for docs, changelogs and error sources. |
+| **Sandboxed shell** | Commands run under bubblewrap: read-only system, writable project, private `/tmp`, no network unless the command is a network or package tool. Defence in depth under the permission engine. |
+| **Fixes its own mistakes early** | After every edit the matching linters and type-checkers run (ruff, pyright, tsc, eslint, cargo check, go vet) and problems go straight back to the model. Read-only tool calls run in parallel. |
+| **Your own commands** | `.trendlab/commands/review.md` becomes `/review-style` with `$ARGUMENTS`; `@path` attaches a file with a fuzzy picker in the TUI; `background_process` keeps a dev server running while the agent works. |
+| **Branch a conversation** | `/branch` forks the session to try another idea, `/tree` shows the family, `/resume` jumps back. |
+| **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
 | **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, `@file.png` or `/paste` to attach screenshots, type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
 | **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
 
@@ -84,10 +89,16 @@ trendlab -p "Run the tests and fix failures" --output json    # headless, for CI
 trendlab --resume latest                   # continue the last session in this project
 trendlab --worktree spike                  # work on a throwaway git worktree + branch trendlab/spike
 trendlab bench -m deepseek:deepseek-flash  # five fixture repos, objective metrics per model
+trendlab --plan-gate                       # approve the plan before the first edit of each run
+trendlab update                            # check PyPI / GitHub Releases for a newer version
 ```
 
+Install globally with `pipx install git+https://github.com/antoniowilliams123/trendlab-cli.git`
+(or the wheel attached to the latest [release](https://github.com/antoniowilliams123/trendlab-cli/releases)).
+
 Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/commit`, `/pr`,
-`/issue`, `/worktree`, `/resume`, `/export`, `/image`, `/paste`, `/remote`, `/approvals`, `/help`. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
+`/issue`, `/worktree`, `/branch`, `/tree`, `/bg`, `/commands`, `/resume`, `/export`, `/image`,
+`/paste`, `/remote`, `/approvals`, `/help`. Type `@` and a few letters to pick a file to attach. TUI keys: F1 help, F2 plan, F3 cost, **Esc interrupts** the
 current step and keeps the conversation, and **typing while it runs steers it**: your message is
 delivered before the next model call.
 
@@ -100,6 +111,11 @@ trendlab remote url        # open the pairing link once on your phone
 
 Then add a notification provider (ntfy, Telegram, or a webhook) in `~/.trendlab/config.toml` and
 you will be pinged when the agent needs a decision, asks a question, finishes, or stalls.
+
+Prefer buttons? Set `remote_approval.telegram = true` with a bot token in the secrets store and
+your `chat_id`: every approval arrives as a Telegram message with **Approve once · Session · Deny**
+buttons (questions get one button per option, or reply to the message). Decisions are polled, so
+no public URL is needed. Add `--plan-gate` and the first edit of each run waits for your go-ahead.
 
 **How approval is protected:** a per-install bearer token with lockout, a per-request decision
 token, a SHA-256 fingerprint of tool + arguments + directory that the decision must match,
@@ -160,7 +176,8 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 196 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 244 tests, mocked providers, no network
+.venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 

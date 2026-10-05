@@ -12,6 +12,27 @@ max_iterations = 50
 # max_model_calls = 200
 # max_wall_clock_minutes = 90
 warn_at_fraction = 0.8
+parallel_tools = 6               # consecutive read-only tool calls run concurrently (spec §90.3)
+
+# ---------------------------------------------------------------------------
+# OS sandbox for shell commands (bubblewrap, Linux/WSL2) — spec §90.1
+# ---------------------------------------------------------------------------
+[sandbox]
+mode = "auto"                    # auto (on when bwrap is installed) | on | off
+allow_network = false            # network/package commands (curl, git push, pip, gh ...) get it anyway
+writable_paths = ["~/.cache"]    # besides the project root
+
+# Linters / type-checkers run after every edit and fed back to the model — spec §90.2
+[diagnostics]
+enabled = true
+timeout_seconds = 60
+# [diagnostics.commands]
+# ".py" = ["ruff check --output-format concise {files}", "pyright {files}"]
+
+# Hold the first change of every run until you approve the plan (terminal, phone, Telegram)
+[plan_gate]
+enabled = false                  # or: trendlab --plan-gate · /plan gate on
+timeout_minutes = 30
 
 [context]
 auto_compact = true
@@ -140,6 +161,8 @@ allow_session_scope = true
 # tls_key  = "/home/me/.trendlab/key.pem"
 allow_insecure_http = false      # must be true to bind a non-loopback address without TLS
 machine_name = "ThinkPad"
+telegram = false                 # also send approvals as Telegram messages with inline buttons
+                                 # (uses [notifications.telegram] below; decisions via getUpdates)
 
 [notifications]
 enabled = false

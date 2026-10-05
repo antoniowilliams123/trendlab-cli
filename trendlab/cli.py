@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -186,6 +187,7 @@ def main_callback(
         code = asyncio.run(_run_once(tl_app, prompt, output))
         raise typer.Exit(code)
     _first_run_check(config, model or config.defaults.model)
+    _update_hint()
     use_tui = not plain and sys.stdin.isatty() and sys.stdout.isatty()
     if use_tui:
         try:
@@ -472,6 +474,54 @@ def secret_rm(name: str) -> None:
 
 
 # -- trendlab doctor / init -----------------------------------------------------------------------
+def _update_hint() -> None:
+    """Once a day: a dim one-liner when a newer release exists. Never blocks startup for long."""
+    if os.environ.get("TRENDLAB_NO_UPDATE_CHECK"):
+        return
+    try:
+        from trendlab.update import daily_hint
+
+        hint = daily_hint()
+    except Exception:  # noqa: BLE001 — never let the check break the CLI
+        return
+    if hint:
+        console.print(f"[dim]{hint}[/dim]")
+
+
+@app.command("update")
+def update_cmd(
+    check_only: bool = typer.Option(
+        True, "--check/--run", help="Check only (default) or run the upgrade command."
+    ),
+) -> None:
+    """Check PyPI / GitHub Releases for a newer TrendLab and show how to upgrade."""
+    from trendlab.update import check_for_update, install_command, write_cache
+
+    info = check_for_update()
+    write_cache(info)
+    if info.error and not info.latest:
+        console.print(f"[warning]could not check for updates: {info.error}[/warning]")
+        raise typer.Exit(1)
+    if not info.available:
+        console.print(
+            f"[ok]TrendLab {info.current} is up to date[/ok]"
+            + (f" [dim](latest on {info.source}: {info.latest})[/dim]" if info.latest else "")
+        )
+        return
+    cmd = install_command(info.source)
+    console.print(f"[accent]TrendLab {info.latest} is available[/accent] (you have {info.current})")
+    console.print(f"[dim]{info.url}[/dim]")
+    if check_only:
+        console.print(f"Upgrade with:  [bold]{cmd}[/bold]   (or: trendlab update --run)")
+        return
+    import shlex
+    import subprocess
+
+    console.print(f"[dim]$ {cmd}[/dim]")
+    code = subprocess.call(shlex.split(cmd.split("  (")[0]))
+    raise typer.Exit(code)
+
+
 @app.command("doctor")
 def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
     """Check config, keys, providers, tools and remote settings; explain anything that is off."""

@@ -1,7 +1,7 @@
 # TrendLab Build Status
 
 ## Current Milestone
-Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against real providers.
+Spec V1 + §90 daily-driver round two implemented (2026-10-05); v0.1.0 wheel released on GitHub. Remaining work is real-world mileage (Anthropic key, phone over a real network, PyPI publication).
 
 ## Completed
 - [x] Bootstrap, config (global/project TOML; secrets by env name), `trendlab` entry point, ruff
@@ -25,6 +25,13 @@ Spec V1 implemented end to end (2026-10-04). Remaining work is hardening against
 - [x] Image input, multi-line prompt + $EDITOR, thinking display, AGENTS.md/CLAUDE.md (2026-10-05)
 - [x] Git/GitHub workflow: /commit (generated message), /pr via gh, /issue, worktrees (2026-10-05)
 - [x] web_search + web_fetch NETWORK tools (2026-10-05)
+- [x] bubblewrap sandbox for shell + background processes; post-edit diagnostics; parallel
+      read-only tool calls (2026-10-05)
+- [x] Custom slash commands from Markdown; @file attachment + TUI fuzzy picker; background_process
+      tool + /bg; scrollable approval diff (2026-10-05)
+- [x] Session branching (/branch, /tree; schema v3); plan-approval gate (--plan-gate); Telegram
+      inline-button approval channel (2026-10-05)
+- [x] Wheel packaging + pipx install; `trendlab update` + daily hint; GitHub release v0.1.0 (2026-10-05)
 - [x] Anthropic provider (official SDK): content-block translation, same-model thinking-block replay,
       adaptive thinking, effort, server-side refusal fallbacks, cache-aware usage; secrets store +
       `trendlab secret set` (2026-10-05)
