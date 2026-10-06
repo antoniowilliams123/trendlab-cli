@@ -3799,6 +3799,18 @@ decisions taken after the original specification. Newest last.
     reports back); shared poller with the button channel; `--telegram`,
     `/telegram`. 251 cases. Also configured `openai:gpt-5-mini` and
     `ollama:qwen2.5-coder:14b` (pulled, live smoke test READY in 10 s).
+-   Owner asked whether prompt caching is intact so resent context is not
+    charged at full price. Verified: Anthropic — `cache_control` on the
+    system prompt and on the latest turn, cache reads priced at the cached
+    rate; DeepSeek and OpenAI — automatic prefix caching, `cached_tokens`
+    read from usage and priced at `cached_input_per_million`; live DeepSeek
+    probe showed 1 024 of 1 236 tokens served from cache on the second
+    identical call, and the recorded sessions show 87 % of DeepSeek input
+    tokens cached (707 k of 813 k over 77 calls, $0.077 total). One
+    improvement made: the plan is rendered into the system prompt once per
+    run (and after a compaction) instead of every iteration, so the system
+    prompt + repository map prefix stays byte-identical while the model
+    updates its plan mid-run (§20 note). 252 cases.
 
 ------------------------------------------------------------------------
 

@@ -179,6 +179,11 @@ class AgentRuntime:
         stop_reason: str | None = None
         text = ""
         status = AgentState.FAILED
+        # The plan is rendered into the system prompt once per run (and after a compaction), not
+        # on every iteration: a byte-stable prefix is what lets DeepSeek / OpenAI / Anthropic serve
+        # the system prompt + repository map from cache. Mid-run the model already sees plan
+        # changes in its own task-tool results.
+        refresh_plan = True
         try:
             while True:
                 limit_hit = self._limit_hit(started)
@@ -191,10 +196,13 @@ class AgentRuntime:
                 self.iterations += 1
                 self._drain_steering()
                 self.state.transition(AgentState.THINKING)
-                self.context.plan_text = self.plan.render() if self.plan.tasks else ""
+                if refresh_plan:
+                    self.context.plan_text = self.plan.render() if self.plan.tasks else ""
+                    refresh_plan = False
                 self._sync_structured()
                 if self.context.needs_compaction():
                     await self.context.compact()
+                    self.context.plan_text = self.plan.render() if self.plan.tasks else ""
                 try:
                     response = await self._model_call()
                 except ProviderContextOverflowError:
@@ -209,6 +217,7 @@ class AgentRuntime:
                         action="compact",
                     )
                     await self.context.compact(keep_last=4, force=True)
+                    refresh_plan = True
                     self.iterations -= 1
                     continue
                 except ProviderError as exc:

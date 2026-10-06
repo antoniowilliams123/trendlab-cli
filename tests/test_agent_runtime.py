@@ -234,9 +234,14 @@ async def test_plan_tool_and_open_task_nudge(project, manager_factory, events, r
     assert plan.tasks[0].evidence == ["read app.py"]
     assert "requires evidence" in provider.calls[4][-1]["content"]
     assert "plan tasks are still open" in provider.calls[3][-1]["content"]
+    # The system prompt stays byte-stable within a run (prompt-cache friendly): the plan the
+    # model created mid-run is not re-rendered into it until the next run starts.
+    assert all("Current plan:" not in call[0]["content"] for call in provider.calls[:5])
+    provider._responses.append(ModelResponse(text="second run; nothing to do"))
+    await agent.run("status?")
     assert (
-        "Current plan:" in provider.calls[2][0]["content"]
-        and "[✓] T-1 Inspect" in provider.calls[2][0]["content"]
+        "Current plan:" in provider.calls[-1][0]["content"]
+        and "[✓] T-1 Inspect" in provider.calls[-1][0]["content"]
     )
     assert recorder.of_type(EventType.PLAN_UPDATED)
 
