@@ -3813,7 +3813,9 @@ decisions taken after the original specification. Newest last.
     updates its plan mid-run (§20 note). 252 cases.
 -   Owner: "changing models … not as smooth as in Claude Code". Model
     picker (F5 / `/model`), catalog with live Ollama tags, fuzzy `/model
-    <name>` (§90.13). 256 cases.
+    <name>` (§90.13). 256 cases. Live config now prices every remote model
+    in the catalog (DeepSeek ×2, OpenAI GPT-5 / mini / nano, Claude Opus /
+    Sonnet / Haiku); Ollama rows are free.
 
 ------------------------------------------------------------------------
 
@@ -3930,6 +3932,18 @@ risk stays local) and the operation fingerprint. The message is edited to
 show the outcome when the request is decided anywhere. The plain Telegram
 notification is suppressed for approvals when the channel is on.
 
+### 90.10 Packaging and Updates
+
+`python -m build --wheel` produces `trendlab_cli-<ver>-py3-none-any.whl`
+(no tests, HTML page included); `pipx install <wheel>` or `pipx install
+git+https://github.com/antoniowilliams123/trendlab-cli.git` gives a
+global `trendlab`. `trendlab update` checks PyPI, then GitHub Releases,
+and prints the matching upgrade command (`--run` executes it); interactive
+starts show a dim one-line hint at most once a day (cache
+`~/.trendlab/update_check.json`; `TRENDLAB_NO_UPDATE_CHECK=1` disables).
+Release v0.1.0 carries the wheel. PyPI publication is pending a PyPI
+account; the checker already handles both sources.
+
 ### 90.11 Mouse Left to the Terminal (copy and paste like Claude Code)
 
 Owner's report: text in the TUI could not be selected and copied the way it
@@ -3999,16 +4013,3 @@ always accepted; otherwise a unique substring match (`/model haiku`,
 The plain REPL shows the same catalog as a numbered table and reads a
 number. Receipt line: `model → ref [REMOTE] · ctx · price · conversation
 kept`.
-
-### 90.10 Packaging and Updates
-
-`python -m build --wheel` produces `trendlab_cli-<ver>-py3-none-any.whl`
-(no tests, HTML page included); `pipx install <wheel>` or `pipx install
-git+https://github.com/antoniowilliams123/trendlab-cli.git` gives a
-global `trendlab`. `trendlab update` checks PyPI, then GitHub Releases,
-and prints the matching upgrade command (`--run` executes it); interactive
-starts show a dim one-line hint at most once a day (cache
-`~/.trendlab/update_check.json`; `TRENDLAB_NO_UPDATE_CHECK=1` disables).
-Release v0.1.0 carries the wheel. PyPI publication is pending a PyPI
-account; the checker already handles both sources.
-
