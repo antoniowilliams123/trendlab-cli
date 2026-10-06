@@ -72,6 +72,7 @@ class ModelInfo(BaseModel):
     supports_tools: bool = True
     supports_streaming: bool = True
     local: bool | None = None  # inferred from provider when None
+    supports_vision: bool | None = None  # None = guess from the model family (catalog.py)
 
 
 class ModelPricing(BaseModel):

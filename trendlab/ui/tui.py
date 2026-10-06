@@ -17,6 +17,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Paste
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Label, OptionList, RichLog, Static, TextArea
@@ -33,7 +34,7 @@ from trendlab.approvals.models import (
     DecisionResult,
 )
 from trendlab.config.schema import AppConfig, PermissionMode
-from trendlab.providers.catalog import ModelChoice, looks_experimental
+from trendlab.providers.catalog import ModelChoice, looks_experimental, supports_vision
 from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
@@ -204,7 +205,40 @@ class PromptInput(TextArea):
         Binding("pagedown", "transcript_page_down", "", show=False, priority=True),
         Binding("ctrl+up", "history_prev", "", show=False, priority=True),
         Binding("ctrl+down", "history_next", "", show=False, priority=True),
+        Binding("ctrl+v", "paste_image", "paste image", show=False, priority=True),
     ]
+
+    def action_paste_image(self) -> None:
+        """Ctrl+V: attach the clipboard image (text pastes arrive as a Paste event instead)."""
+        from trendlab.ui.attachments import grab_clipboard_image
+
+        path = grab_clipboard_image()
+        if path is None:
+            self.app.notify("no image on the clipboard", severity="warning", timeout=3)  # type: ignore[attr-defined]
+            return
+        self.post_message(self.ImagePasted(path))
+
+    class ImagePasted(Message):
+        """An image landed in the prompt (clipboard image, or a pasted path to an image file)."""
+
+        def __init__(self, path: Path) -> None:
+            super().__init__()
+            self.path = path
+
+    async def _on_paste(self, event: Paste) -> None:
+        text = (event.text or "").strip().strip("'\"")
+        if text.startswith("file://"):
+            text = text[7:]
+        candidate = Path(text).expanduser()
+        if (
+            text
+            and "\n" not in text
+            and candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+            and candidate.is_file()
+        ):
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.ImagePasted(candidate.resolve()))
 
     class PickRequested(Message):
         """Posted when the word under the cursor is an ``@`` file reference."""
@@ -611,7 +645,7 @@ class TrendLabTUI(App[None]):
             show_line_numbers=False,
             soft_wrap=True,
             tab_behavior="indent",
-            placeholder="type a task · / commands · @ files · Ctrl+↑↓ history · Esc interrupts",
+            placeholder="type a task · / commands · @ files · Ctrl+V image · Ctrl+↑↓ history · Esc",
         )
         yield Footer()
 
@@ -767,6 +801,8 @@ class TrendLabTUI(App[None]):
             parts.append(f"[bold #ffd21f]⏳ {pending} pending[/]")
         if looks_experimental(tl.config, tl.model_ref):
             parts.append("[bold black on #ffd21f] ⚠ EXPERIMENTAL MODEL [/]")
+        if tl.pending_images:
+            parts.append(f"[bold {MINT}]📎 {len(tl.pending_images)} image(s)[/]")
         width = self.size.width
         if width >= 110:
             mouse = "app" if self.mouse_capture else "terminal · drag selects"
@@ -945,6 +981,8 @@ class TrendLabTUI(App[None]):
             self.log_line(f"[bold {MINT}]↳ steering:[/] [{MINT}]{text[:200]}[/]")
             return
         shown = text if len(text) <= 400 else text[:400] + " …"
+        if self.tl.pending_images:
+            shown += f"  [{GREY}]📎 {len(self.tl.pending_images)} image(s)[/]"
         self.log_line(f"[bold {MINT}]❯[/] [bold {MINT}]{shown}[/]")
         self._started_at = time.monotonic()
         self._run_task = asyncio.create_task(self._run(text))
@@ -989,6 +1027,21 @@ class TrendLabTUI(App[None]):
         plan.display = bool(self.tl.plan.tasks) and self.size.width >= 100
         if self.tl.gateway is not None:  # resize events can arrive before the app has started
             self._refresh_header()
+
+    @on(PromptInput.ImagePasted)
+    def _image_pasted(self, event: PromptInput.ImagePasted) -> None:
+        self.tl.pending_images.append(event.path)
+        n = len(self.tl.pending_images)
+        self.log_line(
+            f"[bold {MINT}]📎 image attached[/] [{GREY}]{event.path.name} · goes with your next "
+            f"prompt ({n} pending)[/]"
+        )
+        if not supports_vision(self.tl.config, self.tl.model_ref):
+            self.log_line(
+                f"[#ffd21f]⚠ {self.tl.model_ref} cannot see images — press F5 and pick a vision "
+                f"model (openai:gpt-5-mini, anthropic:claude-sonnet-5) before sending[/]"
+            )
+        self._refresh_status()
 
     @on(PromptInput.PickRequested)
     def _pick_requested(self, event: PromptInput.PickRequested) -> None:

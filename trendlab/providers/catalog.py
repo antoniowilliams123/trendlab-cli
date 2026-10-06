@@ -122,6 +122,29 @@ def looks_experimental(config: AppConfig, model_ref: str) -> bool:
     return bool(m) and float(m.group(1)) < AGENT_GRADE_PARAMS_B
 
 
+_VISION_HINTS = (
+    "claude",
+    "gpt-5",
+    "gpt-4o",
+    "gemini",
+    "vision",
+    "-vl",
+    "llava",
+    "gemma",
+    "pixtral",
+)
+
+
+def supports_vision(config: AppConfig, model_ref: str) -> bool:
+    """Can this model look at images? Config wins; otherwise a guess from the model family
+    (Claude, GPT-5, Gemini and the usual vision-tagged local models can; DeepSeek cannot)."""
+    info = config.models.get(model_ref)
+    if info is not None and info.supports_vision is not None:
+        return info.supports_vision
+    model = model_ref.partition(":")[2].lower()
+    return any(h in model for h in _VISION_HINTS)
+
+
 def local_model_note(params_b: float | None) -> str:
     if params_b is None:
         return "pulled"

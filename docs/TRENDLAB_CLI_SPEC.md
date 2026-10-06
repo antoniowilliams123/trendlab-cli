@@ -3871,7 +3871,7 @@ decisions taken after the original specification. Newest last.
     fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
     activity lines in both UIs, prompt history, slash-command menu,
     compact layout, async update check, streaming retries, auth hints.
-    286 cases; +2 for the experimental-model warning = 288.
+    286 cases; +2 for the experimental-model warning = 288; +2 image paste = 291.
 
 ------------------------------------------------------------------------
 
@@ -4239,4 +4239,20 @@ only, so no network call on every refresh.)
     Code column is the owner's daily experience, not a run.
 -   Arrow-key history in the plain REPL (its line reader is a thread
     over stdin; readline integration is a later change).
+
+### 91.7 Paste an image, get feedback on it
+
+Owner: "I want to be able to paste an image into TrendLab like this and
+get feedback on it." In the TUI, **Ctrl+V** reads the clipboard image
+(PowerShell on WSL, `wl-paste`/`xclip`/`pngpaste` elsewhere), saves it
+to a temp PNG and attaches it to the next prompt; a pasted *path* to an
+image file (or `file://` URL, as macOS and some Linux clipboards give)
+attaches instead of inserting text; plain text pastes are untouched. The
+transcript shows "📎 image attached · name", the status bar carries a
+"📎 n image(s)" chip until the prompt is sent, and the prompt line notes
+the attachments. `ModelInfo.supports_vision` (None = guess from the
+family: Claude, GPT-5, Gemini, `-vl`/llava/gemma locals can; DeepSeek
+cannot) drives a warning at attach time with the F5 hint to switch to a
+vision model, since DeepSeek Flash — the default — cannot see images.
+`/paste` and `@shot.png` remain for the REPL.
 
