@@ -1041,10 +1041,19 @@ class TrendLabTUI(App[None]):
             f"prompt ({n} pending)[/]"
         )
         if not supports_vision(self.tl.config, self.tl.model_ref):
-            self.log_line(
-                f"[#ffd21f]⚠ {self.tl.model_ref} cannot see images — press F5 and pick a vision "
-                f"model (openai:gpt-5-mini, anthropic:claude-sonnet-5) before sending[/]"
-            )
+            from trendlab.providers.catalog import cheapest_vision_model
+
+            vision = cheapest_vision_model(self.tl.config, self.tl.model_ref)
+            if vision:
+                self.log_line(
+                    f"[{GREY}]{self.tl.model_ref} cannot see images — this prompt will use "
+                    f"[{MINT}]{vision}[/] (cheapest vision model with a key), then switch back[/]"
+                )
+            else:
+                self.log_line(
+                    f"[#ffd21f]⚠ {self.tl.model_ref} cannot see images and no vision model has a "
+                    f"key — trendlab secret set OPENAI_API_KEY or ANTHROPIC_API_KEY, or F5[/]"
+                )
         self._refresh_status()
 
     @on(PromptInput.PickRequested)

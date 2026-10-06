@@ -3871,7 +3871,7 @@ decisions taken after the original specification. Newest last.
     fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
     activity lines in both UIs, prompt history, slash-command menu,
     compact layout, async update check, streaming retries, auth hints.
-    286 cases; +2 for the experimental-model warning = 288; +2 image paste = 291.
+    286 cases; +2 for the experimental-model warning = 288; +2 image paste = 291; +2 vision auto-switch = 293.
 
 ------------------------------------------------------------------------
 
@@ -4262,4 +4262,16 @@ key when the clipboard holds an image, so the app never receives it.
 Alt+V and Ctrl+I were added as alternative keys for the same action (the
 placeholder now says Alt+V); the Windows Terminal fix, if Ctrl+V is
 preferred, is to rebind its paste action to Ctrl+Shift+V only.
+
+Owner's follow-up: "automatically swap to the cheapest that can see
+images." A prompt that carries images while the active model cannot see
+them is now routed, for that prompt only, to `routing.vision` when set,
+else the cheapest vision-capable model with a key in place (input +
+output price per million; local vision models count as free; Ollama
+models not pulled are skipped). The switch is announced in the
+transcript ("👁 using openai:gpt-5-nano for this prompt … back to
+deepseek:deepseek-flash after"), audited as `model.vision_autoswitch`,
+and reverted when the run ends — the default model is unchanged for the
+next prompt. With no vision model keyed, the attach-time line says which
+key to store.
 

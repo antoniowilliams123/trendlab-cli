@@ -34,6 +34,7 @@ from trendlab.orchestration.subagents import SubAgentRunner, delegate_tool_facto
 from trendlab.permissions.engine import PermissionEngine
 from trendlab.permissions.rules import ProjectRules
 from trendlab.providers.base import ModelProvider
+from trendlab.providers.catalog import cheapest_vision_model, supports_vision
 from trendlab.providers.gateway import ModelGateway
 from trendlab.providers.registry import model_info, resolve_role
 from trendlab.remote.telegram_bridge import TelegramBridge, TelegramError
@@ -403,13 +404,29 @@ class TrendLabApp:
         if attached:
             self.events.emit(EventType.FILES_ATTACHED, session_id=self.session_id, files=attached)
         content = build_user_content(prompt, self.project_root, images)
+        restore_model: str | None = None
         if isinstance(content, list):
             self.events.emit(
                 EventType.IMAGES_ATTACHED,
                 session_id=self.session_id,
                 images=[Path(p["path"]).name for p in content if p.get("type") == "image_path"],
             )
-        result = await self.agent.run(content)
+            if not supports_vision(self.config, self.model_ref):
+                vision = cheapest_vision_model(self.config, self.model_ref)
+                if vision and vision != self.model_ref:
+                    restore_model = self.model_ref
+                    self.switch_model(vision)
+                    self.events.emit(
+                        EventType.VISION_AUTOSWITCH,
+                        session_id=self.session_id,
+                        from_model=restore_model,
+                        to_model=vision,
+                    )
+        try:
+            result = await self.agent.run(content)
+        finally:
+            if restore_model is not None:
+                self.switch_model(restore_model)
         if self._run_checkpoint is not None and self.checkpoints is not None:
             self.checkpoints.seal(self._run_checkpoint["id"])
         self._save_state()

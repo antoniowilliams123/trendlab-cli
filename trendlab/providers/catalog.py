@@ -145,6 +145,34 @@ def supports_vision(config: AppConfig, model_ref: str) -> bool:
     return any(h in model for h in _VISION_HINTS)
 
 
+def cheapest_vision_model(config: AppConfig, current: str) -> str | None:
+    """The model to use for a prompt that carries images when ``current`` cannot see them.
+
+    ``routing.vision`` wins when set; otherwise the cheapest vision-capable model (input + output
+    price per million) whose key is in place, local models counting as free. None when nothing
+    qualifies.
+    """
+    pinned = config.routing.get("vision")
+    if pinned and pinned.partition(":")[0] in config.providers:
+        return pinned
+    best: tuple[float, str] | None = None
+    for c in list_model_choices(config, current, ollama_tags={}):
+        if not supports_vision(config, c.ref) or not c.key_ok or c.pulled is False:
+            continue
+        price = (
+            0.0
+            if c.local
+            else (
+                (c.input_per_million or 0.0) + (c.output_per_million or 0.0)
+                if c.input_per_million is not None
+                else float("inf")
+            )
+        )
+        if best is None or price < best[0]:
+            best = (price, c.ref)
+    return best[1] if best else None
+
+
 def local_model_note(params_b: float | None) -> str:
     if params_b is None:
         return "pulled"

@@ -58,6 +58,7 @@ class EventType(StrEnum):
     QUESTION_ANSWERED = "question.answered"
     STEERED = "run.steered"
     IMAGES_ATTACHED = "run.images_attached"
+    VISION_AUTOSWITCH = "model.vision_autoswitch"  # image prompt routed to a vision model
     PROJECT_ROOT_CHANGED = "session.project_root_changed"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"

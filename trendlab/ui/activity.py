@@ -158,6 +158,11 @@ def format_event(event: Event) -> str | None:
         return f"[{GREY}]⑂ branched → {d.get('child')}[/]"
     if t == EventType.FILES_ATTACHED:
         return f"[{GREY}]📎 attached {', '.join(d.get('files') or [])}[/]"
+    if t == EventType.VISION_AUTOSWITCH:
+        return (
+            f"[bold {MINT}]👁 using {d.get('to_model')} for this prompt[/] "
+            f"[{GREY}](cheapest model that can see images; back to {d.get('from_model')} after)[/]"
+        )
     if t == EventType.IMAGES_ATTACHED:
         return f"[{GREY}]🖼 attached {', '.join(d.get('images') or [])}[/]"
     return None
