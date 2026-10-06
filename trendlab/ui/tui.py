@@ -33,7 +33,7 @@ from trendlab.approvals.models import (
     DecisionResult,
 )
 from trendlab.config.schema import AppConfig, PermissionMode
-from trendlab.providers.catalog import ModelChoice
+from trendlab.providers.catalog import ModelChoice, looks_experimental
 from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
@@ -717,6 +717,8 @@ class TrendLabTUI(App[None]):
         )
         width = max(60, self.size.width - 4)
         project = _shorten(str(tl.project_root), max(20, width - BANNER_WIDTH - 12))
+        if looks_experimental(tl.config, tl.model_ref):
+            privacy_txt += " [bold #ffd21f]⚠ small local model — unreliable for tasks[/]"
         info = [
             f"[{GREY}]CLI v{__version__}[/]",
             f"[bold {NEON}]{tl.model_ref}[/] {privacy_txt}",
@@ -763,6 +765,8 @@ class TrendLabTUI(App[None]):
         ]
         if pending:
             parts.append(f"[bold #ffd21f]⏳ {pending} pending[/]")
+        if looks_experimental(tl.config, tl.model_ref):
+            parts.append("[bold black on #ffd21f] ⚠ EXPERIMENTAL MODEL [/]")
         width = self.size.width
         if width >= 110:
             mouse = "app" if self.mouse_capture else "terminal · drag selects"

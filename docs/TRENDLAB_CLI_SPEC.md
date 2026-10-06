@@ -3829,7 +3829,7 @@ decisions taken after the original specification. Newest last.
     fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
     activity lines in both UIs, prompt history, slash-command menu,
     compact layout, async update check, streaming retries, auth hints.
-    286 cases.
+    286 cases; +2 for the experimental-model warning = 288.
 
 ------------------------------------------------------------------------
 
@@ -4178,6 +4178,16 @@ The "`'int' object has no attribute 'append'`" seen during the overflow
 scenario was a fake provider in the audit script shadowing
 `ScriptedProvider.calls` with a counter — not a product defect. Recorded
 here so it is not chased again.
+
+### 91.5b Experimental-model warning
+
+After the audit the owner ran a local 14B model again and got an invented
+file count. The harness cannot fix the model, so it now makes the model
+unmistakable: when the active model is an Ollama model whose name says it
+is under 30B parameters, the header line reads "⚠ small local model —
+unreliable for tasks" and the status bar carries a yellow "⚠ EXPERIMENTAL
+MODEL" badge for the whole session. (`looks_experimental` judges by name
+only, so no network call on every refresh.)
 
 ### 91.6 Still open (not at par with Claude Code)
 

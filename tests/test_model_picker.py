@@ -193,3 +193,30 @@ def test_small_local_models_are_marked_experimental():
     finally:
         httpx.get = orig
     assert d == {"qwen2.5-coder:14b": 14.8, "big:70b": 70.6, "odd": None}
+
+
+def test_experimental_model_is_flagged_by_name(project: Path):
+    from trendlab.config.schema import ProviderConfig
+    from trendlab.providers.catalog import looks_experimental
+
+    cfg = _cfg(project)
+    cfg.providers["ollama"] = ProviderConfig(type="ollama", base_url="http://localhost:11434")
+    assert looks_experimental(cfg, "ollama:qwen2.5-coder:14b")
+    assert looks_experimental(cfg, "ollama:gemma4:latest") is False  # unknown size: no claim
+    assert not looks_experimental(cfg, "ollama:qwen3-coder:30b")
+    assert not looks_experimental(cfg, "deepseek:deepseek-flash")
+
+
+async def test_tui_shows_experimental_warning(project: Path, _trendlab_home: Path):
+    from trendlab.config.schema import ProviderConfig
+
+    tl = _tl(project, ScriptedProvider([ModelResponse(text="ok")]))
+    tl.config.providers["ollama"] = ProviderConfig(type="ollama", base_url="http://localhost:11434")
+    tui = TrendLabTUI(tl)
+    async with tui.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert "EXPERIMENTAL" not in str(tui.query_one("#status", Static).content)
+        tl.model_ref = "ollama:qwen2.5-coder:14b"
+        tui._refresh_header()
+        assert "EXPERIMENTAL MODEL" in str(tui.query_one("#status", Static).content)
+        assert "unreliable for tasks" in str(tui.query_one("#header", Static).content)

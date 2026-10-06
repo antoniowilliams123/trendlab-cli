@@ -8,6 +8,7 @@ read live from ``/api/tags``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -106,6 +107,19 @@ def ollama_details(base_url: str, timeout: float = 1.5) -> dict[str, float | Non
         return out
     except Exception:  # noqa: BLE001 — offline / not installed
         return None
+
+
+_SIZE_IN_NAME = re.compile(r"(\d+(?:\.\d+)?)b\b", re.I)
+
+
+def looks_experimental(config: AppConfig, model_ref: str) -> bool:
+    """A local model under the agent-grade size, judged from its name (no network): ``…:14b``."""
+    provider, _, model = model_ref.partition(":")
+    pcfg = config.providers.get(provider)
+    if pcfg is None or pcfg.type != "ollama":
+        return False
+    m = _SIZE_IN_NAME.search(model)
+    return bool(m) and float(m.group(1)) < AGENT_GRADE_PARAMS_B
 
 
 def local_model_note(params_b: float | None) -> str:
