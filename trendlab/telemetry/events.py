@@ -87,6 +87,7 @@ class EventType(StrEnum):
     REMOTE_CHANNEL_STARTED = "remote.channel_started"
     REMOTE_CHANNEL_STOPPED = "remote.channel_stopped"
     REMOTE_AUTH_FAILED = "remote.auth_failed"
+    REMOTE_MESSAGE = "remote.message"  # inbound text from a remote-control surface
     # Session
     SESSION_STARTED = "session.started"
     SESSION_RESUMED = "session.resumed"

@@ -48,6 +48,7 @@ another device.
 | **Fixes its own mistakes early** | After every edit the matching linters and type-checkers run (ruff, pyright, tsc, eslint, cargo check, go vet) and problems go straight back to the model. Read-only tool calls run in parallel. |
 | **Your own commands** | `.trendlab/commands/review.md` becomes `/review-style` with `$ARGUMENTS`; `@path` attaches a file with a fuzzy picker in the TUI; `background_process` keeps a dev server running while the agent works. |
 | **Branch a conversation** | `/branch` forks the session to try another idea, `/tree` shows the family, `/resume` jumps back. |
+| **Remote control from Telegram** | Turn it on and your chat becomes a second keyboard for the running session: a message starts a task, text while it runs steers it, replies answer the agent's questions, `/status` `/plan` `/diff` `/cost` `/stop` work, and every run reports back. |
 | **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
 | **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, `@file.png` or `/paste` to attach screenshots, type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
 | **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
@@ -122,6 +123,24 @@ your `chat_id`: every approval arrives as a Telegram message with **Approve once
 buttons (questions get one button per option, or reply to the message). Decisions are polled, so
 no public URL is needed. Add `--plan-gate` and the first edit of each run waits for your go-ahead.
 
+## Drive the session from Telegram
+
+```toml
+[telegram_bridge]
+enabled = true            # or: trendlab --telegram · /telegram on
+
+[notifications.telegram]
+bot_token_env = "TRENDLAB_TELEGRAM_BOT_TOKEN"   # trendlab secret set TRENDLAB_TELEGRAM_BOT_TOKEN
+chat_id = "-100…"                               # only this chat is honoured
+```
+
+The terminal session posts "online" when it starts. From the chat: send a task to start it, send
+text while it runs to steer it, reply to a question to answer it, `/stop` to interrupt, and any
+read-only slash command (`/status`, `/plan`, `/diff`, `/cost`, `/git log`, `/bg`) to look around.
+Completion, failure, questions and pending approvals come back as messages. Permission changes,
+approval decisions and session control (`/mode`, `/approvals approve`, `/quit`) stay keyboard-only;
+turn on `remote_approval.telegram` if you want approval buttons in the same chat.
+
 **How approval is protected:** a per-install bearer token with lockout, a per-request decision
 token, a SHA-256 fingerprint of tool + arguments + directory that the decision must match,
 single-use decisions, expiry, high-risk operations kept terminal-only by default, and a restart
@@ -181,7 +200,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 245 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 251 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

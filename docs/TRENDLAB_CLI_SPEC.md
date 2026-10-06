@@ -3794,6 +3794,11 @@ decisions taken after the original specification. Newest last.
 -   Same day, owner's report "I'm not able to copy and paste text from the
     terminal": TUI now releases the mouse by default; F4 / `/mouse`
     toggles capture; keys scroll the transcript (§90.11). 245 cases.
+-   Same day: Telegram remote control (§90.12) — the Transfers group drives
+    the terminal session (prompts, steering, answers, read-only commands,
+    reports back); shared poller with the button channel; `--telegram`,
+    `/telegram`. 251 cases. Also configured `openai:gpt-5-mini` and
+    `ollama:qwen2.5-coder:14b` (pulled, live smoke test READY in 10 s).
 
 ------------------------------------------------------------------------
 
@@ -3925,6 +3930,39 @@ scrolling. **F4** or `/mouse on|off` hands the mouse to the app (wheel
 inside widgets, clickable buttons) and back; the status bar shows which
 side has it. The approval modal and picker are fully keyboard-driven, so
 nothing requires the mouse. `--plain` was never affected.
+
+### 90.12 Telegram Remote Control (`trendlab/remote/telegram_bridge.py`)
+
+Owner's request: "communicate back and forth with my terminal in TrendLab
+from the Transfers group in my Telegram" (the remote-control idea from his
+daily driver). `[telegram_bridge] enabled = true`, `--telegram` or
+`/telegram on` attaches the running session to the configured chat:
+
+-   **Inbound.** Plain text → a new prompt when idle (the UI shows it as
+    `📱 Telegram ❯ …` and runs it through its normal path), steering while
+    a run is active, or the answer when the agent has an unanswered
+    `ask_user` question. `/stop` interrupts. Other slash commands run
+    through the same `CommandRouter` as the keyboard and their output is
+    sent back; `/mode`, `/permissions`, `/remote`, `/approvals approve|
+    deny`, `/cost-limit`, `/worktree`, `/quit`, `/clear`, `/edit`, `/paste`,
+    `/image`, `/telegram`, `/mouse` are refused remotely (permissions,
+    approval decisions and session control stay at the keyboard).
+-   **Outbound.** "online" on start, "session ended" on stop, start
+    acknowledgement, completion / failure / cancel summary (reason, files,
+    validated, cost), questions ("reply here to answer"), pending-approval
+    notices when the button channel is off, no-progress stops. Messages are
+    plain text, Rich/Markdown stripped, redacted, chunked at 3 800 chars.
+-   **One poller per bot.** `TelegramPoller` owns `getUpdates`; the
+    inline-button approval channel (§90.9) subscribes to it when both are
+    on, so a single bot serves control and approvals without the 409
+    conflict Telegram raises for two pollers.
+-   **Security.** Only `notifications.telegram.chat_id` is honoured; other
+    chats are ignored and audited (`remote.auth_failed`). Inbound text is
+    audited (`remote.message`, truncated). Bot token from the secrets
+    store, never logged. Questions answered from the chat carry no
+    authority (same as the terminal answer path).
+-   Owner's install: token stored as `TRENDLAB_TELEGRAM_BOT_TOKEN`, chat
+    = Transfers group, bridge enabled by default in `~/.trendlab/config.toml`.
 
 ### 90.10 Packaging and Updates
 

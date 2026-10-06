@@ -121,6 +121,15 @@ class PlanGateConfig(BaseModel):
     timeout_minutes: int = Field(default=30, ge=1, le=24 * 60)
 
 
+class TelegramBridgeConfig(BaseModel):
+    """Remote control from Telegram (spec §90.12): messages in the configured chat become
+    prompts/steering/answers; replies, reports and questions come back. Uses
+    notifications.telegram for the bot token env + chat_id."""
+
+    enabled: bool = False
+    allow_commands: bool = True  # slash commands from the chat (permission/approval ones never)
+
+
 class McpServerConfig(BaseModel):
     command: str
     args: list[str] = Field(default_factory=list)
@@ -245,6 +254,7 @@ class AppConfig(BaseModel):
     sandbox: SandboxConfig = SandboxConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     plan_gate: PlanGateConfig = PlanGateConfig()
+    telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()
     notifications: NotificationsConfig = NotificationsConfig()

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from trendlab.permissions.rules import ProjectRules
 from trendlab.providers.base import ModelProvider
 from trendlab.providers.gateway import ModelGateway
 from trendlab.providers.registry import model_info, resolve_role
+from trendlab.remote.telegram_bridge import TelegramBridge, TelegramError
 from trendlab.security.sandbox import Sandbox
 from trendlab.sessions.checkpoints import CheckpointManager
 from trendlab.sessions.store import SessionStore
@@ -98,6 +99,10 @@ class TrendLabApp:
         self.web_channel: WebApprovalChannel | None = None
         self.telegram_channel: TelegramChannel | None = None
         self.plan_gate: PlanGate | None = None
+        self.telegram_bridge: TelegramBridge | None = None
+        # A UI may take over how remote prompts are started (TUI: its transcript + run task).
+        self.on_remote_prompt: Callable[[str], Awaitable[None]] | None = None
+        self._remote_task: asyncio.Task | None = None
         self.gateway: ModelGateway | None = None
         self.costs: CostTracker | None = None
         self.context: ContextManager | None = None
@@ -262,6 +267,11 @@ class TrendLabApp:
             await self.hooks.run("session_start")
         if self.notifier is not None and self.config.notifications.reminder_at_fraction > 0:
             self._reminder_task = asyncio.create_task(self._reminder_loop())
+        if self.config.telegram_bridge.enabled:
+            try:
+                await self.enable_telegram_bridge()
+            except TelegramError as exc:
+                self.console.print(f"[yellow]Telegram remote control unavailable: {exc}[/yellow]")
 
     def _open_session(self, machine: str) -> None:
         assert self.store is not None
@@ -357,6 +367,9 @@ class TrendLabApp:
             await self.hooks.run("session_end")
         if self.mcp is not None:
             await self.mcp.stop()
+        if self.telegram_bridge is not None:
+            await self.telegram_bridge.stop()
+            self.telegram_bridge = None
         if self.background is not None:
             await self.background.stop_all()
         if self.approvals:
@@ -727,6 +740,8 @@ class TrendLabApp:
             tg = TelegramChannel(
                 self.config.notifications.telegram, self.events, project_name=self.project_root.name
             )
+            if self.telegram_bridge is not None and self.telegram_bridge.poller is not None:
+                tg.poller = self.telegram_bridge.poller  # share the bot's single update stream
             try:
                 await self.approvals.add_channel(tg)
                 self.telegram_channel = tg
@@ -753,6 +768,55 @@ class TrendLabApp:
 
             update_global_config("remote_approval", {"enabled": False})
 
+    # -- Telegram remote control -----------------------------------------------------------------
+    async def enable_telegram_bridge(self) -> TelegramBridge:
+        if self.telegram_bridge is not None and self.telegram_bridge.running:
+            return self.telegram_bridge
+        bridge = TelegramBridge(
+            self, self.config.telegram_bridge, self.config.notifications.telegram, self.events
+        )
+        await bridge.start()  # raises TelegramError when token/chat_id are missing
+        self.telegram_bridge = bridge
+        self.config.telegram_bridge.enabled = True
+        return bridge
+
+    async def disable_telegram_bridge(self) -> None:
+        if self.telegram_bridge is not None:
+            await self.telegram_bridge.stop()
+            self.telegram_bridge = None
+        self.config.telegram_bridge.enabled = False
+
+    def run_in_progress(self) -> bool:
+        if self._remote_task is not None and not self._remote_task.done():
+            return True
+        agent = self.agent
+        return bool(agent and not agent.state.terminal and agent.state.state.value != "IDLE")
+
+    def cancel_run(self) -> None:
+        if self.agent is not None:
+            self.agent.cancel()
+        if self._remote_task is not None and not self._remote_task.done():
+            self._remote_task.cancel()
+
+    def remote_prompt(self, text: str) -> None:
+        """Start a prompt that arrived from a remote surface; the UI shows it if one is attached."""
+        if self.on_remote_prompt is not None:
+            asyncio.get_running_loop().create_task(self.on_remote_prompt(text))
+            return
+
+        async def _run() -> None:
+            self.console.print(f"[bold]📱 remote ❯[/bold] {text}")
+            try:
+                result = await self.run_prompt(text)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.console.print(f"[red]error: {exc}[/red]")
+                return
+            self.console.print(result.report)
+
+        self._remote_task = asyncio.get_running_loop().create_task(_run())
+
     def pairing_url(self) -> str | None:
         if self.web_channel is None:
             return None
@@ -772,6 +836,7 @@ class TrendLabApp:
             "allow_session_scope": cfg.allow_session_scope,
             "notifications": notif.provider if notif.enabled else "disabled",
             "telegram": self.telegram_channel.status() if self.telegram_channel else None,
+            "telegram_bridge": self.telegram_bridge.status() if self.telegram_bridge else None,
             "plan_gate": self.plan_gate.status() if self.plan_gate else None,
             "pending": len(self.approvals.pending()) if self.approvals else 0,
         }

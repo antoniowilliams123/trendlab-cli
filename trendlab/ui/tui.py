@@ -381,6 +381,7 @@ class TrendLabTUI(App[None]):
         channel = TextualChannel(self._present_approval, self._withdraw_approval)
         self.tl.on_token = self._on_token
         self.tl.on_thinking = self._on_thinking
+        self.tl.on_remote_prompt = self._start_prompt
         await self.tl.start(interactive=False, command_handler=self.commands.dispatch)
         await self.tl.approvals.add_channel(channel)  # type: ignore[union-attr]
         self.tl.agent.on_token = self._on_token  # type: ignore[union-attr]
@@ -637,6 +638,12 @@ class TrendLabTUI(App[None]):
             )
         elif t == EventType.STEERED:
             self.log_line(f"[bold {MINT}]↳ steering applied[/]")
+        elif t == EventType.REMOTE_MESSAGE:
+            self.log_line(f"[bold {MINT}]📱 Telegram ❯[/] [{MINT}]{d.get('text')}[/]")
+        elif t == EventType.REMOTE_CHANNEL_STARTED and d.get("channel") == "telegram-bridge":
+            self.log_line(
+                f"[bold {NEON}]📱 Telegram remote control on[/] [{GREY}]chat {d.get('chat_id')}[/]"
+            )
         elif t == EventType.MODEL_CALL_STARTED:
             self._flush_stream()
         elif (

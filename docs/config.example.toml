@@ -109,6 +109,15 @@ output_per_million = 5.00
 input_per_million = 0.15
 output_per_million = 0.60
 cached_input_per_million = 0.075
+[pricing."openai:gpt-5-mini"]
+input_per_million = 0.25
+output_per_million = 2.00
+cached_input_per_million = 0.025
+
+[pricing."openai:gpt-5-nano"]
+input_per_million = 0.05
+output_per_million = 0.40
+cached_input_per_million = 0.005
 
 # Role routing (spec §11). Missing roles use the session model. "escalation" is used after loops.
 [routing]
@@ -163,6 +172,11 @@ allow_insecure_http = false      # must be true to bind a non-loopback address w
 machine_name = "ThinkPad"
 telegram = false                 # also send approvals as Telegram messages with inline buttons
                                  # (uses [notifications.telegram] below; decisions via getUpdates)
+
+# Remote control from a Telegram chat (spec §90.12). Uses [notifications.telegram] below.
+[telegram_bridge]
+enabled = false                  # or: trendlab --telegram · /telegram on
+allow_commands = true            # read-only slash commands from the chat; permission/approval ones never
 
 [notifications]
 enabled = false

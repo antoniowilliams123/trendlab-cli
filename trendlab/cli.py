@@ -123,6 +123,9 @@ def main_callback(
     worktree: str | None = typer.Option(
         None, "--worktree", help="Create a throwaway git worktree with this name and work there."
     ),
+    telegram: bool = typer.Option(
+        False, "--telegram", help="Remote control from your Telegram chat for this session."
+    ),
     plan_gate: bool = typer.Option(
         False,
         "--plan-gate",
@@ -154,6 +157,8 @@ def main_callback(
     allow_destructive = allow_destructive or config.defaults.allow_destructive
     if plan_gate:
         config.plan_gate.enabled = True
+    if telegram:
+        config.telegram_bridge.enabled = True
     if allow_destructive and effective != PermissionMode.UNSAFE:
         console.print(
             "[red]--allow-destructive only applies in unsafe mode "

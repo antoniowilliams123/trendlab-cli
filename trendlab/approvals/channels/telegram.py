@@ -90,6 +90,7 @@ class TelegramChannel(ApprovalChannel):
         self._by_message: dict[int, str] = {}  # message_id -> approval_id (for text replies)
         self._token: str | None = None
         self.last_error: str | None = None
+        self.poller: Any = None  # a shared TelegramPoller (set by the remote-control bridge)
 
     # -- lifecycle ---------------------------------------------------------------------------------
     @property
@@ -106,9 +107,27 @@ class TelegramChannel(ApprovalChannel):
         if not self.cfg.chat_id:
             raise ChannelError("telegram: notifications.telegram.chat_id is not configured")
         self.manager = manager
-        self._task = asyncio.create_task(self._poll_loop(), name="telegram-approvals")
+        if self.poller is not None:
+            self.poller.subscribe(self.handle_update)
+        else:
+            self._task = asyncio.create_task(self._poll_loop(), name="telegram-approvals")
+
+    async def use_poller(self, poller: Any) -> None:
+        """Hand update polling to a shared poller (one getUpdates stream per bot token)."""
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._task = None
+        self.poller = poller
+        poller.subscribe(self.handle_update)
 
     async def stop(self) -> None:
+        if self.poller is not None:
+            self.poller.unsubscribe(self.handle_update)
+            self.poller = None
         if self._task is not None:
             self._task.cancel()
             try:
@@ -353,7 +372,8 @@ class TelegramChannel(ApprovalChannel):
     def status(self) -> dict[str, Any]:
         return {
             "chat_id": self.cfg.chat_id,
-            "polling": bool(self._task and not self._task.done()),
+            "polling": bool(self._task and not self._task.done())
+            or bool(self.poller is not None and self.poller.running),
             "pending_messages": len(self._messages),
             "last_error": self.last_error,
         }

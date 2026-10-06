@@ -54,6 +54,7 @@ HELP = """\
 /image <path>              Attach an image file to your next prompt (or write @file.png)
 /remote [status|enable|disable|url]   Phone approval server
 /approvals [approve <id> [session]|deny <id>|history]   Pending approvals
+/telegram [on|off|status]  Remote control from your Telegram chat: send tasks, steer, get reports
 /mouse [on|off]            TUI: off (default) leaves the mouse to the terminal so drag-select and
                            copy work like any terminal; on gives the app wheel scroll + clicks (F4)
 /clear                     Clear the screen               /quit     Exit
@@ -113,6 +114,7 @@ class CommandRouter:
             "/paste": self._paste,
             "/image": self._image,
             "/remote": self._remote,
+            "/telegram": self._telegram,
             "/approvals": self._approvals,
             "/clear": self._clear,
             "/quit": self._quit,
@@ -853,6 +855,30 @@ class CommandRouter:
                 self.console.print(f"Open this on your phone (keep it private): [bold]{url}[/bold]")
         else:
             self.console.print("[red]usage: /remote [status|enable|disable|url][/red]")
+
+    async def _telegram(self, args: list[str]) -> None:
+        app = self.app
+        if args and args[0] == "on":
+            try:
+                await app.enable_telegram_bridge()
+            except Exception as exc:  # noqa: BLE001
+                self.console.print(f"[red]{exc}[/red]")
+                return
+        elif args and args[0] == "off":
+            await app.disable_telegram_bridge()
+        br = app.telegram_bridge
+        if br is None or not br.running:
+            self.console.print(
+                "[dim]Telegram remote control off — /telegram on (needs "
+                "notifications.telegram.chat_id + secret TRENDLAB_TELEGRAM_BOT_TOKEN)[/dim]"
+            )
+            return
+        st = br.status()
+        self.console.print(
+            f"[green]Telegram remote control ON[/green] · chat {st['chat_id']} · "
+            f"{st['messages_in']} in / {st['messages_out']} out · up {st['uptime_s']}s"
+            + (f" · [red]last error: {st['last_error']}[/red]" if st["last_error"] else "")
+        )
 
     async def _approvals(self, args: list[str]) -> None:
         mgr = self.app.approvals

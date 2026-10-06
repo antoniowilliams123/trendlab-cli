@@ -24,6 +24,7 @@ class Repl:
     # -- entry point ------------------------------------------------------------------------
     async def run(self) -> None:
         await self.app.start(interactive=True, command_handler=self.handle_command)
+        self.app.events.subscribe(self._on_event)
         self._header()
         try:
             while self._running:
@@ -126,6 +127,10 @@ class Repl:
         self.console.print(
             Markdown(result.report) if result.status == "COMPLETED" else result.report
         )
+
+    def _on_event(self, event) -> None:
+        if event.type.value == "remote.message":
+            self.console.print(f"[bold {MINT}]📱 Telegram ❯[/] {event.data.get('text')}")
 
     def cancel_current(self) -> bool:
         if self._current is not None and not self._current.done():
