@@ -51,8 +51,8 @@ def make_tui() -> TrendLabTUI:
                 ]
             ),
             ModelResponse(
-                text='The repo has a README and a pyproject.\n\n```toml\nname = "trendlab-cli"\n```\n\n'
-                "Nothing was changed."
+                text="The repo has a README and a pyproject.\n\n"
+                '```toml\nname = "trendlab-cli"\n```\n\nNothing was changed.'
             ),
         ]
     )
