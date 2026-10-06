@@ -213,14 +213,19 @@ class PromptInput(TextArea):
     ]
 
     def action_paste_image(self) -> None:
-        """Ctrl+V: attach the clipboard image (text pastes arrive as a Paste event instead)."""
-        from trendlab.ui.attachments import grab_clipboard_image
+        """Ctrl+V / Alt+V: attach the clipboard image; if the clipboard holds text instead,
+        insert it (terminals that pass Ctrl+V through do not paste for us)."""
+        from trendlab.ui.attachments import grab_clipboard_image, grab_clipboard_text
 
         path = grab_clipboard_image()
-        if path is None:
-            self.app.notify("no image on the clipboard", severity="warning", timeout=3)  # type: ignore[attr-defined]
+        if path is not None:
+            self.post_message(self.ImagePasted(path))
             return
-        self.post_message(self.ImagePasted(path))
+        text = grab_clipboard_text()
+        if text:
+            self.insert(text)
+            return
+        self.app.notify("clipboard is empty", severity="warning", timeout=3)  # type: ignore[attr-defined]
 
     class ImagePasted(Message):
         """An image landed in the prompt (clipboard image, or a pasted path to an image file)."""
@@ -230,6 +235,12 @@ class PromptInput(TextArea):
             self.path = path
 
     async def _on_paste(self, event: Paste) -> None:
+        if not (event.text or "").strip():
+            # Some terminals send an empty paste when the clipboard holds an image.
+            event.stop()
+            event.prevent_default()
+            self.action_paste_image()
+            return
         text = (event.text or "").strip().strip("'\"")
         if text.startswith("file://"):
             text = text[7:]

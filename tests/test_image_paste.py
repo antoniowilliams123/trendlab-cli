@@ -169,3 +169,28 @@ async def test_image_prompt_autoswitches_and_restores(
         assert "text model" in r2.text  # back on the default model
     finally:
         await tl.stop()
+
+
+async def test_ctrl_v_inserts_clipboard_text_when_no_image(
+    project: Path, _trendlab_home: Path, monkeypatch
+):
+    import trendlab.ui.attachments as att
+
+    monkeypatch.setattr(att, "grab_clipboard_image", lambda dest_dir=None: None)
+    monkeypatch.setattr(att, "grab_clipboard_text", lambda: "pasted words")
+    tui = _tui(project, ScriptedProvider([ModelResponse(text="ok")]))
+    async with tui.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        inp = tui.query_one("#input", PromptInput)
+        inp.focus()
+        await pilot.press("ctrl+v")
+        await pilot.pause()
+        assert inp.text == "pasted words" and tui.tl.pending_images == []
+        # An empty paste event (image on the clipboard, terminal pasted nothing) tries the image.
+        shot = project / "e.png"
+        shot.write_bytes(PNG)
+        monkeypatch.setattr(att, "grab_clipboard_image", lambda dest_dir=None: shot)
+        tui.post_message(Paste(""))
+        await pilot.pause()
+        await pilot.pause()
+        assert tui.tl.pending_images == [shot] and inp.text == "pasted words"

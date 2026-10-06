@@ -3871,7 +3871,7 @@ decisions taken after the original specification. Newest last.
     fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
     activity lines in both UIs, prompt history, slash-command menu,
     compact layout, async update check, streaming retries, auth hints.
-    286 cases; +2 for the experimental-model warning = 288; +2 image paste = 291; +2 vision auto-switch = 293.
+    286 cases; +2 for the experimental-model warning = 288; +2 image paste = 291; +2 vision auto-switch = 293; +1 Ctrl+V text/empty-paste = 294.
 
 ------------------------------------------------------------------------
 
@@ -4274,4 +4274,16 @@ deepseek:deepseek-flash after"), audited as `model.vision_autoswitch`,
 and reverted when the run ends — the default model is unchanged for the
 next prompt. With no vision model keyed, the attach-time line says which
 key to store.
+
+Owner: "it still only takes Alt+V, not Ctrl+V. That's annoying." Root
+cause confirmed from the owner's Windows Terminal `settings.json`: an
+explicit `ctrl+v → paste` action. The terminal executes it and never
+forwards the key; with an image on the clipboard its paste does nothing.
+App side (done): Ctrl+V / Alt+V now attach an image when there is one
+and otherwise insert the clipboard *text* (`grab_clipboard_text`,
+PowerShell on WSL), and an empty paste event triggers the image path —
+so once the terminal lets Ctrl+V through, TrendLab handles both cases
+itself. Terminal side (owner's call): rebind Windows Terminal's paste to
+Ctrl+Shift+V only; after that Ctrl+V reaches TrendLab. Side effect: in a
+plain shell Ctrl+V becomes bash's literal-next instead of paste.
 

@@ -95,6 +95,28 @@ def image_count(content: str | list[dict[str, Any]] | None) -> int:
     )
 
 
+def grab_clipboard_text() -> str | None:
+    """Clipboard text (for terminals that hand Ctrl+V to the app instead of pasting)."""
+    attempts: list[list[str]] = []
+    if shutil.which("powershell.exe"):  # WSL
+        attempts.append(["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard -Raw"])
+    if shutil.which("wl-paste"):
+        attempts.append(["wl-paste", "--no-newline"])
+    if shutil.which("xclip"):
+        attempts.append(["xclip", "-selection", "clipboard", "-o"])
+    if shutil.which("pbpaste"):
+        attempts.append(["pbpaste"])
+    for cmd in attempts:
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        text = out.stdout.replace("\r\n", "\n")
+        if text.strip():
+            return text
+    return None
+
+
 def grab_clipboard_image(dest_dir: Path | None = None) -> Path | None:
     """Save the clipboard image to a PNG and return its path, or None if there is none."""
     dest_dir = dest_dir or Path(tempfile.gettempdir()) / "trendlab-paste"
