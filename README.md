@@ -115,6 +115,9 @@ size, price per million and whether its key is in place. Type to filter, ↑↓,
 conversation, plan and session carry over. `/model haiku` or `/model mini` switch directly by
 partial name.
 
+Small and local models sometimes write a tool call as JSON text instead of calling it; TrendLab
+recognises that and runs the tool rather than accepting the JSON as the answer.
+
 On WSL, Windows paths pasted into a prompt (`\\wsl$\Ubuntu\…`, `C:\…`) are translated to their
 Linux form before the model sees them.
 
@@ -214,7 +217,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 259 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 264 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

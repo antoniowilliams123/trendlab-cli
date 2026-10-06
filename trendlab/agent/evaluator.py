@@ -46,6 +46,11 @@ class CompletionEvaluator:
         self, ev: EvidenceSummary, final_text: str, *, validation_available: bool
     ) -> Verdict:
         reasons: list[str] = []
+        if not _substantive(final_text):
+            reasons.append(
+                "the reply is empty or just JSON/punctuation — answer in plain language "
+                "(what you found, or why you could not), or call a tool"
+            )
         if ev.mutated and validation_available and not ev.validation_runs:
             reasons.append("files were changed but no validation (tests/lint) was run afterwards")
         elif ev.mutated and ev.last_validation and not ev.last_validation.get("ok"):
@@ -63,6 +68,22 @@ class CompletionEvaluator:
             "why that is not possible and mark the tasks accordingly."
         )
         return Verdict(accept=False, nudge=nudge, reasons=reasons)
+
+
+def _substantive(text: str) -> bool:
+    """False for '', '{}', '[]', 'null', bare JSON and punctuation-only replies."""
+    import json
+
+    stripped = (text or "").strip()
+    if len(stripped) < 2:
+        return False
+    if stripped[0] in "{[" or stripped in {"null", "true", "false"}:
+        try:
+            json.loads(stripped)
+            return False  # a JSON value is not an answer for a human
+        except ValueError:
+            pass
+    return any(ch.isalnum() for ch in stripped)
 
 
 def _acknowledges_incomplete(text: str) -> bool:

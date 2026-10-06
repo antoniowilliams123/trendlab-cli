@@ -23,6 +23,7 @@ from trendlab.agent.recovery import (
     classify_provider_error,
     recovery_for,
 )
+from trendlab.agent.rescue import rescue_text_tool_calls
 from trendlab.agent.state import AgentState, AgentStateMachine
 from trendlab.agent.tasks import Plan
 from trendlab.config.schema import LimitsConfig
@@ -232,6 +233,19 @@ class AgentRuntime:
                     stop_reason, status, text = f"{failure.value}: {exc}", AgentState.FAILED, ""
                     break
 
+                if not response.tool_calls:
+                    rescued = rescue_text_tool_calls(response.text, self.tools.registry.names())
+                    if rescued:
+                        # The model wrote the call as text (common with small/local models):
+                        # run it instead of accepting the JSON as the final answer.
+                        self.events.emit(
+                            EventType.RECOVERY,
+                            session_id=self.session_id,
+                            failure="TOOL_CALL_AS_TEXT",
+                            action="rescued",
+                            tools=[c.name for c in rescued],
+                        )
+                        response = response.model_copy(update={"tool_calls": rescued, "text": ""})
                 if response.tool_calls:
                     self._append(_assistant_message(response))
                     if response.text and self.on_token is None:

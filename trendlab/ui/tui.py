@@ -728,6 +728,11 @@ class TrendLabTUI(App[None]):
                 f"[bold {RED}]⛔ blocked a write that looked like a secret[/] "
                 f"[{GREY}]{d.get('files')}[/]"
             )
+        elif t == EventType.RECOVERY and d.get("failure") == "TOOL_CALL_AS_TEXT":
+            self.log_line(
+                f"[#ffd21f]↳ the model wrote a tool call as text — running it:[/] "
+                f"[{GREY}]{', '.join(d.get('tools', []))}[/]"
+            )
         elif t == EventType.RECOVERY and d.get("failure") == "UNVERIFIED_COMPLETION":
             self.log_line("[#ffd21f]✎ asked the model to validate its work before finishing[/]")
         elif t == EventType.CONTEXT_COMPACTED:

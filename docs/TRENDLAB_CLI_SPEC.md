@@ -3817,6 +3817,9 @@ decisions taken after the original specification. Newest last.
     in the catalog (DeepSeek ×2, OpenAI GPT-5 / mini / nano, Claude Opus /
     Sonnet / Haiku); Ollama rows are free.
 -   Windows → WSL path translation in prompts (§90.14). 259 cases.
+-   Tool calls written as text are executed instead of accepted as the
+    answer (§90.15). 261 cases. Plus `~` expansion in tool paths and the
+    empty/JSON-only answer guard (§90.15). 264 cases.
 
 ------------------------------------------------------------------------
 
@@ -4026,3 +4029,26 @@ host. The TUI notes "translated N Windows path(s)" and the event
 `prompt.paths_translated` is audited. (The model in that session was
 `gemma4`, a chat model; for coding tasks the local pick is
 `qwen2.5-coder:14b`.)
+
+### 90.15 Tool Calls Written as Text (`trendlab/agent/rescue.py`)
+
+Owner's session with a local model: the reply was the JSON of a tool
+call (`{"name": "list_directory", "arguments": {"path": "./"}}`) and the
+run "completed" without running anything. Now, when a response carries
+no native tool calls, the runtime looks for a tool call written as text
+— fenced or bare, one object or a list, `name|action|tool|function` +
+`arguments|parameters|params|input|args`, OpenAI's nested `function`
+shape with string arguments — and executes it when the tool name is
+known and the surrounding prose is short (≤ 240 chars; a long
+explanation that merely quotes JSON is left alone). Audited as
+`recovery.action {failure: TOOL_CALL_AS_TEXT, action: rescued}`; the TUI
+shows "the model wrote a tool call as text — running it". Loop detection
+still applies to repeated rescued calls.
+
+Two more weak-model guards from the same session: tool paths starting
+with `~` are expanded before the project-boundary check (the model copied
+`~/FUTURES_DATA/…` from the prompt and `list_directory` said "not a
+directory"); and a final reply that is empty, punctuation or a bare JSON
+value (`{}` was accepted as the answer) is refused by the completion
+evaluator with a nudge to answer in plain language or call a tool.
+

@@ -35,11 +35,14 @@ class ToolContext:
     background: Any = None  # trendlab.tools.background.BackgroundProcessManager
 
     def resolve(self, raw: str) -> Path:
-        """Resolve ``raw`` inside the project root, following symlinks; reject escapes."""
+        """Resolve ``raw`` inside the project root, following symlinks; reject escapes.
+
+        ``~`` is expanded first, so ``~/proj/x`` works whenever the home directory lies inside
+        (or is) the project root — the way people type paths at a shell.
+        """
+        given = Path(raw).expanduser() if raw.startswith("~") else Path(raw)
         candidate = (
-            (self.project_root / raw).resolve()
-            if not Path(raw).is_absolute()
-            else Path(raw).resolve()
+            (self.project_root / given).resolve() if not given.is_absolute() else given.resolve()
         )
         root = self.project_root.resolve()
         if candidate != root and root not in candidate.parents:
