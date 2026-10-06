@@ -33,6 +33,7 @@ from trendlab.approvals.models import (
     DecisionResult,
 )
 from trendlab.config.schema import AppConfig, PermissionMode
+from trendlab.providers.catalog import ModelChoice
 from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
@@ -44,6 +45,7 @@ from trendlab.ui.theme import (
     MINT,
     NEON,
     NEON_DIM,
+    NEON_SOFT,
     RED,
     TUI_CSS,
     make_console,
@@ -285,6 +287,111 @@ class PromptInput(TextArea):
         self.insert("\n")
 
 
+class ModelPicker(ModalScreen[str | None]):
+    """Model switcher: type to filter, ↑↓ to move, Enter to switch, Esc keeps the current."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "keep current", priority=True),
+        Binding("enter", "choose", "switch", priority=True),
+        Binding("up", "move(-1)", "", show=False, priority=True),
+        Binding("down", "move(1)", "", show=False, priority=True),
+    ]
+
+    def __init__(self, choices: list[ModelChoice]) -> None:
+        super().__init__()
+        self.choices = choices
+        self.shown: list[ModelChoice] = list(choices)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog", classes="models"):
+            yield Label("Switch model — conversation, plan and session are kept")
+            yield Input(
+                placeholder="type to filter · ↑↓ move · Enter switch · Esc keep", id="model-filter"
+            )
+            yield OptionList(id="model-list")
+            yield Static("", id="model-detail")
+
+    def on_mount(self) -> None:
+        self._fill("")
+        self.query_one("#model-filter", Input).focus()
+
+    def _row(self, c: ModelChoice) -> Text:
+        t = Text(no_wrap=True, overflow="ellipsis")
+        ref = c.ref if len(c.ref) <= 36 else c.ref[:35] + "…"
+        t.append("● " if c.current else "  ", style=f"bold {NEON}" if c.current else "")
+        t.append(f"{ref:<37}", style=f"bold {NEON}" if c.current else NEON)
+        t.append(f"{c.ctx_label:<9}", style=GREY)
+        t.append(f"{c.price_label:<21}", style=NEON_DIM)
+        status = c.status_label
+        bad = "missing" in status or "not pulled" in status
+        t.append(f"{status:<12}", style=RED if bad else MINT)
+        if c.note:
+            t.append(c.note[:22], style=GREY)
+        return t
+
+    def _fill(self, query: str) -> None:
+        lst = self.query_one("#model-list", OptionList)
+        lst.clear_options()
+        self.shown = [c for c in self.choices if c.matches(query)]
+        lst.add_options([self._row(c) for c in self.shown])
+        if self.shown:
+            lst.highlighted = 0
+        self._detail()
+
+    def _detail(self) -> None:
+        lst = self.query_one("#model-list", OptionList)
+        idx = lst.highlighted if lst.highlighted is not None else 0
+        box = self.query_one("#model-detail", Static)
+        if not self.shown:
+            box.update(Text("no model matches that filter", style=RED))
+            return
+        c = self.shown[min(idx, len(self.shown) - 1)]
+        where = "runs on this machine — nothing leaves it" if c.local else "remote API"
+        warn = ""
+        if not c.local and not c.key_ok:
+            provider = c.provider
+            env = ""
+            pcfg = self.app.tl.config.providers.get(provider)  # type: ignore[attr-defined]
+            if pcfg is not None:
+                env = pcfg.api_key_env or ""
+            warn = f"\nkey missing — run: trendlab secret set {env}"
+        elif c.pulled is False:
+            warn = f"\nnot pulled yet — run: ollama pull {c.model}"
+        box.update(
+            Text(f"{c.ref} · {where} · {c.ctx_label} · {c.price_label}{warn}", style=NEON_SOFT)
+        )
+
+    @on(Input.Changed, "#model-filter")
+    def _filter(self, event: Input.Changed) -> None:
+        self._fill(event.value)
+
+    @on(OptionList.OptionHighlighted, "#model-list")
+    def _highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self._detail()
+
+    @on(OptionList.OptionSelected, "#model-list")
+    def _selected(self, event: OptionList.OptionSelected) -> None:
+        self.action_choose()
+
+    def action_move(self, delta: int) -> None:
+        lst = self.query_one("#model-list", OptionList)
+        if not self.shown:
+            return
+        cur = lst.highlighted if lst.highlighted is not None else 0
+        lst.highlighted = max(0, min(len(self.shown) - 1, cur + delta))
+        self._detail()
+
+    def action_choose(self) -> None:
+        lst = self.query_one("#model-list", OptionList)
+        if not self.shown:
+            return
+        idx = lst.highlighted if lst.highlighted is not None else 0
+        self.dismiss(self.shown[min(idx, len(self.shown) - 1)].ref)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class FilePicker(OptionList):
     """Fuzzy ``@file`` suggestions shown above the prompt while an ``@`` token is being typed."""
 
@@ -329,6 +436,7 @@ class TrendLabTUI(App[None]):
         Binding("f2", "plan", "plan"),
         Binding("f3", "cost", "cost"),
         Binding("f4", "toggle_mouse", "mouse"),
+        Binding("f5", "pick_model", "model"),
         Binding("ctrl+e", "external_editor", "editor"),
     ]
 
@@ -352,6 +460,7 @@ class TrendLabTUI(App[None]):
             quit_cb=self.exit,
             clear_cb=self._clear_log,
             prompt_cb=self._start_prompt,
+            model_picker_cb=self._open_model_picker,
         )
         self.commands.register("/mouse", self._mouse_command)
         self.file_index = FileIndex(tl_app.project_root)
@@ -754,7 +863,10 @@ class TrendLabTUI(App[None]):
         self._refresh_plan()
 
     def action_interrupt(self) -> None:
-        """Esc: stop the current model call or tool right now; the conversation stays."""
+        """Esc: close an open picker, else stop the current step; the conversation stays."""
+        if isinstance(self.screen, ModelPicker):  # app-level priority bindings run first
+            self.screen.action_cancel()
+            return
         if self._run_task and not self._run_task.done():
             self.tl.agent.cancel()  # type: ignore[union-attr]
             self._run_task.cancel()
@@ -783,6 +895,25 @@ class TrendLabTUI(App[None]):
         box.text = edited.rstrip("\n")
         box.move_cursor(box.document.end)
         box.focus()
+
+    async def _open_model_picker(self, choices: list[ModelChoice]) -> None:
+        def done(ref: str | None) -> None:
+            if ref is None:
+                self.log_line(f"[{GREY}]model unchanged · {self.tl.model_ref}[/]")
+            elif self.commands.switch_model(ref):
+                self.log_line(Text(self.console_out.export_text(clear=True).rstrip(), style=NEON))
+            else:
+                self.log_line(Text(self.console_out.export_text(clear=True).rstrip(), style=RED))
+            self._refresh_header()
+            self._refresh_status()
+            self.query_one("#input", PromptInput).focus()
+
+        self.push_screen(ModelPicker(choices), done)
+
+    async def action_pick_model(self) -> None:
+        from trendlab.providers.catalog import list_model_choices
+
+        await self._open_model_picker(list_model_choices(self.tl.config, self.tl.model_ref))
 
     async def action_help(self) -> None:
         await self._command("/help")

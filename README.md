@@ -61,6 +61,11 @@ another device.
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/model_picker.png" alt="Model picker: F5 or /model" width="920">
+  <br><sub>F5 switches models: every model you can use, where it runs, context size, price, and whether its key is in place. Type to filter, Enter to switch, the conversation stays.</sub>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/tui-idle.png" alt="Idle TUI" width="920">
   <br><sub>Jet-black, neon-green, nothing else. Plan panel, live streaming pane, status bar with context size and running cost.</sub>
 </p>
@@ -100,9 +105,15 @@ Install globally with `pipx install git+https://github.com/antoniowilliams123/tr
 Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/commit`, `/pr`,
 `/issue`, `/worktree`, `/branch`, `/tree`, `/bg`, `/commands`, `/resume`, `/export`, `/image`,
 `/paste`, `/remote`, `/approvals`, `/help`. Type `@` and a few letters to pick a file to attach.
-TUI keys: F1 help, F2 plan, F3 cost, F4 mouse, **Esc interrupts** the current step and keeps the
+TUI keys: F1 help, F2 plan, F3 cost, F4 mouse, F5 model, **Esc interrupts** the current step and keeps the
 conversation, and **typing while it runs steers it**: your message is delivered before the next
 model call.
+
+**Switching models** is one key: F5 (or `/model`) opens a picker with every model you can use
+(configured, curated per provider, and whatever Ollama has pulled), showing where it runs, context
+size, price per million and whether its key is in place. Type to filter, ↑↓, Enter. The
+conversation, plan and session carry over. `/model haiku` or `/model mini` switch directly by
+partial name.
 
 The TUI leaves the mouse to your terminal, so drag-select and copy (Ctrl+Shift+C, right-click)
 work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. Press F4 (or
@@ -200,7 +211,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 252 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 256 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

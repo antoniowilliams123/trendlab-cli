@@ -3811,6 +3811,9 @@ decisions taken after the original specification. Newest last.
     run (and after a compaction) instead of every iteration, so the system
     prompt + repository map prefix stays byte-identical while the model
     updates its plan mid-run (§20 note). 252 cases.
+-   Owner: "changing models … not as smooth as in Claude Code". Model
+    picker (F5 / `/model`), catalog with live Ollama tags, fuzzy `/model
+    <name>` (§90.13). 256 cases.
 
 ------------------------------------------------------------------------
 
@@ -3975,6 +3978,27 @@ daily driver). `[telegram_bridge] enabled = true`, `--telegram` or
     authority (same as the terminal answer path).
 -   Owner's install: token stored as `TRENDLAB_TELEGRAM_BOT_TOKEN`, chat
     = Transfers group, bridge enabled by default in `~/.trendlab/config.toml`.
+
+### 90.13 Model Switching UX (`trendlab/providers/catalog.py`, `ModelPicker`)
+
+Owner's report: switching models was not as smooth as in his daily
+driver. Now: **F5** or bare `/model` opens a modal picker — current model
+first and marked, then every candidate merged from the current ref,
+`[models]`, `[pricing]`, routing targets, a curated list per provider
+type (Anthropic, OpenAI, DeepSeek) and, for Ollama, the models actually
+pulled (live `/api/tags`, 1.5 s timeout). Each row shows context size,
+price per million (or "free · local"), and a status: `key ✓`, `key
+missing` (with the exact `trendlab secret set` command in the detail
+line) or `not pulled` (with the `ollama pull` command). Typing filters
+by substring, ↑↓ move, Enter switches, Esc keeps the current model. The
+switch goes through `switch_model`, so conversation, plan and session
+are kept and the header/status update immediately. `/model <text>`
+switches directly: an exact `provider:model` of a configured provider is
+always accepted; otherwise a unique substring match (`/model haiku`,
+`/model v4-pro`) switches and an ambiguous one lists the candidates.
+The plain REPL shows the same catalog as a numbered table and reads a
+number. Receipt line: `model → ref [REMOTE] · ctx · price · conversation
+kept`.
 
 ### 90.10 Packaging and Updates
 

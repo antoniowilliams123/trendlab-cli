@@ -246,6 +246,33 @@ ApprovalModal {{
     scrollbar-color-hover: {NEON};
     scrollbar-background: {BLACK};
 }}
+#dialog.models {{
+    width: 112;
+    height: auto;
+    border: double {NEON};
+}}
+#model-filter {{
+    background: {BLACK};
+    color: {NEON};
+    border: tall {NEON_DIM};
+    margin-bottom: 1;
+}}
+#model-list {{
+    height: auto;
+    max-height: 14;
+    background: {BLACK};
+    color: {NEON};
+    border: round {NEON_DIM};
+}}
+#model-list > .option-list--option-highlighted {{
+    background: #0b2a0b;
+    color: {NEON};
+    text-style: bold;
+}}
+#model-detail {{
+    margin-top: 1;
+    color: {NEON_SOFT};
+}}
 #picker {{
     display: none;
     height: auto;

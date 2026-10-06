@@ -14,6 +14,7 @@ from trendlab.approvals.models import ApprovalDecision, ApprovalError, ApprovalS
 from trendlab.config.loader import ConfigError
 from trendlab.config.schema import PermissionMode
 from trendlab.providers.base import ProviderError
+from trendlab.providers.catalog import list_model_choices, resolve_model_query
 from trendlab.telemetry.events import EventType
 from trendlab.tools.git import run_git
 from trendlab.ui.diff_view import render_diff
@@ -42,7 +43,9 @@ HELP = """\
 /export [path]             Write this session as Markdown (.trendlab/exports/)
 /edit                      Compose the next prompt in $EDITOR (TUI: Ctrl+E); end a line with \\
                            to continue on the next line
-/model <provider:model>    Hot-switch the model            /models   Configured providers/models
+/model                     Pick a model (↑↓ Enter · type to filter · TUI: F5) — conversation kept
+/model <name>              Switch directly; partial names work (/model haiku, /model mini)
+/models                    Configured providers/models
 /review                    Run the reviewer sub-agent on the current diff
 /init                      Detect project tooling and draft TRENDLAB.md
 /skills [use <name>]       Reusable instruction packs      /hooks    Configured hooks
@@ -70,12 +73,14 @@ class CommandRouter:
         quit_cb: Callable[[], None] | None = None,
         clear_cb: Callable[[], None] | None = None,
         prompt_cb: Callable[[str], Awaitable[None]] | None = None,
+        model_picker_cb: Callable[[list], Awaitable[None]] | None = None,
     ) -> None:
         self.app = app
         self.console = console
         self._quit_cb = quit_cb
         self._clear_cb = clear_cb
         self._prompt_cb = prompt_cb  # how this UI runs a prompt (custom commands expand to one)
+        self._model_picker_cb = model_picker_cb  # a UI's own picker (the TUI modal)
         self._handlers: dict[str, Callable[[list[str]], Awaitable[None]]] = {
             "/help": self._help,
             "/status": self._status,
@@ -600,15 +605,81 @@ class CommandRouter:
 
     # -- models ------------------------------------------------------------------------------------
     async def _model(self, args: list[str]) -> None:
+        choices = list_model_choices(self.app.config, self.app.model_ref)
         if not args:
-            self.console.print(f"model: {self.app.model_ref} [{self.app.privacy_label()}]")
+            if self._model_picker_cb is not None:
+                await self._model_picker_cb(choices)
+                return
+            await self._pick_model_plain(choices)
             return
+        query = " ".join(args)
+        provider = query.split(":", 1)[0] if ":" in query else ""
+        if provider and provider in self.app.config.providers:
+            self.switch_model(query)  # any model name of a configured provider is valid
+            return
+        hit = resolve_model_query(choices, query)
+        if isinstance(hit, list):
+            if not hit:
+                self.console.print(
+                    f"[red]no model matches {' '.join(args)!r}[/red] — /model lists the choices"
+                )
+            else:
+                self.console.print("[yellow]ambiguous — did you mean:[/yellow]")
+                for c in hit:
+                    self.console.print(f"  {c.ref}  [{GREY}]{c.note}[/]")
+            return
+        self.switch_model(hit.ref)
+
+    def switch_model(self, ref: str) -> bool:
+        """Switch and print a one-line receipt; returns False when the provider rejects it."""
+        before = self.app.model_ref
         try:
-            self.app.switch_model(args[0])
+            self.app.switch_model(ref)
         except ProviderError as exc:
             self.console.print(f"[red]{exc}[/red]")
+            return False
+        choice = next((c for c in list_model_choices(self.app.config, ref) if c.ref == ref), None)
+        detail = f" · {choice.ctx_label} · {choice.price_label}" if choice else ""
+        same = " (already active)" if before == ref else ""
+        self.console.print(
+            f"[bold]model →[/bold] [bold green]{ref}[/bold green] "
+            f"[{GREY}][{self.app.privacy_label()}]{detail} · conversation kept{same}[/]"
+        )
+        return True
+
+    async def _pick_model_plain(self, choices: list) -> None:
+        """Numbered list for the plain REPL; Enter keeps the current model."""
+        t = Table(title="Models — type a number (Enter keeps the current one)")
+        for col in ("#", "model", "where", "context", "price", "key", "note"):
+            t.add_column(col)
+        for i, c in enumerate(choices, 1):
+            mark = " ◀" if c.current else ""
+            t.add_row(
+                str(i),
+                c.ref + mark,
+                "local" if c.local else "remote",
+                c.ctx_label,
+                c.price_label,
+                c.status_label,
+                c.note,
+            )
+        self.console.print(t)
+        reader = getattr(self.app, "console_input", None)
+        if reader is None:
             return
-        self.console.print(f"model switched to [bold]{args[0]}[/bold] [{self.app.privacy_label()}]")
+        self.console.print("[bold]model #❯[/bold] ", end="")
+        line = await reader.readline()
+        text = (line or "").strip()
+        if not text:
+            return
+        if text.isdigit() and 1 <= int(text) <= len(choices):
+            self.switch_model(choices[int(text) - 1].ref)
+            return
+        hit = resolve_model_query(choices, text)
+        if isinstance(hit, list):
+            self.console.print(f"[red]no such model: {text}[/red]")
+            return
+        self.switch_model(hit.ref)
 
     async def _models(self, args: list[str]) -> None:
         t = Table(title="Providers")
