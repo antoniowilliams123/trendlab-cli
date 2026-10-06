@@ -38,6 +38,7 @@ from trendlab.telemetry.events import Event, EventType
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
 from trendlab.ui.file_refs import FileIndex, current_at_token
+from trendlab.ui.prompt_rules import continues_line
 from trendlab.ui.theme import (
     BANNER,
     BANNER_WIDTH,
@@ -276,8 +277,9 @@ class PromptInput(TextArea):
             self.accept_pick(picker.choice())  # type: ignore[arg-type]
             return
         text = self.text
-        if text.rstrip().endswith("\\"):
-            # "...\<Enter>" continues on the next line (works in every terminal).
+        if continues_line(text):
+            # "... \<Enter>" continues on the next line (works in every terminal). A backslash
+            # glued to a word (a pasted Windows path like C:\x\results\) is just text.
             self.text = text.rstrip()[:-1].rstrip() + "\n"
             self.move_cursor(self.document.end)
             return

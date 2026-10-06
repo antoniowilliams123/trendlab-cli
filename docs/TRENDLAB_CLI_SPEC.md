@@ -3823,6 +3823,8 @@ decisions taken after the original specification. Newest last.
 -   Native Ollama provider with a real context window (the `/v1`
     endpoint truncated prompts to 2 048 tokens) and the re-plan guard
     (§90.16). 271 cases (incl. rescue of an announced call after long prose and the "announced but not called" nudge).
+-   Enter no longer swallowed by a trailing path backslash; small local
+    models flagged experimental (§90.17). 273 cases.
 
 ------------------------------------------------------------------------
 
@@ -4079,4 +4081,15 @@ wraps the provider for models without native tool support.
 Companion guard: `task action='plan'` while tasks are still open is
 allowed once; a second re-plan is refused with the current plan and the
 instruction to work the active task or mark it failed/blocked.
+
+### 90.17 Enter Swallowed by a Pasted Windows Path
+
+Owner: "I tried Flash and nothing happened at all." The prompt ended in
+`…\results\`; a trailing backslash was the line-continuation key, so
+Enter inserted a newline and sent nothing. Rule changed in the TUI and
+the REPL (`trendlab/ui/prompt_rules.py`): a backslash continues the line
+only when it is preceded by whitespace (`foo \`) or stands alone. A
+backslash glued to a word is text. Small local Ollama models are also
+now labelled "experimental for agent work" in the picker (parameter
+count from `/api/tags`, below 30B) and the switch receipt warns.
 

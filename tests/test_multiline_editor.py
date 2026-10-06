@@ -109,3 +109,13 @@ async def test_repl_backslash_continuation(project: Path, _trendlab_home: Path):
     )
     await Repl(tl, console).run()
     assert provider.calls[0][-1]["content"] == "write a poem\nabout terminals"
+
+
+def test_trailing_backslash_only_continues_after_a_space():
+    from trendlab.ui.prompt_rules import continues_line
+
+    assert continues_line("first line \\")
+    assert continues_line("\\")
+    assert not continues_line(r"where are the pdfs in \\wsl$\Ubuntu\home\tony\results\\"[:-1])
+    assert not continues_line(r"look in C:\Users\anton\Downloads\\"[:-1])
+    assert not continues_line("plain text")

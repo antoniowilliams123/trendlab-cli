@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from trendlab import __version__
 from trendlab.app import TrendLabApp
 from trendlab.ui.commands import CommandRouter
+from trendlab.ui.prompt_rules import continues_line
 from trendlab.ui.theme import BANNER, GREY, MINT, NEON
 
 
@@ -33,7 +34,7 @@ class Repl:
                 if line is None:
                     break
                 text = line.rstrip()
-                while text.endswith("\\"):  # trailing backslash: continue on the next line
+                while continues_line(text):  # " \\" at the end: continue on the next line
                     self.console.print(f"[{GREY}]…[/] ", end="")
                     more = await self.app.console_input.readline()
                     if more is None:

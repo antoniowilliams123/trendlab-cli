@@ -645,6 +645,11 @@ class CommandRouter:
             f"[bold]model →[/bold] [bold green]{ref}[/bold green] "
             f"[{GREY}][{self.app.privacy_label()}]{detail} · conversation kept{same}[/]"
         )
+        if choice is not None and "experimental" in choice.note:
+            self.console.print(
+                "[#ffd21f]⚠ small local model: fine for questions, unreliable for multi-step "
+                "tool use — switch back to deepseek:deepseek-flash for real tasks[/]"
+            )
         return True
 
     async def _pick_model_plain(self, choices: list) -> None:

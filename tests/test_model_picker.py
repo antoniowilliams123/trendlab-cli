@@ -163,3 +163,33 @@ async def test_plain_repl_numbered_pick(project: Path, _trendlab_home: Path):
         assert tl.model_ref == choices[1].ref
     finally:
         await tl.stop()
+
+
+def test_small_local_models_are_marked_experimental():
+    import httpx
+
+    from trendlab.providers.catalog import local_model_note, ollama_details
+
+    assert "experimental" in local_model_note(14.0) and "experimental" not in local_model_note(70.0)
+    assert local_model_note(None) == "pulled"
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://localhost:11434/api/tags"),
+            json={
+                "models": [
+                    {"name": "qwen2.5-coder:14b", "details": {"parameter_size": "14.8B"}},
+                    {"name": "big:70b", "details": {"parameter_size": "70.6B"}},
+                    {"name": "odd", "details": {}},
+                ]
+            },
+        )
+
+    orig = httpx.get
+    httpx.get = lambda url, timeout=1.5: handler(None)
+    try:
+        d = ollama_details("http://localhost:11434/v1")
+    finally:
+        httpx.get = orig
+    assert d == {"qwen2.5-coder:14b": 14.8, "big:70b": 70.6, "odd": None}

@@ -77,17 +77,43 @@ class ModelChoice:
         return not q or q in self.ref.lower() or q in self.note.lower()
 
 
+AGENT_GRADE_PARAMS_B = 30.0  # below this, local models are unreliable at multi-step tool use
+
+
 def ollama_models(base_url: str, timeout: float = 1.5) -> list[str] | None:
     """Names pulled into a local Ollama, or None when it is not reachable."""
+    details = ollama_details(base_url, timeout)
+    return None if details is None else list(details)
+
+
+def ollama_details(base_url: str, timeout: float = 1.5) -> dict[str, float | None] | None:
+    """``{name: parameter count in billions}`` for pulled models; None when unreachable."""
     root = base_url.rstrip("/")
     if root.endswith("/v1"):
         root = root[:-3]
     try:
         r = httpx.get(f"{root}/api/tags", timeout=timeout)
         r.raise_for_status()
-        return [m["name"] for m in r.json().get("models", []) if m.get("name")]
+        out: dict[str, float | None] = {}
+        for m in r.json().get("models", []):
+            if not m.get("name"):
+                continue
+            size = str((m.get("details") or {}).get("parameter_size") or "")
+            try:
+                out[m["name"]] = float(size.rstrip("Bb")) if size.upper().endswith("B") else None
+            except ValueError:
+                out[m["name"]] = None
+        return out
     except Exception:  # noqa: BLE001 — offline / not installed
         return None
+
+
+def local_model_note(params_b: float | None) -> str:
+    if params_b is None:
+        return "pulled"
+    if params_b < AGENT_GRADE_PARAMS_B:
+        return f"pulled · {params_b:g}B · experimental for agent work"
+    return f"pulled · {params_b:g}B"
 
 
 def list_model_choices(
@@ -117,11 +143,12 @@ def list_model_choices(
             for model, note, _ctx in KNOWN["anthropic"]:
                 add(f"{pname}:{model}", note)
         elif pcfg.type == "ollama":
-            tags = (ollama_tags or {}).get(pname) if ollama_tags is not None else None
-            if ollama_tags is None:
-                tags = ollama_models(pcfg.base_url)
-            for name in tags or []:
-                add(f"{pname}:{name}", "pulled")
+            if ollama_tags is not None:
+                for name in ollama_tags.get(pname) or []:
+                    add(f"{pname}:{name}", "pulled")
+            else:
+                for name, params in (ollama_details(pcfg.base_url) or {}).items():
+                    add(f"{pname}:{name}", local_model_note(params))
         else:
             for host, models in KNOWN.items():
                 if host in (pcfg.base_url or ""):
@@ -142,7 +169,7 @@ def list_model_choices(
         if pcfg.type == "ollama":
             tags = (ollama_tags or {}).get(pname) if ollama_tags is not None else None
             if tags is not None:
-                pulled = model in tags or note == "pulled"
+                pulled = model in tags or note.startswith("pulled")
         choices.append(
             ModelChoice(
                 ref=ref,
