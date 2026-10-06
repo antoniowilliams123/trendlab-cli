@@ -99,12 +99,75 @@ async def overlay(keys: str, name: str, title: str) -> None:
         save(tui, name, title)
 
 
+async def idle(name: str) -> None:
+    tui = make_tui()
+    async with tui.run_test(size=(132, 40)) as pilot:
+        await pilot.pause()
+        save(tui, name, "TrendLab — idle")
+
+
+async def approval(name: str) -> None:
+    """ASK mode: the approval modal with the proposed diff."""
+    from trendlab.config.schema import PermissionMode
+    from trendlab.ui.tui import ApprovalModal
+
+    cfg = load_config(ROOT)
+    cfg.remote_approval = RemoteApprovalConfig(enabled=False)
+    cfg.telegram_bridge.enabled = False
+    cfg.providers["scripted"] = cfg.providers["openai"].model_copy()
+    body = (
+        (ROOT / "BUILD_STATUS.md")
+        .read_text()
+        .replace("# TrendLab Build Status", "# TrendLab Build Status\n\nUpdated by the agent.", 1)
+    )
+    provider = ScriptedProvider(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="1",
+                        name="write_file",
+                        arguments={"path": "BUILD_STATUS.md", "content": body},
+                    )
+                ]
+            ),
+            ModelResponse(text="done"),
+        ]
+    )
+    app = TrendLabApp(
+        ROOT,
+        cfg,
+        provider=provider,
+        model_ref="scripted:m",
+        permission_mode=PermissionMode.ASK,
+        console=Console(record=True, width=100, force_terminal=False),
+    )
+    tui = TrendLabTUI(app)
+    async with tui.run_test(size=(132, 40)) as pilot:
+        await pilot.pause()
+        box = tui.query_one("#input", PromptInput)
+        box.focus()
+        box.text = "add a note to BUILD_STATUS.md"
+        await pilot.press("enter")
+        for _ in range(200):
+            await pilot.pause(0.05)
+            if isinstance(tui.screen, ApprovalModal):
+                break
+        await pilot.pause(0.3)
+        save(tui, name, "TrendLab — approval")
+        await pilot.press("n")
+        await pilot.pause(0.5)
+
+
 async def main() -> None:
     os.environ.setdefault("TRENDLAB_NO_UPDATE_CHECK", "1")
     await transcript((132, 40), "transcript_activity")
+    await transcript((132, 40), "tui-main")
     await transcript((80, 24), "compact_80x24")
     await overlay("/mo", "slash_menu", "TrendLab — slash-command menu")
     await overlay("f5", "model_picker", "TrendLab — model picker")
+    await idle("tui-idle")
+    await approval("tui-approval")
 
 
 if __name__ == "__main__":
