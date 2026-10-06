@@ -526,6 +526,14 @@ def update_cmd(
     raise typer.Exit(code)
 
 
+@app.command("keys")
+def keys_cmd() -> None:
+    """Show what your terminal sends for each key (debug Ctrl+V / Alt+V paste problems)."""
+    from trendlab.ui.keyprobe import main as probe
+
+    probe()
+
+
 @app.command("doctor")
 def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
     """Check config, keys, providers, tools and remote settings; explain anything that is off."""
