@@ -3492,6 +3492,42 @@ The workflow remains portable even when model vendors change.
 
 ## 84. Future Roadmap
 
+### Next move (owner's decision, 2026-10-05): more agent-grade models through OpenRouter
+
+Keep DeepSeek Flash as the daily driver (proven on the owner's tasks,
+87 % cache hits, ≈$0.08 for 77 calls). Next, add the models that sit
+near the frontier on agent work at Flash-class prices, all over the API
+(no downloads — the open-weight ones are 200–600 GB; the local models
+that fit one PC were tried and removed), through a single OpenRouter
+provider:
+
+``` toml
+[providers.openrouter]
+type = "openai_compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"      # trendlab secret set OPENROUTER_API_KEY
+```
+
+Candidates, with the role each is expected to fill (prices as of
+mid-2026, to be confirmed in `[pricing]` when added):
+
+| Model | Expected role |
+|---|---|
+| `moonshotai/kimi-k2` | stronger everyday agent model (built for tool use, long runs) |
+| `qwen/qwen3-coder` (480B) | coding agent at Flash-class price |
+| `z-ai/glm-4.6` | agentic, cheap, protocol-faithful |
+| `google/gemini-flash` | like-for-like rival to Flash; huge context |
+| `x-ai/grok-code-fast-1` | cheapest fast coding loop |
+| `mistralai/devstral` | agentic coding; the only one small enough to run locally |
+
+Explicitly excluded by the owner: GPT-5-Codex. Selection method: run
+`trendlab bench -m openrouter:<model>` on fixtures A–E and compare calls,
+time, cost and outcome against Flash; promote a model to `routing.
+escalation` or `routing.reviewer` only when it beats Flash on the bench.
+Also pending: `anthropic:claude-sonnet-5` as `routing.reviewer` once an
+Anthropic key is stored.
+
+
 Potential post-V1 capabilities (remote/mobile approval via the web
 channel is now part of V1; the items below extend it):
 
@@ -3825,6 +3861,12 @@ decisions taken after the original specification. Newest last.
     (§90.16). 271 cases (incl. rescue of an announced call after long prose and the "announced but not called" nudge).
 -   Enter no longer swallowed by a trailing path backslash; small local
     models flagged experimental (§90.17). 273 cases.
+-   Local models `qwen2.5-coder:14b` and `gemma4` deleted at the owner's
+    request after failing every live task; `supergemma4-26b-uncensored`
+    kept. Next move recorded in §84: OpenRouter + six agent-grade models,
+    GPT-5-Codex excluded. Telegram bridge: answers included in completion
+    messages; `/model` from the phone lists instead of blocking; per-update
+    handler tasks with a deadline. 289 cases.
 -   Full UX/UI audit against Claude Code, 40-point rubric, every finding
     fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
     activity lines in both UIs, prompt history, slash-command menu,
