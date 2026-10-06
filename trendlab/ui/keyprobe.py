@@ -36,7 +36,8 @@ class KeyProbe(App[None]):
         self.seen.append(line)
         body = "\n".join(self.seen[-10:])
         self.query_one("#log", Static).update(
-            f"[{NEON_DIM}]last keys as the terminal sends them:[/]\n{body}\n\n[{NEON_DIM}]Esc exits[/]"
+            f"[{NEON_DIM}]last keys as the terminal sends them:[/]\n{body}\n\n"
+            f"[{NEON_DIM}]Esc exits[/]"
         )
 
     def on_key(self, event: Key) -> None:
