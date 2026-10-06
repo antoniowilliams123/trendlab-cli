@@ -17,17 +17,25 @@ class PermissionMode(StrEnum):
     ASK = "ask"
     AUTO_EDIT = "auto_edit"
     TRUSTED = "trusted"
-    # No approval prompts (hard boundaries, destructive prompt, audit and checkpoint remain).
-    UNSAFE = "unsafe"
+    # No approval prompts (hard boundaries, the irreversible-command prompt, audit and the
+    # pre-edit checkpoint remain). Shown as AUTO; "unsafe" is accepted as the old spelling.
+    AUTO = "auto"
+    UNSAFE = "auto"  # alias kept for code and configs written before the rename
+
+    @classmethod
+    def _missing_(cls, value):  # type: ignore[override]
+        if isinstance(value, str) and value.lower() == "unsafe":
+            return cls.AUTO
+        return None
 
 
 class DefaultsConfig(BaseModel):
     model: str = "openai:gpt-4o-mini"
-    # Tony's choice (2026-10-05): sessions start UNSAFE (no approval prompts) by default.
+    # Owner's choice (2026-10-05): sessions start in AUTO mode (no approval prompts).
     # Switch off per session with `trendlab --safe` / `/mode ask`, or set "ask" here.
-    permission_mode: PermissionMode = PermissionMode.UNSAFE
-    # In UNSAFE mode, also run destructive commands (rm -rf, destructive git) without asking.
-    allow_destructive: bool = False
+    permission_mode: PermissionMode = PermissionMode.AUTO
+    # In AUTO mode, also run irreversible commands (rm -rf, history-rewriting git) without asking.
+    allow_destructive: bool = False  # config key kept; the flag is --allow-irreversible
 
 
 class LimitsConfig(BaseModel):

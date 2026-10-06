@@ -23,7 +23,7 @@ def test_unsafe_policy_table_and_hard_boundaries():
     assert eng.unsafe
     for cat in (C.PROJECT_WRITE, C.FILE_DELETE, C.SHELL_WRITE, C.PACKAGE_INSTALL, C.NETWORK):
         v = eng.evaluate(make_perm(category=cat))
-        assert v.decision == Decision.ALLOW and v.unsafe_auto and "UNSAFE" in v.reason, cat
+        assert v.decision == Decision.ALLOW and v.unsafe_auto and "AUTO" in v.reason, cat
     # Read-only things were already allowed in ask mode: not flagged as unsafe auto-approvals.
     assert not eng.evaluate(make_perm("ls", C.SHELL_READ)).unsafe_auto
     # Destructive still asks without the second flag.
@@ -72,7 +72,7 @@ async def test_unsafe_runs_without_prompts_and_audits(project, manager_factory, 
     audited = [
         e for e in recorder.of_type(EventType.PERMISSION_DECIDED) if e.data.get("unsafe_auto")
     ]
-    assert len(audited) == 2 and audited[0].data["mode"] == "unsafe"
+    assert len(audited) == 2 and audited[0].data["mode"] == "auto"
     assert audited[1].data["files"] == ["n.py"]
     # Destructive still asks (and denial keeps the file).
     task = asyncio.create_task(
@@ -112,7 +112,7 @@ async def test_unsafe_requires_checkpoint_before_mutation(project, manager_facto
     )
     assert (
         not res.ok
-        and "BLOCKED: checkpoint failed in UNSAFE mode" in res.output
+        and "BLOCKED: checkpoint failed in AUTO mode" in res.output
         and not (project / "n.py").exists()
     )
     # In ordinary modes a checkpoint failure does not block the edit.
@@ -146,18 +146,18 @@ def test_cli_flags_and_banner(project, _trendlab_home, monkeypatch):
     # Default launch is unsafe: banner shown, mode left to config (unsafe).
     code, out = run()
     assert code == 0, out
-    assert "UNSAFE MODE" in out and "still ask at the terminal" in out and "--safe" in out
+    assert "AUTO MODE" in out and "still ask at the terminal" in out and "--safe" in out
     assert captured["permission_mode"] is None and captured["allow_destructive"] is False
     # --safe turns prompts on and silences the banner.
     code, out = run("--safe")
     assert (
-        code == 0 and "UNSAFE MODE" not in out and captured["permission_mode"] == PermissionMode.ASK
+        code == 0 and "AUTO MODE" not in out and captured["permission_mode"] == PermissionMode.ASK
     )
     code, out = run("--dangerously-skip-permissions", "--allow-destructive")
-    assert code == 0 and "WITHOUT asking" in out and captured["allow_destructive"] is True
+    assert code == 0 and "without asking" in out and captured["allow_destructive"] is True
     assert captured["permission_mode"] == PermissionMode.UNSAFE
     code, out = run("--safe", "--allow-destructive")
-    assert code == 2 and "only applies in unsafe mode" in out
+    assert code == 2 and "only applies in auto mode" in out
     assert "sudo" in unsafe_banner(False)
 
 
@@ -183,12 +183,12 @@ async def test_repl_switches_unsafe_off_and_on(project, _trendlab_home):
     await tl.start(interactive=False, command_handler=repl.handle_command)
     try:
         await repl.handle_command("/permissions")
-        assert "UNSAFE" in console.export_text(clear=True)
+        assert "AUTO" in console.export_text(clear=True)
         await repl.handle_command("/mode ask")
         assert tl.engine.mode == PermissionMode.ASK
         await repl.handle_command("/mode unsafe")
         assert (
-            "UNSAFE" in console.export_text(clear=True) and tl.engine.mode == PermissionMode.UNSAFE
+            "AUTO" in console.export_text(clear=True) and tl.engine.mode == PermissionMode.UNSAFE
         )
     finally:
         await tl.stop()

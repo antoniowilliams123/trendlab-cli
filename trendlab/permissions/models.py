@@ -19,9 +19,16 @@ class OperationCategory(StrEnum):
     SHELL_READ = "shell_read"
     SHELL_WRITE = "shell_write"
     NETWORK = "network"
-    DESTRUCTIVE = "destructive"
+    IRREVERSIBLE = "irreversible"  # rm -rf, history-rewriting git, force-push
+    DESTRUCTIVE = "irreversible"  # alias kept for code and rules files written before the rename
     PRIVILEGED = "privileged"
     OUTSIDE_PROJECT = "outside_project"
+
+    @classmethod
+    def _missing_(cls, value):  # type: ignore[override]
+        if isinstance(value, str) and value.lower() == "destructive":
+            return cls.IRREVERSIBLE
+        return None
 
 
 class RiskLevel(StrEnum):

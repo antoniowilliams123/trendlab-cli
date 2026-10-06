@@ -22,7 +22,7 @@ _SUMMARY = {
     OperationCategory.PACKAGE_INSTALL: "Install package(s)",
     OperationCategory.NETWORK: "Run network command",
     OperationCategory.SHELL_WRITE: "Run shell command",
-    OperationCategory.DESTRUCTIVE: "Run DESTRUCTIVE command",
+    OperationCategory.DESTRUCTIVE: "Run irreversible command",
     OperationCategory.PRIVILEGED: "Run privileged command",
 }
 

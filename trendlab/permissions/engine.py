@@ -169,9 +169,7 @@ class PermissionEngine:
         if self.unsafe and base == Decision.ALLOW:
             would_ask = _POLICY[PermissionMode.ASK].get(request.category) != Decision.ALLOW
             if would_ask:
-                return Verdict(
-                    Decision.ALLOW, "auto-approved in UNSAFE mode", risk, unsafe_auto=True
-                )
+                return Verdict(Decision.ALLOW, "auto-approved in AUTO mode", risk, unsafe_auto=True)
         if base == Decision.DENY:
             return Verdict(
                 Decision.DENY, f"{request.category.value} is denied in {self.mode} mode", risk

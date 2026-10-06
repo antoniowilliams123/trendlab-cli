@@ -182,7 +182,7 @@ def _shorten(path: str, limit: int) -> str:
 
 def _mode_badge(tl: TrendLabApp) -> str:
     if tl.engine.unsafe:
-        return "[bold white on #ff3b3b] UNSAFE [/]"
+        return "[bold black on #ffd21f] AUTO [/]"
     return f"[bold {NEON}]{tl.engine.mode.value.upper()}[/]"
 
 
@@ -688,8 +688,9 @@ class TrendLabTUI(App[None]):
         )
         if self.tl.engine.unsafe:
             self.log_line(
-                "[bold white on #ff3b3b] UNSAFE [/] [#ff3b3b]no approval prompts · sudo and "
-                "outside-project paths denied · destructive still asks · /mode ask for prompts[/]"
+                "[bold black on #ffd21f] AUTO [/] [#ffd21f]runs without approval prompts · "
+                "elevated commands and outside-project paths stay off-limits · irreversible "
+                "commands still ask · /mode ask turns prompts on[/]"
             )
 
     async def on_unmount(self) -> None:

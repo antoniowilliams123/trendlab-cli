@@ -3153,7 +3153,7 @@ A deliberately explicit unsafe mode may exist for expert users, but it
 must be visibly indicated.
 
 
-### Unsafe Mode (implemented; the default since 2026-10-05)
+### Auto Mode — formerly "unsafe" (implemented; the default since 2026-10-05)
 
 The fifth mode, `unsafe`, is the configured default (`[defaults]
 permission_mode = "unsafe"`): project edits, shell commands, package
@@ -4286,4 +4286,19 @@ so once the terminal lets Ctrl+V through, TrendLab handles both cases
 itself. Terminal side (owner's call): rebind Windows Terminal's paste to
 Ctrl+Shift+V only; after that Ctrl+V reaches TrendLab. Side effect: in a
 plain shell Ctrl+V becomes bash's literal-next instead of paste.
+
+### 91.8 Wording: "auto" and "irreversible"
+
+Owner (2026-10-06): the words UNSAFE and DESTRUCTIVE in the UI read as
+alarming to a hiring manager. Renamed in every user-facing string:
+permission mode `unsafe` → **`auto`** (badge "AUTO" in amber instead of
+red; "runs without approval prompts"), operation category `destructive`
+→ **`irreversible`**. Flags: `--auto` (alias `--dangerously-skip-
+permissions` kept) and `--allow-irreversible` (alias `--allow-destructive`
+kept). Enum aliases `PermissionMode.UNSAFE` / `OperationCategory.
+DESTRUCTIVE` and `_missing_` lookups accept the old spellings, so
+existing configs, rules files and audit logs keep working; the audit
+field `mode` now records `auto`. The rules themselves are unchanged.
+Other words (denied, blocked, privileged) were left as they are at the
+owner's request.
 

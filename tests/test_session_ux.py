@@ -95,7 +95,7 @@ def test_doctor_and_init(_trendlab_home: Path, monkeypatch):
     r = runner.invoke(app, ["doctor"])
     assert r.exit_code == 0
     flat = " ".join(r.output.split())
-    assert "trendlab doctor" in flat and "DEEPSEEK_API_KEY: store" in flat and "UNSAFE" in flat
+    assert "trendlab doctor" in flat and "DEEPSEEK_API_KEY: store" in flat and "AUTO" in flat
     r = runner.invoke(app, ["init", "--provider", "nope"])
     assert r.exit_code == 2
     r = runner.invoke(app, ["init"], input="2\nsk-ant-test-key-1234567890\n")

@@ -24,7 +24,7 @@ from trendlab.ui.theme import GREY
 HELP = """\
 /help                      Show this help
 /status                    Model, project, mode, session, remote, cost
-/mode <plan|ask|auto_edit|trusted|unsafe>   Change permission mode (unsafe = no prompts)
+/mode <plan|ask|auto_edit|trusted|auto>     Change permission mode (auto = no prompts)
 /permissions               Policy table + session/project rules
 /plan | /tasks             Show the current task plan
 /context                   Context budget and compaction status
@@ -225,12 +225,13 @@ class CommandRouter:
         try:
             self.app.engine.mode = PermissionMode(args[0])
         except ValueError:
-            self.console.print("[red]modes: plan, ask, auto_edit, trusted, unsafe[/red]")
+            self.console.print("[red]modes: plan, ask, auto_edit, trusted, auto[/red]")
             return
         if self.app.engine.unsafe:
             self.console.print(
-                "[bold white on red] UNSAFE [/bold white on red] [red]approval prompts are off; "
-                "sudo and outside-project paths stay denied; /mode ask turns prompts on[/red]"
+                "[bold black on #ffd21f] AUTO [/bold black on #ffd21f] [#ffd21f]approval prompts "
+                "are off; elevated commands and outside-project paths stay off-limits; "
+                "/mode ask turns prompts on[/#ffd21f]"
             )
         else:
             self.console.print(f"mode set to [bold]{self.app.engine.mode.value}[/bold]")
@@ -238,7 +239,7 @@ class CommandRouter:
     async def _permissions(self, args: list[str]) -> None:
         title = f"Permissions — mode {self.app.engine.mode.value}"
         if self.app.engine.unsafe:
-            title += "  [bold white on red] UNSAFE [/bold white on red]"
+            title += "  [bold black on #ffd21f] AUTO [/bold black on #ffd21f]"
         t = Table(title=title)
         t.add_column("Operation")
         t.add_column("Policy")

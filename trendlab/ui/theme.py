@@ -28,7 +28,7 @@ RICH_THEME = Theme(
         "ok": f"bold {NEON}",
         "warning": f"bold {AMBER}",
         "danger": f"bold {RED}",
-        "unsafe": f"bold white on {RED}",
+        "auto": f"bold black on {AMBER}",
         "user": f"bold {MINT}",
         "tool": NEON_DIM,
         "rule.line": NEON_DIM,

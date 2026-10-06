@@ -262,7 +262,7 @@ class ToolRuntime:
                     return self._skip(
                         ToolCall(id="", name=tool.name, arguments={}),
                         "checkpoint_failed",
-                        f"BLOCKED: checkpoint failed in UNSAFE mode ({exc})",
+                        f"BLOCKED: checkpoint failed in AUTO mode ({exc})",
                         detail=", ".join(perm.affected_files),
                     )
         try:

@@ -41,7 +41,7 @@ another device.
 | **Any model** | Anthropic (official SDK, adaptive thinking, prompt caching), OpenAI-compatible endpoints, Ollama. Role routing sends research to a cheap model and review to a strong one. Provider fallback on infrastructure failures. |
 | **Real editing** | Exact-text `patch_file`, unified-diff `apply_patch` (multi-file, all-or-nothing), atomic writes with hash conflict protection, automatic checkpoints and `/undo`. |
 | **Long sessions** | Repository map, token budgeting, structured compaction, SQLite persistence, resume in place. |
-| **Safety that survives autonomy** | `sudo` and paths outside the project are denied in every mode. Destructive commands keep a prompt. Writes that look like secrets are blocked. Everything is logged with secrets redacted. |
+| **Safety that survives autonomy** | `sudo` and paths outside the project are denied in every mode. Irreversible commands keep a prompt. Writes that look like secrets are blocked. Everything is logged with secrets redacted. |
 | **Git and GitHub** | `/commit` writes the message from the diff, `/pr` pushes a branch and opens a pull request through `gh`, `/issue N` pulls an issue into the conversation (the PR closes it), `/worktree` runs a task on a throwaway checkout. |
 | **Looks things up** | `web_search` and `web_fetch` tools (network category, so they prompt in ask mode) for docs, changelogs and error sources. |
 | **Sandboxed shell** | Commands run under bubblewrap: read-only system, writable project, private `/tmp`, no network unless the command is a network or package tool. Defence in depth under the permission engine. |
@@ -101,7 +101,7 @@ precedence if set.
 trendlab                                   # full-screen TUI, default model from config
 trendlab --plain                           # Rich REPL instead of the TUI
 trendlab -m anthropic:claude-opus-5        # pick provider:model for this session
-trendlab --safe                            # approval prompts on (the default mode is unsafe)
+trendlab --safe                            # approval prompts on (the default mode is auto)
 trendlab -p "Run the tests and fix failures" --output json    # headless, for CI
 trendlab --resume latest                   # continue the last session in this project
 trendlab --worktree spike                  # work on a throwaway git worktree + branch trendlab/spike
@@ -183,8 +183,8 @@ that cancels stale approvals instead of executing them. Details in the
 
 | Mode | Behaviour |
 |---|---|
-| `unsafe` (default) | No prompts. `sudo` and outside-project paths denied; destructive commands still ask; every auto-approval audited; pre-edit checkpoint mandatory. |
-| `trusted` | Ordinary project operations run; network, deletes and destructive commands ask. |
+| `auto` (default) | No prompts. `sudo` and outside-project paths stay off-limits; irreversible commands still ask; every auto-approval audited; pre-edit checkpoint mandatory. |
+| `trusted` | Ordinary project operations run; network, deletes and irreversible commands ask. |
 | `auto_edit` | File edits run; shell, installs, network and deletes ask. |
 | `ask` | Edits and risky commands ask. |
 | `plan` | Read-only. |

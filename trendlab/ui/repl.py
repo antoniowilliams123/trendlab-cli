@@ -71,7 +71,7 @@ class Repl:
         )
         resumed = f" · [{GREY}]resumed[/]" if self.app.resumed else ""
         mode_label = (
-            "[unsafe] UNSAFE [/unsafe]"
+            "[auto] AUTO [/auto]"
             if self.app.engine.unsafe
             else f"[bold {NEON}]{self.app.engine.mode.value}[/]"
         )

@@ -46,18 +46,18 @@ def _version(value: bool) -> None:
 
 
 def unsafe_banner(allow_destructive: bool) -> str:
-    kept = "sudo and paths outside the project are still denied"
-    destructive = (
-        "destructive commands (rm -rf, git reset --hard, force-push) run WITHOUT asking"
+    kept = "elevated commands (sudo) and paths outside the project stay off-limits"
+    irreversible = (
+        "irreversible commands (rm -rf, git reset --hard, force-push) run without asking"
         if allow_destructive
-        else "destructive commands still ask at the terminal"
+        else "irreversible commands still ask at the terminal"
     )
     return (
-        f"[bold white on red] UNSAFE MODE [/bold white on red] [red]permissions are skipped for "
-        f"this session: edits, shell, installs, network and deletes run without approval; "
-        f"{destructive}; "
+        f"[bold black on #ffd21f] AUTO MODE [/bold black on #ffd21f] [#ffd21f]no approval prompts "
+        f"this session: edits, shell, installs, network and deletes run without asking; "
+        f"{irreversible}; "
         f"{kept}. Every auto-approved operation is logged; /undo restores the pre-edit checkpoint. "
-        f'Turn prompts on with --safe, /mode ask, or permission_mode = "ask" in config.[/red]'
+        f'Turn prompts on with --safe, /mode ask, or permission_mode = "ask" in config.[/#ffd21f]'
     )
 
 
@@ -111,11 +111,11 @@ def main_callback(
     ),
     dangerously_skip_permissions: bool = typer.Option(
         False,
+        "--auto",
         "--dangerously-skip-permissions",
-        help="UNSAFE (the default): run edits, shell, installs, network and deletes without "
-        "asking. "
-        "sudo and paths outside the project stay denied; destructive commands still ask unless "
-        "--allow-destructive. Use --safe to turn prompts on for this session.",
+        help="AUTO mode (the default): run edits, shell, installs, network and deletes without "
+        "asking. Elevated commands and paths outside the project stay off-limits; irreversible "
+        "commands still ask unless --allow-irreversible. --safe turns prompts on.",
     ),
     safe: bool = typer.Option(
         False, "--safe", help="Shortcut for --mode ask (approval prompts on)."
@@ -134,8 +134,9 @@ def main_callback(
     ),
     allow_destructive: bool = typer.Option(
         False,
+        "--allow-irreversible",
         "--allow-destructive",
-        help="In unsafe mode: also run rm -rf / destructive git without asking.",
+        help="In auto mode: also run rm -rf / history-rewriting git without asking.",
     ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -161,7 +162,7 @@ def main_callback(
         config.telegram_bridge.enabled = True
     if allow_destructive and effective != PermissionMode.UNSAFE:
         console.print(
-            "[red]--allow-destructive only applies in unsafe mode "
+            "[red]--allow-irreversible only applies in auto mode "
             "(the default, or --dangerously-skip-permissions)[/red]"
         )
         raise typer.Exit(2)
@@ -613,8 +614,8 @@ def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> N
             "mode",
             f"{config.defaults.permission_mode.value}"
             + (
-                " (UNSAFE: no prompts; --safe turns them on)"
-                if config.defaults.permission_mode.value == "unsafe"
+                " (AUTO: no prompts; --safe turns them on)"
+                if config.defaults.permission_mode == PermissionMode.AUTO
                 else ""
             ),
         )
