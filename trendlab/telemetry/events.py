@@ -69,6 +69,7 @@ class EventType(StrEnum):
     TOOL_REQUESTED = "tool.requested"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
+    TOOL_SKIPPED = "tool.skipped"  # denied / invalid / unknown / blocked: never ran
     FILE_CHANGED = "file.changed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"

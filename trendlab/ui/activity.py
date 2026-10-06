@@ -1,0 +1,166 @@
+"""One renderer for agent activity lines, shared by the TUI and the plain REPL (spec §91.1).
+
+Every tool attempt leaves a visible trace — started, finished (with a preview of what came
+back), or skipped (denied, invalid arguments, unknown tool, blocked by a hook, not approved) —
+so the person always sees what the agent did and why something did not happen. Returned strings
+are Rich markup in the neon theme.
+"""
+
+from __future__ import annotations
+
+from rich.markup import escape
+
+from trendlab.telemetry.events import Event, EventType
+from trendlab.ui.theme import GREY, MINT, NEON, NEON_DIM, RED
+
+AMBER = "#ffd21f"
+
+_SKIP_LABEL = {
+    "denied": "⛔ denied",
+    "not_approved": "⛔ not approved",
+    "invalid_args": "⚠ invalid arguments",
+    "unknown_tool": "⚠ unknown tool",
+    "malformed": "⚠ malformed call",
+    "hook_blocked": "⛔ blocked by hook",
+    "plan_rejected": "⛔ plan rejected",
+    "checkpoint_failed": "⛔ checkpoint failed",
+}
+
+
+def _short(text: str | None, limit: int = 110) -> str:
+    text = (text or "").strip().replace("\n", " ⏎ ")
+    return escape(text if len(text) <= limit else text[: limit - 1] + "…")
+
+
+def format_event(event: Event) -> str | None:
+    """Rich-markup line for an activity event, or None when the UI should not print it."""
+    d = event.data
+    t = event.type
+    if t == EventType.TOOL_STARTED:
+        detail = d.get("detail") or d.get("command") or ", ".join(d.get("files") or [])
+        head = f"[{NEON_DIM}]●[/] [{NEON}]{escape(str(d.get('summary') or d.get('tool')))}[/]"
+        return head + (f"  [{GREY}]{_short(detail)}[/]" if detail else "")
+    if t == EventType.TOOL_COMPLETED:
+        ms = d.get("duration_ms", 0)
+        if d.get("ok"):
+            extra = ""
+            lines = d.get("lines")
+            if lines:
+                extra = f" · {lines} line{'s' if lines != 1 else ''}"
+            preview = d.get("preview")
+            tail = f"\n    [{GREY}]{_short(preview, 140)}[/]" if preview else ""
+            return (
+                f"  [bold {NEON}]✓[/] [{NEON_DIM}]{d.get('tool')}[/] [{GREY}]{ms} ms{extra}[/]"
+                + tail
+            )
+        err = d.get("error") or ""
+        code = d.get("exit_code")
+        code_txt = f" · exit {code}" if code not in (None, 0) else ""
+        return f"  [bold {RED}]✗[/] [{NEON_DIM}]{d.get('tool')}[/] [{GREY}]{ms} ms{code_txt}[/]" + (
+            f"\n    [{RED}]{_short(err, 160)}[/]" if err else ""
+        )
+    if t == EventType.TOOL_SKIPPED:
+        label = _SKIP_LABEL.get(str(d.get("reason")), "⚠ skipped")
+        what = d.get("detail") or d.get("command") or ""
+        return (
+            f"  [bold {RED}]{label}[/] [{NEON_DIM}]{escape(str(d.get('tool')))}[/]"
+            + (f" [{GREY}]{_short(what)}[/]" if what else "")
+            + (f"\n    [{GREY}]{_short(d.get('message'), 160)}[/]" if d.get("message") else "")
+        )
+    if t == EventType.DIAGNOSTICS:
+        report = str(d.get("report") or "")
+        body = [ln for ln in report.splitlines()[1:] if ln.strip()][:3]
+        shown = "\n".join(f"    [{GREY}]{_short(ln, 140)}[/]" for ln in body)
+        return (
+            f"  [{AMBER}]✎ diagnostics after edit[/] [{GREY}]{', '.join(d.get('files') or [])}[/]"
+            + ("\n" + shown if shown else "")
+        )
+    if t == EventType.TOOLS_PARALLEL:
+        return f"[{GREY}]⇉ {d.get('count')} read-only tools in parallel[/]"
+    if t == EventType.PERMISSION_REQUESTED:
+        return None  # the approval event that follows carries the useful text
+    if t == EventType.APPROVAL_REQUESTED:
+        return f"[bold {AMBER}]⏳ waiting for approval[/] [{NEON_DIM}]{_short(d.get('summary'))}[/]"
+    if t == EventType.APPROVAL_APPROVED:
+        where = {"web": "from the phone", "telegram": "from Telegram"}.get(
+            str(d.get("channel")), "at the keyboard"
+        )
+        return f"[bold {NEON}]✓ approved {where}[/] [{GREY}]— continuing[/]"
+    if t == EventType.APPROVAL_DENIED:
+        where = {"web": "from the phone", "telegram": "from Telegram"}.get(
+            str(d.get("channel")), "at the keyboard"
+        )
+        return f"[bold {RED}]✗ denied {where}[/]"
+    if t == EventType.APPROVAL_EXPIRED:
+        return f"[bold {AMBER}]⌛ approval expired[/]"
+    if t == EventType.SECRET_WRITE_BLOCKED:
+        return f"[bold {RED}]⛔ blocked a write that looked like a secret[/] [{GREY}]{escape(str(d.get('files')))}[/]"
+    if t == EventType.CONTEXT_COMPACTED:
+        return (
+            f"[{AMBER}]⇅ compacted {d.get('messages_compacted')} messages[/] "
+            f"[{GREY}]{d.get('tokens_before')} → {d.get('tokens_after')} tokens[/]"
+        )
+    if t == EventType.RECOVERY:
+        failure = str(d.get("failure") or "")
+        if failure == "TOOL_CALL_AS_TEXT":
+            return (
+                f"[{AMBER}]↳ the model wrote a tool call as text — running it:[/] "
+                f"[{GREY}]{', '.join(d.get('tools') or [])}[/]"
+            )
+        if failure == "UNVERIFIED_COMPLETION":
+            return f"[{AMBER}]✎ asked the model to validate its work before finishing[/]"
+        if d.get("action") == "compact":
+            return f"[{AMBER}]⇅ context overflow — compacting and retrying[/]"
+        if d.get("action") == "escalate":
+            return f"[{AMBER}]⤴ no progress — escalating to {d.get('to_model')}[/]"
+        return f"[{AMBER}]{escape(failure.lower().replace('_', ' '))}[/] [{GREY}]{_short(d.get('error') or d.get('action'), 120)}[/]"
+    if t == EventType.LOOP_DETECTED:
+        return f"[{AMBER}]↻ loop detected[/] [{GREY}]{_short(d.get('reason'), 120)} → {d.get('action')}[/]"
+    if t == EventType.BUDGET_WARNING:
+        return f"[{AMBER}]$ budget warning[/] [{GREY}]${d.get('total_usd')} of ${d.get('limit')}[/]"
+    if t == EventType.PROVIDER_FALLBACK:
+        return f"[{AMBER}]⤳ provider fallback[/] [{GREY}]{d.get('from')} → {d.get('to')}: {_short(d.get('error'), 100)}[/]"
+    if t == EventType.STEERED:
+        return f"[bold {MINT}]↳ steering applied[/]"
+    if t == EventType.PATHS_TRANSLATED:
+        return f"[{GREY}]↳ translated {d.get('count')} Windows path(s) to WSL paths[/]"
+    if t == EventType.REMOTE_MESSAGE:
+        return f"[bold {MINT}]📱 Telegram ❯[/] [{MINT}]{escape(str(d.get('text')))}[/]"
+    if t == EventType.REMOTE_CHANNEL_STARTED and d.get("channel") == "telegram-bridge":
+        return f"[bold {NEON}]📱 Telegram remote control on[/] [{GREY}]chat {d.get('chat_id')}[/]"
+    if t == EventType.PLAN_GATE_REQUESTED:
+        return f"[bold {AMBER}]⏸ plan gate: waiting for your go-ahead before the first change[/]"
+    if t == EventType.PLAN_APPROVED:
+        return f"[bold {NEON}]▶ plan approved[/] [{GREY}]via {d.get('via')}[/]"
+    if t == EventType.PLAN_REJECTED:
+        return f"[bold {RED}]■ plan rejected[/] [{GREY}]{_short(d.get('reason'), 120)}[/]"
+    if t == EventType.SESSION_BRANCHED:
+        return f"[{GREY}]⑂ branched → {d.get('child')}[/]"
+    if t == EventType.FILES_ATTACHED:
+        return f"[{GREY}]📎 attached {', '.join(d.get('files') or [])}[/]"
+    if t == EventType.IMAGES_ATTACHED:
+        return f"[{GREY}]🖼 attached {', '.join(d.get('images') or [])}[/]"
+    return None
+
+
+def run_footer(result) -> str:
+    """One quiet line under an answer: outcome, calls, time, cost, changed files, validation."""
+    glyph = {"COMPLETED": f"[bold {NEON}]✓ done[/]", "CANCELED": f"[{AMBER}]■ canceled[/]"}.get(
+        result.status, f"[bold {RED}]✗ stopped[/]"
+    )
+    parts = [glyph]
+    if result.status != "COMPLETED" and result.stop_reason:
+        parts.append(f"[{AMBER}]{escape(str(result.stop_reason))}[/]")
+    parts.append(
+        f"[{GREY}]{result.model_calls} calls · {result.elapsed_s:.0f}s · ${result.cost_usd:.3f}[/]"
+    )
+    if result.changed_files:
+        files = result.changed_files
+        shown = ", ".join(files[:4]) + (f" +{len(files) - 4}" if len(files) > 4 else "")
+        parts.append(f"[{NEON_DIM}]changed[/] [{GREY}]{escape(shown)}[/]")
+        if result.validation_runs:
+            ok = all(r.get("ok") for r in result.validation_runs)
+            parts.append(f"[{NEON if ok else RED}]validated {'✓' if ok else '✗'}[/]")
+        else:
+            parts.append(f"[{AMBER}]not validated[/]")
+    return "  ".join(parts)

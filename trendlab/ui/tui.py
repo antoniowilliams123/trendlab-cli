@@ -35,6 +35,7 @@ from trendlab.approvals.models import (
 from trendlab.config.schema import AppConfig, PermissionMode
 from trendlab.providers.catalog import ModelChoice
 from trendlab.telemetry.events import Event, EventType
+from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
 from trendlab.ui.file_refs import FileIndex, current_at_token
@@ -430,6 +431,7 @@ class FilePicker(OptionList):
 class TrendLabTUI(App[None]):
     TITLE = PRODUCT_NAME
     CSS = TUI_CSS
+    ENABLE_COMMAND_PALETTE = False  # Textual's own palette (themes, screenshots) is not ours
     BINDINGS = [
         Binding("ctrl+c", "cancel_or_quit", "cancel / quit", priority=True),
         Binding("escape", "interrupt", "interrupt", priority=True),
@@ -484,7 +486,11 @@ class TrendLabTUI(App[None]):
         picker.border_title = "@ files"
         yield picker
         yield PromptInput(
-            id="input", show_line_numbers=False, soft_wrap=True, tab_behavior="indent"
+            id="input",
+            show_line_numbers=False,
+            soft_wrap=True,
+            tab_behavior="indent",
+            placeholder="type a task · / commands · @ files · Ctrl+↑↓ history · Esc interrupts",
         )
         yield Footer()
 
@@ -702,73 +708,30 @@ class TrendLabTUI(App[None]):
     def _handle_event(self, event: Event) -> None:
         d = event.data
         t = event.type
-        if t == EventType.TOOL_STARTED:
-            self.log_line(f"[{NEON_DIM}]●[/] [{NEON}]{d.get('summary')}[/]")
-        elif t == EventType.TOOL_COMPLETED:
-            mark = f"[bold {NEON}]✓[/]" if d.get("ok") else f"[bold {RED}]✗[/]"
-            self.log_line(
-                f"  {mark} [{NEON_DIM}]{d.get('tool')}[/] [{GREY}]{d.get('duration_ms')} ms[/]"
-            )
-        elif t == EventType.FILE_CHANGED and d.get("diff"):
+        if t == EventType.FILE_CHANGED and d.get("diff"):
             self.log_line(render_diff(d["diff"], title=", ".join(d.get("files", []))))
-        elif t == EventType.PLAN_UPDATED:
+            return
+        if t == EventType.PLAN_UPDATED:
             self._refresh_plan()
-        elif t == EventType.APPROVAL_REQUESTED:
-            self.log_line(
-                f"[bold #ffd21f]⏳ Waiting for approval[/] [{NEON_DIM}]{d.get('summary')}[/]"
-            )
-        elif t == EventType.APPROVAL_APPROVED:
-            where = "remotely" if d.get("channel") == "web" else "locally"
-            self.log_line(f"[bold {NEON}]✓ Approved {where}[/] [{GREY}]— continuing…[/]")
-        elif t == EventType.APPROVAL_DENIED:
-            where = "remotely" if d.get("channel") == "web" else "locally"
-            self.log_line(f"[bold {RED}]✗ Denied {where}[/]")
-        elif t == EventType.APPROVAL_EXPIRED:
-            self.log_line("[bold #ffd21f]⌛ Approval expired[/]")
-        elif t == EventType.SECRET_WRITE_BLOCKED:
-            self.log_line(
-                f"[bold {RED}]⛔ blocked a write that looked like a secret[/] "
-                f"[{GREY}]{d.get('files')}[/]"
-            )
-        elif t == EventType.RECOVERY and d.get("failure") == "TOOL_CALL_AS_TEXT":
-            self.log_line(
-                f"[#ffd21f]↳ the model wrote a tool call as text — running it:[/] "
-                f"[{GREY}]{', '.join(d.get('tools', []))}[/]"
-            )
-        elif t == EventType.RECOVERY and d.get("failure") == "UNVERIFIED_COMPLETION":
-            self.log_line("[#ffd21f]✎ asked the model to validate its work before finishing[/]")
-        elif t == EventType.CONTEXT_COMPACTED:
-            self.log_line(
-                f"[#ffd21f]⇅ compacted {d.get('messages_compacted')} messages[/] "
-                f"[{GREY}]{d.get('tokens_before')} → {d.get('tokens_after')} tokens[/]"
-            )
-        elif t in {
-            EventType.LOOP_DETECTED,
-            EventType.BUDGET_WARNING,
-            EventType.PROVIDER_FALLBACK,
-            EventType.RECOVERY,
-        }:
-            self.log_line(
-                f"[#ffd21f]{t.value}[/] "
-                f"[{GREY}]{d.get('reason') or d.get('error') or d.get('action') or ''}[/]"
-            )
-        elif t == EventType.STEERED:
-            self.log_line(f"[bold {MINT}]↳ steering applied[/]")
-        elif t == EventType.PATHS_TRANSLATED:
-            self.log_line(f"[{GREY}]↳ translated {d.get('count')} Windows path(s) to WSL paths[/]")
-        elif t == EventType.REMOTE_MESSAGE:
-            self.log_line(f"[bold {MINT}]📱 Telegram ❯[/] [{MINT}]{d.get('text')}[/]")
-        elif t == EventType.REMOTE_CHANNEL_STARTED and d.get("channel") == "telegram-bridge":
-            self.log_line(
-                f"[bold {NEON}]📱 Telegram remote control on[/] [{GREY}]chat {d.get('chat_id')}[/]"
-            )
-        elif t == EventType.MODEL_CALL_STARTED:
+            return
+        if t == EventType.MODEL_CALL_STARTED:
             self._flush_stream()
-        elif (
+            return
+        if (
             t in {EventType.AGENT_STATE_CHANGED, EventType.COST_UPDATED}
             and d.get("role", "main") == "main"
         ):
             self._refresh_status()
+            return
+        if d.get("role", "main") != "main" and t in {
+            EventType.TOOL_STARTED,
+            EventType.TOOL_COMPLETED,
+            EventType.TOOL_SKIPPED,
+        }:
+            return  # sub-agent activity is summarised by the delegate tool's own line
+        line = format_event(event)
+        if line:
+            self.log_line(line)
 
     # -- approvals ---------------------------------------------------------------------------------
     def _present_approval(self, request: ApprovalRequest) -> None:
@@ -864,12 +827,13 @@ class TrendLabTUI(App[None]):
             self.log_line(f"[bold {RED}]error:[/] {exc}")
             return
         self._flush_stream()
-        if result.status == "COMPLETED":
-            self.log_line(Markdown(result.report))
-        else:
-            self.log_line(Text(result.report, style="#ffd21f"))
+        if result.text.strip():
+            self.log_line(Markdown(result.text))
+        self.log_line(run_footer(result))
         self._refresh_header()
         self._refresh_plan()
+        if self._started_at and time.monotonic() - self._started_at > 8:
+            self.bell()  # long task finished: a nudge if you are in another window
 
     def action_interrupt(self) -> None:
         """Esc: close an open picker, else stop the current step; the conversation stays."""

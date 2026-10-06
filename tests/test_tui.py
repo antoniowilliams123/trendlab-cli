@@ -49,7 +49,7 @@ async def test_tui_runs_a_prompt_and_slash_commands(project: Path, _trendlab_hom
                 break
         await pilot.pause()
         text = "\n".join(str(line) for line in log.lines)
-        assert "hello from the tui" in text and "Completed" in text
+        assert "hello from the tui" in text and "✓ done" in text
 
 
 async def test_tui_approval_modal_approves_and_continues(project: Path, _trendlab_home: Path):
@@ -85,7 +85,7 @@ async def test_tui_approval_modal_approves_and_continues(project: Path, _trendla
         await pilot.pause()
         assert (project / "t.py").read_text() == "ok\n"
         text = "\n".join(str(line) for line in tui.query_one("#transcript", RichLog).lines)
-        assert "Approved locally" in text
+        assert "approved at the keyboard" in text
 
 
 async def test_tui_question_modal_answers(project: Path, _trendlab_home: Path):

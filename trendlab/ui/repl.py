@@ -9,6 +9,7 @@ from rich.markdown import Markdown
 
 from trendlab import __version__
 from trendlab.app import TrendLabApp
+from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.prompt_rules import continues_line
 from trendlab.ui.theme import BANNER, GREY, MINT, NEON
@@ -125,13 +126,16 @@ class Repl:
                 reader.cancel()
             self._current = None
         self.console.print()
-        self.console.print(
-            Markdown(result.report) if result.status == "COMPLETED" else result.report
-        )
+        if result.text.strip():
+            self.console.print(Markdown(result.text))
+        self.console.print(run_footer(result), highlight=False)
 
     def _on_event(self, event) -> None:
-        if event.type.value == "remote.message":
-            self.console.print(f"[bold {MINT}]📱 Telegram ❯[/] {event.data.get('text')}")
+        if event.data.get("role", "main") != "main" and event.type.value.startswith("tool."):
+            return
+        line = format_event(event)
+        if line:
+            self.console.print(line, highlight=False)
 
     def cancel_current(self) -> bool:
         if self._current is not None and not self._current.done():

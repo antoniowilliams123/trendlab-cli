@@ -207,7 +207,7 @@ async def test_tui_approval_diff_is_scrollable(project: Path, _trendlab_home: Pa
                 break
         assert (project / "big.txt").read_text() == body
         log = tui.query_one("#transcript", RichLog)
-        assert "Completed" in "\n".join(str(line) for line in log.lines)
+        assert "✓ done" in "\n".join(str(line) for line in log.lines)
 
 
 # -- background processes --------------------------------------------------------------------------

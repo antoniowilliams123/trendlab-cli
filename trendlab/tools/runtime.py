@@ -58,28 +58,37 @@ class ToolRuntime:
             call_id=call.id,
         )
         if call.name == "_malformed":
-            return ToolResult(
-                ok=False,
-                output="MALFORMED TOOL CALL: "
+            return self._skip(
+                call,
+                "malformed",
+                "MALFORMED TOOL CALL: "
                 + str(call.arguments.get("error"))
                 + ". Reply with a valid call; available tools: "
                 + ", ".join(self.registry.names()),
             )
         if "_malformed_json" in call.arguments:
-            return ToolResult(
-                ok=False,
-                output=f"MALFORMED TOOL CALL: arguments for {call.name} were not valid JSON. "
+            return self._skip(
+                call,
+                "malformed",
+                f"MALFORMED TOOL CALL: arguments for {call.name} were not valid JSON. "
                 "Resend the call with corrected arguments.",
             )
         if tool is None:
-            return ToolResult(
-                ok=False,
-                output=f"unknown tool: {call.name}; available: " + ", ".join(self.registry.names()),
+            return self._skip(
+                call,
+                "unknown_tool",
+                f"unknown tool: {call.name}; available: " + ", ".join(self.registry.names()),
             )
         try:
             args = tool.parse(call.arguments)
         except ValidationError as exc:
-            return ToolResult(ok=False, output=f"invalid arguments for {call.name}: {exc.errors()}")
+            missing = [".".join(str(x) for x in e.get("loc", ())) for e in exc.errors()][:4]
+            return self._skip(
+                call,
+                "invalid_args",
+                f"invalid arguments for {call.name}: {exc.errors()}",
+                detail="bad/missing: " + ", ".join(missing),
+            )
 
         perm = tool.permission(args, self.ctx)
         verdict = self.engine.evaluate(perm)
@@ -98,23 +107,58 @@ class ToolRuntime:
             files=perm.affected_files,
         )
         if verdict.decision == Decision.DENY:
-            return ToolResult(
-                ok=False,
-                output=f"DENIED: {verdict.reason}",
+            return self._skip(
+                call,
+                "denied",
+                f"DENIED: {verdict.reason}",
+                detail=_detail(tool.name, call.arguments, perm),
                 data={"denied": True, "category": perm.category.value},
             )
         if verdict.decision == Decision.ASK:
             granted = await self._ask(perm)
             if granted is not None:
+                self.events.emit(
+                    EventType.TOOL_SKIPPED,
+                    session_id=self.ctx.session_id,
+                    tool=call.name,
+                    reason="not_approved",
+                    detail=_detail(tool.name, call.arguments, perm),
+                    message=granted.output[:300],
+                )
                 return granted
         if self.hooks is not None:
             blocked = await self.hooks.before_tool(tool.name, perm)
             if blocked:
-                return ToolResult(ok=False, output=f"BLOCKED by hook: {blocked}")
+                return self._skip(
+                    call,
+                    "hook_blocked",
+                    f"BLOCKED by hook: {blocked}",
+                    detail=_detail(tool.name, call.arguments, perm),
+                )
         result = await self._run(tool, args, perm)
         if self.hooks is not None:
             await self.hooks.after_tool(tool.name, perm, result)
         return result
+
+    def _skip(
+        self,
+        call: ToolCall,
+        reason: str,
+        message: str,
+        *,
+        detail: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        """A call that never ran: tell the model why, and show the person (tool.skipped)."""
+        self.events.emit(
+            EventType.TOOL_SKIPPED,
+            session_id=self.ctx.session_id,
+            tool=call.name,
+            reason=reason,
+            detail=detail,
+            message=message[:300],
+        )
+        return ToolResult(ok=False, output=message, data=data or {})
 
     async def _ask(self, perm: PermissionRequest) -> ToolResult | None:
         """Resolve an ASK verdict. Returns a ToolResult to short-circuit, or None to proceed."""
@@ -173,6 +217,9 @@ class ToolRuntime:
             session_id=self.ctx.session_id,
             tool=tool.name,
             summary=perm.summary,
+            detail=_detail(tool.name, args.model_dump(), perm),
+            command=perm.command,
+            files=list(perm.affected_files),
         )
         if tool.name in MUTATING_TOOLS and perm.preview and not perm.preview.startswith("("):
             findings = find_secrets(perm.preview)
@@ -197,17 +244,22 @@ class ToolRuntime:
             try:
                 await self.on_before_mutation(list(perm.affected_files))
             except PlanRejected as exc:
-                return ToolResult(
-                    ok=False,
-                    output=f"PLAN REJECTED by the user: {exc.reason}. Make no changes; "
+                return self._skip(
+                    ToolCall(id="", name=tool.name, arguments={}),
+                    "plan_rejected",
+                    f"PLAN REJECTED by the user: {exc.reason}. Make no changes; "
                     "stop and explain what you would adjust.",
+                    detail=", ".join(perm.affected_files),
                     data={"plan_rejected": True, "reason": exc.reason},
                 )
             except Exception as exc:  # noqa: BLE001
                 if self.engine.unsafe:
                     # In UNSAFE mode the checkpoint is the only safety net, so it is mandatory.
-                    return ToolResult(
-                        ok=False, output=f"BLOCKED: checkpoint failed in UNSAFE mode ({exc})"
+                    return self._skip(
+                        ToolCall(id="", name=tool.name, arguments={}),
+                        "checkpoint_failed",
+                        f"BLOCKED: checkpoint failed in UNSAFE mode ({exc})",
+                        detail=", ".join(perm.affected_files),
                     )
         try:
             result = await tool.run(args, self.ctx)
@@ -215,12 +267,18 @@ class ToolRuntime:
             result = ToolResult(ok=False, output=f"DENIED: {exc}")
         except Exception as exc:  # noqa: BLE001 — surface as observation, not crash
             result = ToolResult(ok=False, output=f"tool error: {exc.__class__.__name__}: {exc}")
+        out_lines = [ln for ln in (result.output or "").splitlines() if ln.strip()]
         self.events.emit(
             EventType.TOOL_COMPLETED,
             session_id=self.ctx.session_id,
             tool=tool.name,
             ok=result.ok,
             duration_ms=int((time.monotonic() - started) * 1000),
+            lines=len(out_lines),
+            preview=(" ⏎ ".join(out_lines[:2]))[:200]
+            if result.ok and tool.name != "read_file"
+            else "",
+            error=(out_lines[0] if out_lines else "")[:300] if not result.ok else "",
             **{k: v for k, v in result.data.items() if k in {"exit_code", "sha256"}},
         )
         if result.ok and tool.name in MUTATING_TOOLS:
@@ -269,3 +327,23 @@ class ToolRuntime:
 
     def describe(self) -> dict[str, Any]:
         return {"tools": self.registry.names(), "mode": self.engine.mode.value}
+
+
+def _detail(tool: str, args: dict[str, Any], perm: PermissionRequest | None = None) -> str:
+    """Short human detail for an activity line: the command, path, pattern, query or question."""
+    if perm is not None and perm.command:
+        return f"$ {perm.command}"
+    for key in ("command", "path", "pattern", "query", "url", "question", "action", "name"):
+        val = args.get(key)
+        if isinstance(val, str) and val.strip():
+            if key == "command":
+                return f"$ {val}"
+            if tool == "background_process" and key == "action":
+                return f"{val} {args.get('command') or args.get('id') or ''}".strip()
+            if tool == "task":
+                titles = args.get("titles") or []
+                return f"{val} {', '.join(titles[:3])}".strip() if titles else val
+            return val
+    if perm is not None and perm.affected_files:
+        return ", ".join(perm.affected_files[:3])
+    return ""
