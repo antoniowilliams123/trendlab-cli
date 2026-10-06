@@ -25,6 +25,7 @@ from trendlab.ui.tui import PromptInput, TrendLabTUI
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "screenshots"
+SUFFIX = "_v020"  # bump when wording changes so every cache (browser, proxy, GitHub) sees a new URL
 
 
 def make_tui() -> TrendLabTUI:
@@ -69,8 +70,10 @@ def make_tui() -> TrendLabTUI:
 def save(tui: TrendLabTUI, name: str, title: str) -> None:
     svg = tui.export_screenshot(title=title)
     svg = re.sub(r"font-family:[^;\"]+", "font-family: DejaVu Sans Mono, monospace", svg)
-    cairosvg.svg2png(bytestring=svg.encode(), write_to=str(OUT / f"{name}.png"), output_width=1400)
-    print("wrote", OUT / f"{name}.png")
+    cairosvg.svg2png(
+        bytestring=svg.encode(), write_to=str(OUT / f"{name}{SUFFIX}.png"), output_width=1400
+    )
+    print("wrote", OUT / f"{name}{SUFFIX}.png")
 
 
 async def transcript(size: tuple[int, int], name: str) -> None:

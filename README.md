@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/screenshots/transcript_activity.png" alt="TrendLab CLI — the full-screen TUI: every tool call visible with what ran, what came back, and why a call was refused" width="920">
+  <img src="docs/screenshots/transcript_activity_v020.png" alt="TrendLab CLI — the full-screen TUI: every tool call visible with what ran, what came back, and why a call was refused" width="920">
 </p>
 
 <h1 align="center">TrendLab CLI</h1>
@@ -57,27 +57,27 @@ another device.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/tui-approval.png" alt="Approval modal with the proposed diff inline" width="920">
+  <img src="docs/screenshots/tui-approval_v020.png" alt="Approval modal with the proposed diff inline" width="920">
   <br><sub>An approval request: the exact diff, risk level, expiry, and one-key decisions. The same request is waiting on your phone.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/transcript_activity.png" alt="Transcript: every tool call with its command, output preview, and reasons for denied or invalid calls" width="920">
+  <img src="docs/screenshots/transcript_activity_v020.png" alt="Transcript: every tool call with its command, output preview, and reasons for denied or invalid calls" width="920">
   <br><sub>Every tool call shows what ran and what came back. A denied sudo and an invalid edit are visible with their reasons instead of disappearing.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/slash_menu.png" alt="Slash-command menu" width="920">
+  <img src="docs/screenshots/slash_menu_v020.png" alt="Slash-command menu" width="920">
   <br><sub>Type / and pick a command; Tab or Enter completes it. Ctrl+↑/↓ recall earlier prompts.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/model_picker.png" alt="Model picker: F5 or /model" width="920">
+  <img src="docs/screenshots/model_picker_v020.png" alt="Model picker: F5 or /model" width="920">
   <br><sub>F5 switches models: every model you can use, where it runs, context size, price, and whether its key is in place. Type to filter, Enter to switch, the conversation stays.</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/tui-idle.png" alt="Idle TUI" width="920">
+  <img src="docs/screenshots/tui-idle_v020.png" alt="Idle TUI" width="920">
   <br><sub>Jet-black, neon-green, nothing else. Plan panel, live streaming pane, status bar with context size and running cost.</sub>
 </p>
 
