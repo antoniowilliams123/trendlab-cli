@@ -23,7 +23,7 @@ from trendlab.agent.recovery import (
     classify_provider_error,
     recovery_for,
 )
-from trendlab.agent.rescue import rescue_text_tool_calls
+from trendlab.agent.rescue import prose_outside_calls, rescue_text_tool_calls
 from trendlab.agent.state import AgentState, AgentStateMachine
 from trendlab.agent.tasks import Plan
 from trendlab.config.schema import LimitsConfig
@@ -245,7 +245,12 @@ class AgentRuntime:
                             action="rescued",
                             tools=[c.name for c in rescued],
                         )
-                        response = response.model_copy(update={"tool_calls": rescued, "text": ""})
+                        response = response.model_copy(
+                            update={
+                                "tool_calls": rescued,
+                                "text": prose_outside_calls(response.text)[:2000],
+                            }
+                        )
                 if response.tool_calls:
                     self._append(_assistant_message(response))
                     if response.text and self.on_token is None:

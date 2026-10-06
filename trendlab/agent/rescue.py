@@ -108,6 +108,27 @@ def rescue_text_tool_calls(text: str | None, known_tools: list[str]) -> list[Too
     if fenced:
         outside = _FENCE.sub("", text)
         prose += outside
-    if len(prose.strip()) > MAX_PROSE_CHARS:
+    if len(prose.strip()) > MAX_PROSE_CHARS and not _ends_with_fenced_call(text):
         return []
     return calls
+
+
+def _ends_with_fenced_call(text: str) -> bool:
+    """The message closes with a fenced JSON block: the model announced the call, then wrote it.
+
+    ("I need to use git_log. Here is the command: ```json {...}```") — common with local models,
+    and still a call rather than an explanation that merely quotes JSON mid-sentence.
+    """
+    stripped = text.rstrip()
+    if not stripped.endswith("```"):
+        return False
+    last = list(_FENCE.finditer(text))
+    return bool(last) and text[last[-1].end() :].strip() == ""
+
+
+def prose_outside_calls(text: str) -> str:
+    """What the model said around a rescued call (kept as the assistant's visible text)."""
+    body = _FENCE.sub("", text or "")
+    for _value, start, end in sorted(_json_objects(body), key=lambda t: -t[1]):
+        body = body[:start] + body[end:]
+    return body.strip()

@@ -54,3 +54,25 @@ async def test_json_only_answer_is_nudged_then_real_answer_accepted(
     assert len(nudges) == 1
     ev = CompletionEvaluator()
     assert not ev.evaluate(EvidenceSummary([], [], Plan()), "{}", validation_available=False).accept
+
+
+def test_announced_action_is_nudged():
+    from trendlab.agent.evaluator import _announces_action
+
+    assert _announces_action(
+        "Since the directory is not a Git repository, I will use the `shell` function to list the files."
+    )
+    assert _announces_action("Let me check the file first.")
+    long_answer = "The 6 newest files are: a.pdf (Oct 5), b.pdf (Oct 4), c.pdf (Oct 3). " * 10
+    assert not _announces_action(long_answer + "I will check the rest later if needed.")
+    assert not _announces_action(
+        "I could not list the folder: permission denied. I will stop here."
+    )
+    assert not _announces_action("Done: 6 files listed above with dates.")
+    ev = CompletionEvaluator()
+    v = ev.evaluate(
+        EvidenceSummary([], [], Plan()),
+        "I will use the shell tool to list them.",
+        validation_available=False,
+    )
+    assert not v.accept and "announced an action" in v.nudge

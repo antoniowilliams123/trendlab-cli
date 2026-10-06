@@ -36,6 +36,7 @@ class TaskTool(Tool):
     def __init__(self, plan: Plan, events: EventBus) -> None:
         self.plan = plan
         self.events = events
+        self._replans = 0  # 'plan' calls while tasks were already open (weak-model loop guard)
 
     def permission(self, args: TaskInput, ctx: ToolContext) -> PermissionRequest:
         return PermissionRequest(
@@ -52,6 +53,18 @@ class TaskTool(Tool):
         if a == "plan":
             if not args.titles:
                 return ToolResult(ok=False, output="'plan' needs titles")
+            if plan.open:
+                self._replans += 1
+                if self._replans >= 2:
+                    return ToolResult(
+                        ok=False,
+                        output="A plan already exists and its tasks are open — do NOT re-plan. "
+                        "Work on the active task with the other tools, then action='complete' "
+                        "with evidence, or action='fail'/'block' with a reason. Current plan:\n"
+                        + plan.render(),
+                    )
+            else:
+                self._replans = 0
             plan.replace(args.titles)
             if plan.open:
                 plan.update(plan.open[0].id, status=TaskStatus.ACTIVE)

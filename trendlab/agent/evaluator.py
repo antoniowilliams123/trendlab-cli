@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +52,11 @@ class CompletionEvaluator:
                 "the reply is empty or just JSON/punctuation — answer in plain language "
                 "(what you found, or why you could not), or call a tool"
             )
+        elif _announces_action(final_text):
+            reasons.append(
+                "you announced an action ('I will use/run …') but did not call any tool — "
+                "call it now, or give the final answer"
+            )
         if ev.mutated and validation_available and not ev.validation_runs:
             reasons.append("files were changed but no validation (tests/lint) was run afterwards")
         elif ev.mutated and ev.last_validation and not ev.last_validation.get("ok"):
@@ -84,6 +90,27 @@ def _substantive(text: str) -> bool:
         except ValueError:
             pass
     return any(ch.isalnum() for ch in stripped)
+
+
+_ANNOUNCE = re.compile(
+    r"\b(?:i(?:'ll| will| am going to| need to| can| should)|let me|next,? i(?:'ll| will)?)\s+"
+    r"(?:now |then |first |just )?(?:use|run|call|execute|invoke|try|check|list|read|open|"
+    r"search|fetch|look)\b",
+    re.I,
+)
+
+
+def _announces_action(text: str) -> bool:
+    """A reply that promises a tool call instead of making one (weak-model tell).
+
+    Only fires on short replies that end with the promise; a long answer that happens to
+    contain "I will check" mid-report is an answer, not a stall.
+    """
+    stripped = (text or "").strip()
+    if len(stripped) > 600:
+        return False
+    tail = stripped[-300:]
+    return bool(_ANNOUNCE.search(tail)) and not _acknowledges_incomplete(stripped)
 
 
 def _acknowledges_incomplete(text: str) -> bool:

@@ -36,6 +36,28 @@ def test_rescue_shapes():
     assert rescue_text_tool_calls("", KNOWN) == [] and rescue_text_tool_calls(None, KNOWN) == []
 
 
+def test_rescue_announced_call_after_long_prose():
+    from trendlab.agent.rescue import prose_outside_calls
+
+    text = (
+        "To identify the 6 most recently modified files I would need modification dates. "
+        "The listing above has none, so I need to use list_directory with details. "
+        "Here is the command to run:\n\n```json\n"
+        '{"name": "list_directory", "arguments": {"path": "/home/tony/x"}}\n```'
+    )
+    calls = rescue_text_tool_calls(text, KNOWN)
+    assert [c.name for c in calls] == ["list_directory"]
+    assert prose_outside_calls(text).startswith("To identify") and "```" not in prose_outside_calls(
+        text
+    )
+    # Same prose but the JSON is quoted mid-sentence, with more text after it: an explanation.
+    quoted = (
+        text
+        + "\n\nThat is how the protocol works in general; let me know if you want me to run it."
+    )
+    assert rescue_text_tool_calls(quoted, KNOWN) == []
+
+
 async def test_runtime_executes_rescued_call(project: Path, manager_factory, events, recorder):
     mgr = manager_factory()
     provider = ScriptedProvider(

@@ -52,6 +52,20 @@ def create_provider(config: AppConfig, model_ref: str) -> ModelProvider:
         raise ProviderError(f"unknown provider type {pcfg.type!r}")
     is_ollama = pcfg.type == "ollama"
     native = info.supports_tools and pcfg.tool_calling != "structured"
+    if is_ollama:
+        from trendlab.providers.ollama_provider import OllamaProvider
+
+        provider_: ModelProvider = OllamaProvider(
+            base_url=pcfg.base_url,
+            model=model,
+            provider_name=provider_name,
+            timeout=max(pcfg.timeout_seconds, 300.0),  # local 14B+ models are slow to prefill
+            context_window=info.context_window,
+            native_tools=native,
+        )
+        if not native:
+            provider_ = StructuredToolProvider(provider_)
+        return provider_
     provider: ModelProvider = OpenAICompatibleProvider(
         base_url=pcfg.base_url,
         model=model,

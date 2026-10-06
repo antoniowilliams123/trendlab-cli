@@ -75,8 +75,8 @@ base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"
 
 [providers.ollama]
-type = "ollama"
-base_url = "http://localhost:11434/v1"
+type = "ollama"                  # native /api/chat with the model's real context window (spec §90.16)
+base_url = "http://localhost:11434"
 # tool_calling = "structured"   # force the JSON fallback for models with weak native tool calls
 
 # Model registry (spec §58) — capabilities you know; discovered where APIs expose them.

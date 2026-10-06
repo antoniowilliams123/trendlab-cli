@@ -3820,6 +3820,9 @@ decisions taken after the original specification. Newest last.
 -   Tool calls written as text are executed instead of accepted as the
     answer (§90.15). 261 cases. Plus `~` expansion in tool paths and the
     empty/JSON-only answer guard (§90.15). 264 cases.
+-   Native Ollama provider with a real context window (the `/v1`
+    endpoint truncated prompts to 2 048 tokens) and the re-plan guard
+    (§90.16). 271 cases (incl. rescue of an announced call after long prose and the "announced but not called" nudge).
 
 ------------------------------------------------------------------------
 
@@ -4051,4 +4054,29 @@ with `~` are expanded before the project-boundary check (the model copied
 directory"); and a final reply that is empty, punctuation or a bare JSON
 value (`{}` was accepted as the answer) is refused by the completion
 evaluator with a nudge to answer in plain language or call a tool.
+
+### 90.16 Native Ollama Provider (`trendlab/providers/ollama_provider.py`)
+
+Root cause of the local-model looping seen in §90.15: Ollama's
+OpenAI-compatible `/v1` endpoint ignores the model's context length and
+runs every request at the server default — **2 048 tokens** on Ollama
+0.34 — truncating the prompt from the front. Probe: a 6 043-token prompt
+reported `prompt_tokens: 2050` on `/v1`, and `prompt_eval_count: 6043` on
+`/api/chat` with `options.num_ctx = 16384`. With the system prompt,
+repository map and history cut away, the model re-planned in a loop.
+
+Provider type `ollama` now uses the native `/api/chat` endpoint and sends
+`options.num_ctx` = the `[models]` context window, else the length
+`/api/show` reports for the model, else 32 768, capped at 131 072. Tools,
+NDJSON streaming, images, `thinking`, `done_reason` and usage
+(`prompt_eval_count` / `eval_count`) are mapped onto the same
+`ModelResponse`; errors are normalized ("model not pulled — run: ollama
+pull …", "is Ollama running at …?"); local models are always labelled
+LOCAL and free. Default timeout for local models is 300 s (prefill of a
+14B model on a long prompt is slow). `tool_calling = "structured"` still
+wraps the provider for models without native tool support.
+
+Companion guard: `task action='plan'` while tasks are still open is
+allowed once; a second re-plan is refused with the current plan and the
+instruction to work the active task or mark it failed/blocked.
 
