@@ -293,3 +293,27 @@ async def test_bridge_requires_token_and_chat(project: Path, _trendlab_home: Pat
         assert "off" in console.export_text()
     finally:
         await tl.stop()
+
+
+async def test_model_from_telegram_lists_and_never_blocks(
+    project: Path, _trendlab_home: Path, monkeypatch
+):
+    monkeypatch.setenv("TRENDLAB_TELEGRAM_BOT_TOKEN", "1:x")
+    fake = FakeTelegram()
+    tl = _tl(project, ScriptedProvider([ModelResponse(text="ok")]))
+    await tl.start(interactive=False)
+    try:
+        await _bridge(tl, fake)
+        await _wait(lambda: fake.sent("sendMessage"))
+        n = len(fake.sent("sendMessage"))
+        fake.updates.append(_msg(1, "/model"))
+        assert await _wait(lambda: len(fake.sent("sendMessage")) > n)
+        reply = fake.sent("sendMessage")[-1]["text"]
+        assert "scripted:m" in reply and "Switch with: /model <name>" in reply
+        # The next message still gets through immediately (nothing is blocked on stdin).
+        n = len(fake.sent("sendMessage"))
+        fake.updates.append(_msg(2, "/status"))
+        assert await _wait(lambda: len(fake.sent("sendMessage")) > n)
+        assert "scripted:m" in fake.sent("sendMessage")[-1]["text"]
+    finally:
+        await tl.stop()

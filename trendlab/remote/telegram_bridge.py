@@ -121,6 +121,16 @@ class TelegramPoller:
         if self._own_client:
             await self._client.aclose()
 
+    HANDLER_TIMEOUT = 120.0
+
+    async def _guarded(self, handler: UpdateHandler, upd: dict[str, Any]) -> None:
+        try:
+            await asyncio.wait_for(handler(upd), timeout=self.HANDLER_TIMEOUT)
+        except TimeoutError:
+            self.last_error = f"handler timed out after {self.HANDLER_TIMEOUT:.0f}s"
+        except Exception as exc:  # noqa: BLE001 — one bad handler must not stop polling
+            self.last_error = f"handler: {exc.__class__.__name__}: {exc}"[:200]
+
     async def _loop(self) -> None:
         while True:
             try:
@@ -134,10 +144,9 @@ class TelegramPoller:
                     self._offset = int(upd["update_id"]) + 1
                     self.updates_seen += 1
                     for handler in list(self._handlers):
-                        try:
-                            await handler(upd)
-                        except Exception as exc:  # noqa: BLE001 — one bad handler must not stop polling
-                            self.last_error = f"handler: {exc.__class__.__name__}: {exc}"[:200]
+                        # Each update is handled in its own task with a deadline, so a slow or
+                        # stuck handler can never block the stream for the messages behind it.
+                        asyncio.create_task(self._guarded(handler, upd))
                 self.last_error = None
             except asyncio.CancelledError:
                 raise
@@ -220,6 +229,7 @@ class TelegramBridge:
             self.app,
             Console(record=True, width=72, force_terminal=False, no_color=True),
             prompt_cb=self._run_prompt,
+            interactive_stdin=False,  # a phone cannot answer a terminal read: list, never block
         )
         self.started_at = time.monotonic()
         self.events.emit(

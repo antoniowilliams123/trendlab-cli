@@ -94,6 +94,7 @@ class CommandRouter:
         clear_cb: Callable[[], None] | None = None,
         prompt_cb: Callable[[str], Awaitable[None]] | None = None,
         model_picker_cb: Callable[[list], Awaitable[None]] | None = None,
+        interactive_stdin: bool = True,
     ) -> None:
         self.app = app
         self.console = console
@@ -101,6 +102,7 @@ class CommandRouter:
         self._clear_cb = clear_cb
         self._prompt_cb = prompt_cb  # how this UI runs a prompt (custom commands expand to one)
         self._model_picker_cb = model_picker_cb  # a UI's own picker (the TUI modal)
+        self._interactive_stdin = interactive_stdin  # False for remote surfaces: never read stdin
         self._handlers: dict[str, Callable[[list[str]], Awaitable[None]]] = {
             "/help": self._help,
             "/status": self._status,
@@ -674,6 +676,17 @@ class CommandRouter:
 
     async def _pick_model_plain(self, choices: list) -> None:
         """Numbered list for the plain REPL; Enter keeps the current model."""
+        if not self._interactive_stdin:  # remote surface (Telegram): plain lines, no table
+            self.console.print("Models (◀ = current):")
+            for c in choices:
+                mark = " ◀" if c.current else ""
+                self.console.print(
+                    f"• {c.ref}{mark} · {c.ctx_label} · {c.price_label} · {c.status_label}"
+                )
+            self.console.print(
+                "Switch with: /model <name>  (partial names work, e.g. /model flash)"
+            )
+            return
         t = Table(title="Models — type a number (Enter keeps the current one)")
         for col in ("#", "model", "where", "context", "price", "key", "note"):
             t.add_column(col)
@@ -690,7 +703,10 @@ class CommandRouter:
             )
         self.console.print(t)
         reader = getattr(self.app, "console_input", None)
-        if reader is None:
+        if reader is None or not self._interactive_stdin:
+            self.console.print(
+                "Switch with: /model <name>  (partial names work, e.g. /model flash)"
+            )
             return
         self.console.print("[bold]model #❯[/bold] ", end="")
         line = await reader.readline()
