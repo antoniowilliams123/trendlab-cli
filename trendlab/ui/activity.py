@@ -8,6 +8,8 @@ are Rich markup in the neon theme.
 
 from __future__ import annotations
 
+import re
+
 from rich.markup import escape
 
 from trendlab.telemetry.events import Event, EventType
@@ -50,7 +52,7 @@ def format_event(event: Event) -> str | None:
             lines = d.get("lines")
             if lines:
                 extra = f" · {lines} line{'s' if lines != 1 else ''}"
-            preview = d.get("preview")
+            preview = "" if d.get("tool") == "ask_user" else d.get("preview")
             tail = f"\n    [{GREY}]{_short(preview, 140)}[/]" if preview else ""
             return (
                 f"  [bold {NEON}]✓[/] [{NEON_DIM}]{d.get('tool')}[/] [{GREY}]{ms} ms{extra}[/]"
@@ -65,10 +67,11 @@ def format_event(event: Event) -> str | None:
     if t == EventType.TOOL_SKIPPED:
         label = _SKIP_LABEL.get(str(d.get("reason")), "⚠ skipped")
         what = d.get("detail") or d.get("command") or ""
+        message = "" if d.get("reason") == "not_approved" else d.get("message")  # denial line above
         return (
             f"  [bold {RED}]{label}[/] [{NEON_DIM}]{escape(str(d.get('tool')))}[/]"
             + (f" [{GREY}]{_short(what)}[/]" if what else "")
-            + (f"\n    [{GREY}]{_short(d.get('message'), 160)}[/]" if d.get("message") else "")
+            + (f"\n    [{GREY}]{_short(message, 160)}[/]" if message else "")
         )
     if t == EventType.DIAGNOSTICS:
         report = str(d.get("report") or "")
@@ -84,7 +87,11 @@ def format_event(event: Event) -> str | None:
         return None  # the approval event that follows carries the useful text
     if t == EventType.APPROVAL_REQUESTED:
         return f"[bold {AMBER}]⏳ waiting for approval[/] [{NEON_DIM}]{_short(d.get('summary'))}[/]"
+    if t == EventType.APPROVAL_REQUESTED and d.get("kind") == "question":
+        return None
     if t == EventType.APPROVAL_APPROVED:
+        if d.get("kind") == "question":
+            return None  # the answer line is printed by the UI that collected it
         where = {"web": "from the phone", "telegram": "from Telegram"}.get(
             str(d.get("channel")), "at the keyboard"
         )
@@ -116,6 +123,11 @@ def format_event(event: Event) -> str | None:
             return f"[{AMBER}]⇅ context overflow — compacting and retrying[/]"
         if d.get("action") == "escalate":
             return f"[{AMBER}]⤴ no progress — escalating to {d.get('to_model')}[/]"
+        if failure == "AUTH_FAILURE":
+            err = str(d.get("error") or "")
+            m = re.search(r"variable (\w+)", err)
+            hint = f" → run: trendlab secret set {m.group(1)}" if m else " → check the provider key"
+            return f"[bold {RED}]✗ authentication failed[/] [{GREY}]{_short(err, 100)}[/][{AMBER}]{hint}[/]"
         return f"[{AMBER}]{escape(failure.lower().replace('_', ' '))}[/] [{GREY}]{_short(d.get('error') or d.get('action'), 120)}[/]"
     if t == EventType.LOOP_DETECTED:
         return f"[{AMBER}]↻ loop detected[/] [{GREY}]{_short(d.get('reason'), 120)} → {d.get('action')}[/]"
@@ -127,7 +139,7 @@ def format_event(event: Event) -> str | None:
             f"[{GREY}](attempt {d.get('attempt')}: {_short(d.get('error'), 100)})[/]"
         )
     if t == EventType.PROVIDER_FALLBACK:
-        return f"[{AMBER}]⤳ provider fallback[/] [{GREY}]{d.get('from')} → {d.get('to')}: {_short(d.get('error'), 100)}[/]"
+        return f"[{AMBER}]⤳ {d.get('from_model')} failed — trying the next provider[/] [{GREY}]{_short(d.get('error'), 100)}[/]"
     if t == EventType.STEERED:
         return f"[bold {MINT}]↳ steering applied[/]"
     if t == EventType.PATHS_TRANSLATED:

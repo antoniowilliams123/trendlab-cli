@@ -72,25 +72,46 @@ class ModelGateway:
         raise last
 
     async def stream(self, model_ref: str, messages, tools=None) -> AsyncIterator[StreamChunk]:
-        """Stream from the primary model; fall back only if nothing has been emitted yet."""
+        """Stream from the primary model with the same retry/backoff as ``complete``; fall back
+        to the next model only while nothing has been emitted yet."""
+        rc = self.config.retry
         for ref in fallback_chain(self.config, model_ref):
-            emitted = False
-            try:
-                async for chunk in self.provider(ref).stream(messages, tools):
-                    emitted = True
-                    yield chunk
-                return
-            except ProviderContextOverflowError:
-                raise
-            except ProviderError as exc:
-                if emitted or not exc.retryable:
+            attempt = 0
+            while True:
+                attempt += 1
+                emitted = False
+                try:
+                    async for chunk in self.provider(ref).stream(messages, tools):
+                        emitted = True
+                        yield chunk
+                    return
+                except ProviderContextOverflowError:
                     raise
-                self.events.emit(
-                    EventType.PROVIDER_FALLBACK,
-                    session_id=self.session_id,
-                    from_model=ref,
-                    error=str(exc)[:200],
-                )
+                except ProviderError as exc:
+                    if emitted or not exc.retryable:
+                        raise
+                    if attempt < rc.max_attempts:
+                        delay = min(
+                            rc.max_delay_seconds, rc.base_delay_seconds * 2 ** (attempt - 1)
+                        )
+                        delay += random.uniform(0, delay * 0.1)  # noqa: S311 — jitter
+                        self.events.emit(
+                            EventType.PROVIDER_RETRY,
+                            session_id=self.session_id,
+                            model=ref,
+                            attempt=attempt,
+                            delay_seconds=round(delay, 2),
+                            error=str(exc)[:200],
+                        )
+                        await self._sleep(delay)
+                        continue
+                    self.events.emit(
+                        EventType.PROVIDER_FALLBACK,
+                        session_id=self.session_id,
+                        from_model=ref,
+                        error=str(exc)[:200],
+                    )
+                    break
         raise ProviderError("all providers failed")
 
     async def _with_retry(self, ref: str, op: Callable[[ModelProvider], Any]):

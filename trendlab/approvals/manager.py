@@ -652,6 +652,7 @@ class ApprovalManager:
             "fingerprint": request.fingerprint,
             "expires_at": request.expires_at.isoformat(),
             "remote_allowed": request.remote_allowed,
+            "kind": request.kind,
         }
 
     @staticmethod
