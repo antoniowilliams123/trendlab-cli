@@ -39,6 +39,7 @@ from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.diff_view import render_diff
 from trendlab.ui.file_refs import FileIndex, current_at_token
+from trendlab.ui.history import PromptHistory
 from trendlab.ui.prompt_rules import continues_line
 from trendlab.ui.theme import (
     BANNER,
@@ -201,6 +202,8 @@ class PromptInput(TextArea):
         Binding("down", "pick_down", "", show=False, priority=True),
         Binding("pageup", "transcript_page_up", "", show=False, priority=True),
         Binding("pagedown", "transcript_page_down", "", show=False, priority=True),
+        Binding("ctrl+up", "history_prev", "", show=False, priority=True),
+        Binding("ctrl+down", "history_next", "", show=False, priority=True),
     ]
 
     class PickRequested(Message):
@@ -217,6 +220,49 @@ class PromptInput(TextArea):
     def _on_text_area_changed(self, event: TextArea.Changed) -> None:
         tok = self._at_token()
         self.post_message(self.PickRequested(tok[1] if tok else None))
+        text = self.text
+        slash = text if text.startswith("/") and "\n" not in text and " " not in text else None
+        self.post_message(self.CommandMenuRequested(slash))
+
+    class CommandMenuRequested(Message):
+        """Posted while a bare ``/command`` is being typed (None closes the menu)."""
+
+        def __init__(self, query: str | None) -> None:
+            super().__init__()
+            self.query = query
+
+    def _cmd_menu(self) -> CommandPicker | None:
+        try:
+            menu = self.app.query_one("#cmdmenu", CommandPicker)
+        except Exception:  # noqa: BLE001
+            return None
+        return menu if menu.has_class("visible") else None
+
+    def _history(self) -> PromptHistory | None:
+        return getattr(self.app, "history", None)
+
+    def _mouse_captured(self) -> bool:
+        return bool(getattr(self.app, "mouse_capture", False))
+
+    def _set_text(self, text: str) -> None:
+        self.text = text
+        self.move_cursor(self.document.end)
+
+    def action_history_prev(self) -> None:
+        hist = self._history()
+        if hist is None:
+            return
+        prev = hist.previous(self.text)
+        if prev is not None:
+            self._set_text(prev)
+
+    def action_history_next(self) -> None:
+        hist = self._history()
+        if hist is None:
+            return
+        nxt = hist.next()
+        if nxt is not None:
+            self._set_text(nxt)
 
     def _picker(self) -> FilePicker | None:
         try:
@@ -235,6 +281,11 @@ class PromptInput(TextArea):
         self.post_message(self.PickRequested(None))
 
     def action_pick_or_indent(self) -> None:
+        menu = self._cmd_menu()
+        if menu is not None and menu.choice():
+            self._set_text(menu.choice() + " ")
+            self.post_message(self.CommandMenuRequested(None))
+            return
         picker = self._picker()
         if picker is not None and picker.choice():
             self.accept_pick(picker.choice())  # type: ignore[arg-type]
@@ -249,22 +300,42 @@ class PromptInput(TextArea):
         return True
 
     def action_pick_up(self) -> None:
+        menu = self._cmd_menu()
+        if menu is not None:
+            menu.action_cursor_up()
+            return
         picker = self._picker()
         if picker is not None:
             picker.action_cursor_up()
-        elif self.cursor_location[0] == 0 and self._scroll_transcript(-3):
-            return  # wheel-up / ↑ on the first line scrolls the transcript (mouse released)
-        else:
-            self.action_cursor_up()
+            return
+        if self.cursor_location[0] == 0:
+            # Mouse captured → the wheel is a real mouse event, so ↑ can be history (Claude Code
+            # style). Mouse released → the wheel arrives as ↑ and must scroll the transcript;
+            # history is on Ctrl+↑ in that mode.
+            if self._mouse_captured() and self.document.line_count == 1:
+                self.action_history_prev()
+                return
+            if self._scroll_transcript(-3):
+                return
+        self.action_cursor_up()
 
     def action_pick_down(self) -> None:
+        menu = self._cmd_menu()
+        if menu is not None:
+            menu.action_cursor_down()
+            return
         picker = self._picker()
         if picker is not None:
             picker.action_cursor_down()
-        elif self.cursor_location[0] >= self.document.line_count - 1 and self._scroll_transcript(3):
             return
-        else:
-            self.action_cursor_down()
+        if self.cursor_location[0] >= self.document.line_count - 1:
+            hist = self._history()
+            if self._mouse_captured() and self.document.line_count == 1 and hist and hist.browsing:
+                self.action_history_next()
+                return
+            if self._scroll_transcript(3):
+                return
+        self.action_cursor_down()
 
     def action_transcript_page_up(self) -> None:
         self._scroll_transcript(-1000)
@@ -273,6 +344,11 @@ class PromptInput(TextArea):
         self._scroll_transcript(1000)
 
     def action_submit_prompt(self) -> None:
+        menu = self._cmd_menu()
+        if menu is not None and menu.choice() and menu.choice() != self.text.strip():
+            self._set_text(menu.choice() + " ")
+            self.post_message(self.CommandMenuRequested(None))
+            return
         picker = self._picker()
         if picker is not None and picker.choice():
             self.accept_pick(picker.choice())  # type: ignore[arg-type]
@@ -395,6 +471,47 @@ class ModelPicker(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class CommandPicker(OptionList):
+    """Slash-command menu shown above the prompt while ``/…`` is typed (Claude Code style)."""
+
+    def __init__(self, commands: list[tuple[str, str]]) -> None:
+        super().__init__(id="cmdmenu")
+        self.commands = commands  # (name, description)
+        self._matches: list[tuple[str, str]] = []
+
+    def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        self.commands = commands
+
+    def update_query(self, query: str | None) -> None:
+        if query is None:
+            self.hide()
+            return
+        q = query.lower()
+        self._matches = [c for c in self.commands if c[0].startswith(q)][:10]
+        if not self._matches:
+            self._matches = [c for c in self.commands if q.lstrip("/") in c[0]][:10]
+        if not self._matches:
+            self.hide()
+            return
+        self.clear_options()
+        self.add_options(
+            [Text.assemble((f"{n:<14}", f"bold {NEON}"), (d, GREY)) for n, d in self._matches]
+        )
+        self.highlighted = 0
+        self.border_title = f"commands · {len(self._matches)} · Tab/Enter completes"
+        self.add_class("visible")
+
+    def hide(self) -> None:
+        self.remove_class("visible")
+        self._matches = []
+
+    def choice(self) -> str | None:
+        if not self._matches:
+            return None
+        idx = self.highlighted if self.highlighted is not None else 0
+        return self._matches[min(idx, len(self._matches) - 1)][0]
+
+
 class FilePicker(OptionList):
     """Fuzzy ``@file`` suggestions shown above the prompt while an ``@`` token is being typed."""
 
@@ -468,6 +585,7 @@ class TrendLabTUI(App[None]):
         )
         self.commands.register("/mouse", self._mouse_command)
         self.file_index = FileIndex(tl_app.project_root)
+        self.history = PromptHistory(tl_app.project_root)
 
     # -- layout ------------------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -482,6 +600,9 @@ class TrendLabTUI(App[None]):
             plan.border_title = "plan"
             yield plan
         yield Static(id="status")
+        menu = CommandPicker(self._command_catalog())
+        menu.border_title = "commands"
+        yield menu
         picker = FilePicker(self.file_index)
         picker.border_title = "@ files"
         yield picker
@@ -509,6 +630,8 @@ class TrendLabTUI(App[None]):
         self._refresh_plan()
         self.query_one("#input", PromptInput).focus()
         self.set_mouse_capture(False)
+        self._apply_layout()
+        self.run_worker(self._update_check, thread=True, exclusive=False, name="update-check")
         self.set_interval(0.25, self._tick)
         self.log_line(
             f"[bold {NEON}]{PRODUCT_NAME}[/] [{GREY}]v{__version__}[/] ready — "
@@ -516,9 +639,8 @@ class TrendLabTUI(App[None]):
         )
         if self.tl.engine.unsafe:
             self.log_line(
-                "[bold white on #ff3b3b] UNSAFE [/] [#ff3b3b]approval prompts are off · sudo and "
-                "outside-project paths stay denied · destructive commands still ask · "
-                "/mode ask turns prompts on[/]"
+                "[bold white on #ff3b3b] UNSAFE [/] [#ff3b3b]no approval prompts · sudo and "
+                "outside-project paths denied · destructive still asks · /mode ask for prompts[/]"
             )
 
     async def on_unmount(self) -> None:
@@ -602,8 +724,15 @@ class TrendLabTUI(App[None]):
             f"{_mode_badge(tl)}   {remote_txt}",
             f"[{GREY}]session {tl.session_id}[/]",
         ]
-        lines = [f"[bold {NEON}]{row}[/]   {info[i]}" for i, row in enumerate(BANNER)]
-        self.query_one("#header", Static).update("\n".join(lines))
+        header = self.query_one("#header", Static)
+        if header.has_class("compact"):
+            header.update(
+                f"[bold {NEON}]TRENDLAB[/] [{GREY}]v{__version__}[/]  ·  {info[1]}  ·  "
+                f"[{GREY}]{project}[/]  ·  {_mode_badge(tl)}  {remote_txt}"
+            )
+        else:
+            lines = [f"[bold {NEON}]{row}[/]   {info[i]}" for i, row in enumerate(BANNER)]
+            header.update("\n".join(lines))
         self._refresh_status()
 
     def _refresh_status(self) -> None:
@@ -634,14 +763,20 @@ class TrendLabTUI(App[None]):
         ]
         if pending:
             parts.append(f"[bold #ffd21f]⏳ {pending} pending[/]")
-        mouse = "app" if self.mouse_capture else "terminal · drag selects"
-        parts.append(f"[{NEON_DIM}]mouse[/] [{GREY}]{mouse}[/]")
+        width = self.size.width
+        if width >= 110:
+            mouse = "app" if self.mouse_capture else "terminal · drag selects"
+            parts.append(f"[{NEON_DIM}]mouse[/] [{GREY}]{mouse}[/]")
+        elif width < 90:
+            parts = [p for p in parts if tl.model_ref not in p]  # the header shows the model
         self.query_one("#status", Static).update("  │  ".join(parts))
 
     def _refresh_plan(self) -> None:
         plan = self.tl.plan
+        panel = self.query_one("#plan", Static)
+        panel.display = bool(plan.tasks) and self.size.width >= 100
         if not plan.tasks:
-            self.query_one("#plan", Static).update(f"[{GREY}](no plan yet)[/]")
+            panel.update(f"[{GREY}](no plan yet)[/]")
             return
         glyph = {
             "pending": f"[{GREY}]○[/]",
@@ -783,8 +918,24 @@ class TrendLabTUI(App[None]):
             return
         await self._start_prompt(text)
 
+    def _update_check(self) -> None:
+        """Daily release check off the UI thread; a dim line when something newer exists."""
+        import os
+
+        if os.environ.get("TRENDLAB_NO_UPDATE_CHECK"):
+            return
+        try:
+            from trendlab.update import daily_hint
+
+            hint = daily_hint()
+        except Exception:  # noqa: BLE001
+            return
+        if hint:
+            self.call_from_thread(self.log_line, f"[{GREY}]{hint}[/]")
+
     async def _start_prompt(self, text: str) -> None:
         """Run ``text`` as a prompt (typed, or expanded from a custom slash command)."""
+        self.history.add(text)
         if self._run_task and not self._run_task.done():
             self.tl.agent.steer(text)  # type: ignore[union-attr]
             self.log_line(f"[bold {MINT}]↳ steering:[/] [{MINT}]{text[:200]}[/]")
@@ -794,10 +945,55 @@ class TrendLabTUI(App[None]):
         self._started_at = time.monotonic()
         self._run_task = asyncio.create_task(self._run(text))
 
+    def _command_catalog(self) -> list[tuple[str, str]]:
+        from trendlab.ui.commands import command_catalog
+
+        return command_catalog(self.tl)
+
+    @on(PromptInput.CommandMenuRequested)
+    def _command_menu_requested(self, event: PromptInput.CommandMenuRequested) -> None:
+        try:
+            menu = self.query_one("#cmdmenu", CommandPicker)
+        except Exception:  # noqa: BLE001
+            return
+        if event.query is not None:
+            menu.set_commands(self._command_catalog())
+        menu.update_query(event.query)
+
+    @on(OptionList.OptionSelected, "#cmdmenu")
+    def _command_selected(self, event: OptionList.OptionSelected) -> None:
+        menu = self.query_one("#cmdmenu", CommandPicker)
+        choice = menu.choice()
+        box = self.query_one("#input", PromptInput)
+        if choice:
+            box.text = choice + " "
+            box.move_cursor(box.document.end)
+        menu.hide()
+        box.focus()
+
+    def on_resize(self) -> None:
+        self._apply_layout()
+
+    def _apply_layout(self) -> None:
+        """Compact header on short terminals; hide the plan panel when empty or narrow."""
+        try:
+            header = self.query_one("#header", Static)
+            plan = self.query_one("#plan", Static)
+        except Exception:  # noqa: BLE001 — not mounted yet
+            return
+        header.set_class(self.size.height < 30, "compact")
+        plan.display = bool(self.tl.plan.tasks) and self.size.width >= 100
+        if self.tl.gateway is not None:  # resize events can arrive before the app has started
+            self._refresh_header()
+
     @on(PromptInput.PickRequested)
     def _pick_requested(self, event: PromptInput.PickRequested) -> None:
         self.file_index.root = self.tl.project_root
-        self.query_one("#picker", FilePicker).update_query(event.query)
+        try:
+            picker = self.query_one("#picker", FilePicker)
+        except Exception:  # noqa: BLE001 — a modal is up, or the app is closing
+            return
+        picker.update_query(event.query)
 
     @on(OptionList.OptionSelected, "#picker")
     def _pick_selected(self, event: OptionList.OptionSelected) -> None:

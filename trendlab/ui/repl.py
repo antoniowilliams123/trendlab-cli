@@ -28,6 +28,7 @@ class Repl:
         await self.app.start(interactive=True, command_handler=self.handle_command)
         self.app.events.subscribe(self._on_event)
         self._header()
+        asyncio.get_running_loop().run_in_executor(None, self._update_check)
         try:
             while self._running:
                 self.console.print(f"[bold {MINT}]❯[/] ", end="")
@@ -129,6 +130,20 @@ class Repl:
         if result.text.strip():
             self.console.print(Markdown(result.text))
         self.console.print(run_footer(result), highlight=False)
+
+    def _update_check(self) -> None:
+        import os
+
+        if os.environ.get("TRENDLAB_NO_UPDATE_CHECK"):
+            return
+        try:
+            from trendlab.update import daily_hint
+
+            hint = daily_hint()
+        except Exception:  # noqa: BLE001
+            return
+        if hint:
+            self.console.print(f"[{GREY}]{hint}[/]")
 
     def _on_event(self, event) -> None:
         if event.data.get("role", "main") != "main" and event.type.value.startswith("tool."):

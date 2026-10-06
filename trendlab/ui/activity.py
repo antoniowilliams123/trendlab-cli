@@ -15,15 +15,15 @@ from trendlab.ui.theme import GREY, MINT, NEON, NEON_DIM, RED
 
 AMBER = "#ffd21f"
 
-_SKIP_LABEL = {
-    "denied": "⛔ denied",
-    "not_approved": "⛔ not approved",
+_SKIP_LABEL = {  # BMP glyphs only: emoji render as boxes or double-width in some terminals
+    "denied": "✗ denied",
+    "not_approved": "✗ not approved",
     "invalid_args": "⚠ invalid arguments",
     "unknown_tool": "⚠ unknown tool",
     "malformed": "⚠ malformed call",
-    "hook_blocked": "⛔ blocked by hook",
-    "plan_rejected": "⛔ plan rejected",
-    "checkpoint_failed": "⛔ checkpoint failed",
+    "hook_blocked": "✗ blocked by hook",
+    "plan_rejected": "✗ plan rejected",
+    "checkpoint_failed": "✗ checkpoint failed",
 }
 
 
@@ -37,8 +37,11 @@ def format_event(event: Event) -> str | None:
     d = event.data
     t = event.type
     if t == EventType.TOOL_STARTED:
+        summary = str(d.get("summary") or d.get("tool"))
         detail = d.get("detail") or d.get("command") or ", ".join(d.get("files") or [])
-        head = f"[{NEON_DIM}]●[/] [{NEON}]{escape(str(d.get('summary') or d.get('tool')))}[/]"
+        if detail and detail in summary:
+            detail = ""  # "Read pyproject.toml" already says it
+        head = f"[{NEON_DIM}]●[/] [{NEON}]{escape(summary)}[/]"
         return head + (f"  [{GREY}]{_short(detail)}[/]" if detail else "")
     if t == EventType.TOOL_COMPLETED:
         ms = d.get("duration_ms", 0)
@@ -94,7 +97,7 @@ def format_event(event: Event) -> str | None:
     if t == EventType.APPROVAL_EXPIRED:
         return f"[bold {AMBER}]⌛ approval expired[/]"
     if t == EventType.SECRET_WRITE_BLOCKED:
-        return f"[bold {RED}]⛔ blocked a write that looked like a secret[/] [{GREY}]{escape(str(d.get('files')))}[/]"
+        return f"[bold {RED}]✗ blocked a write that looked like a secret[/] [{GREY}]{escape(str(d.get('files')))}[/]"
     if t == EventType.CONTEXT_COMPACTED:
         return (
             f"[{AMBER}]⇅ compacted {d.get('messages_compacted')} messages[/] "
@@ -118,6 +121,11 @@ def format_event(event: Event) -> str | None:
         return f"[{AMBER}]↻ loop detected[/] [{GREY}]{_short(d.get('reason'), 120)} → {d.get('action')}[/]"
     if t == EventType.BUDGET_WARNING:
         return f"[{AMBER}]$ budget warning[/] [{GREY}]${d.get('total_usd')} of ${d.get('limit')}[/]"
+    if t == EventType.PROVIDER_RETRY:
+        return (
+            f"[{AMBER}]⟳ retrying {d.get('model')} in {d.get('delay_seconds')}s[/] "
+            f"[{GREY}](attempt {d.get('attempt')}: {_short(d.get('error'), 100)})[/]"
+        )
     if t == EventType.PROVIDER_FALLBACK:
         return f"[{AMBER}]⤳ provider fallback[/] [{GREY}]{d.get('from')} → {d.get('to')}: {_short(d.get('error'), 100)}[/]"
     if t == EventType.STEERED:

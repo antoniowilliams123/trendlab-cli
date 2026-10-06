@@ -273,6 +273,28 @@ ApprovalModal {{
     margin-top: 1;
     color: {NEON_SOFT};
 }}
+#header.compact {{
+    height: 2;
+    border-bottom: solid {NEON_DIM};
+}}
+#cmdmenu {{
+    display: none;
+    height: auto;
+    max-height: 12;
+    background: {BLACK};
+    color: {NEON};
+    border: round {NEON_DIM};
+    border-title-color: {NEON};
+    margin: 0 1;
+}}
+#cmdmenu.visible {{
+    display: block;
+}}
+#cmdmenu > .option-list--option-highlighted {{
+    background: #0b2a0b;
+    color: {NEON};
+    text-style: bold;
+}}
 #picker {{
     display: none;
     height: auto;

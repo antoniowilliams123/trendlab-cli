@@ -192,7 +192,6 @@ def main_callback(
         code = asyncio.run(_run_once(tl_app, prompt, output))
         raise typer.Exit(code)
     _first_run_check(config, model or config.defaults.model)
-    _update_hint()
     use_tui = not plain and sys.stdin.isatty() and sys.stdout.isatty()
     if use_tui:
         try:

@@ -262,7 +262,7 @@ async def test_tui_releases_mouse_by_default_and_keys_scroll_transcript(
 ):
     tl = _tl(project, ScriptedProvider([ModelResponse(text="ok")]))
     tui = TrendLabTUI(tl)
-    async with tui.run_test(size=(100, 24)) as pilot:
+    async with tui.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert tui.mouse_capture is False
         status = str(tui.query_one("#status").content)

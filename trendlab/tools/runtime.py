@@ -83,12 +83,16 @@ class ToolRuntime:
             args = tool.parse(call.arguments)
         except ValidationError as exc:
             missing = [".".join(str(x) for x in e.get("loc", ())) for e in exc.errors()][:4]
-            return self._skip(
-                call,
-                "invalid_args",
-                f"invalid arguments for {call.name}: {exc.errors()}",
-                detail="bad/missing: " + ", ".join(missing),
+            given = ", ".join(sorted(call.arguments)) or "nothing"
+            self.events.emit(
+                EventType.TOOL_SKIPPED,
+                session_id=self.ctx.session_id,
+                tool=call.name,
+                reason="invalid_args",
+                detail="needs " + ", ".join(missing),
+                message=f"given: {given}",
             )
+            return ToolResult(ok=False, output=f"invalid arguments for {call.name}: {exc.errors()}")
 
         perm = tool.permission(args, self.ctx)
         verdict = self.engine.evaluate(perm)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from collections.abc import Awaitable, Callable
 
@@ -62,6 +63,25 @@ HELP = """\
                            copy work like any terminal; on gives the app wheel scroll + clicks (F4)
 /clear                     Clear the screen               /quit     Exit
 """
+
+
+_HELP_LINE = re.compile(r"^(/[a-z][\w-]*)(?:\s[^\s].*?)?\s{2,}(.+)$")
+
+
+def command_catalog(app) -> list[tuple[str, str]]:
+    """``(name, description)`` for the slash menu: built-ins from HELP plus custom commands."""
+    seen: dict[str, str] = {}
+    for line in HELP.splitlines():
+        m = _HELP_LINE.match(line.rstrip())
+        if m and m.group(1) not in seen:
+            seen[m.group(1)] = m.group(2).strip()
+    for extra in ("/mouse", "/telegram", "/branch", "/tree", "/bg", "/commands", "/stop"):
+        seen.setdefault(extra, {"/stop": "Interrupt the running task"}.get(extra, ""))
+    lib = getattr(app, "custom_commands", None)
+    if lib is not None:
+        for c in lib.list():
+            seen.setdefault(f"/{c.name}", f"{c.description}  [{c.source}]")
+    return sorted(seen.items())
 
 
 class CommandRouter:

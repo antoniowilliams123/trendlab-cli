@@ -41,7 +41,7 @@ async def test_runtime_emits_skipped_with_reasons(project: Path, manager_factory
         ("_malformed", "malformed"),
     ]
     inv = recorder.of_type(EventType.TOOL_SKIPPED)[0].data
-    assert "old_text" in inv["detail"] and inv["message"].startswith("invalid arguments")
+    assert "old_text" in inv["detail"] and inv["message"].startswith("given: old, path")
     started = {e.data["tool"]: e.data for e in recorder.of_type(EventType.TOOL_STARTED)}
     assert started["read_file"]["detail"] == "src/app.py"
     assert started["shell"]["detail"] == "$ ls -la src && false" and started["shell"]["command"]

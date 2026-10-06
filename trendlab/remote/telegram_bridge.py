@@ -228,6 +228,8 @@ class TelegramBridge:
             channel=self.name,
             chat_id=str(self.tg_cfg.chat_id),
         )
+        if not self.cfg.announce:
+            return
         await self.send(
             f"🟢 TrendLab online · {self.app.project_root.name} · {self.app.model_ref}\n"
             "Send a task to start it, text while it runs to steer it, /status /plan /diff /cost "
@@ -240,7 +242,7 @@ class TelegramBridge:
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
-        if announce:
+        if announce and self.cfg.announce:
             try:
                 await self.send("⚪ TrendLab session ended.")
             except TelegramError:
