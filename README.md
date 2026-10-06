@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/screenshots/tui-main.png" alt="TrendLab CLI — the full-screen TUI after an autonomous fix" width="920">
+  <img src="docs/screenshots/transcript_activity.png" alt="TrendLab CLI — the full-screen TUI: every tool call visible with what ran, what came back, and why a call was refused" width="920">
 </p>
 
 <h1 align="center">TrendLab CLI</h1>
@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-196%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-289%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
-  <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.3%20%C2%B7%2089%20sections-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.5%20%C2%B7%2091%20sections-39ff14?style=flat-square&labelColor=000000"></a>
 </p>
 
 ---
@@ -229,6 +229,19 @@ Live runs on DeepSeek Flash, the default model:
 
 Run your own with `trendlab bench -m provider:model`.
 
+## Engineering notes
+
+- **Tests are the audit trail.** 289 cases, all offline: mocked providers, a fake GitHub CLI, bare git remotes,
+  a fake Telegram Bot API, Textual's headless pilot for the TUI, and a real bubblewrap sandbox test that skips
+  when `bwrap` is absent. Every bug found in live use became a test the same day.
+- **One permission engine, one audit log.** Tools never decide anything; they describe the operation and the
+  engine applies the policy table. Approvals bind to a SHA-256 fingerprint of tool + arguments + directory.
+- **Weak models are a design input.** Small local models write tool calls as text, re-plan in loops, answer
+  with `{}` or promise an action they never take. The runtime recognises each of these and either runs the
+  call or pushes back, and Ollama is driven through its native API so the model sees its full context window.
+- **UX measured, not asserted.** A 40-point rubric with before/after and a test or screenshot per check:
+  [`docs/UX_AUDIT_2026-10-05.md`](docs/UX_AUDIT_2026-10-05.md).
+
 ## Develop
 
 ```bash
@@ -237,7 +250,7 @@ Run your own with `trendlab bench -m provider:model`.
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-The UX/UI audit against Claude Code (40 checks, before/after, evidence per check) is in
+The UX/UI audit against the leading hosted coding agent (40 checks, before/after, evidence per check) is in
 [`docs/UX_AUDIT_2026-10-05.md`](docs/UX_AUDIT_2026-10-05.md); `scripts/ux_screenshots.py`
 regenerates the screenshots. The product specification, including a dated implementation record of every change, is in
 [`docs/TRENDLAB_CLI_SPEC.md`](docs/TRENDLAB_CLI_SPEC.md). Build history is in

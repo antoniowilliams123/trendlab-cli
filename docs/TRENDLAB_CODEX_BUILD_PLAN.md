@@ -6,7 +6,7 @@
 **Purpose:** Turn the full TrendLab CLI product vision into an
 executable, staged build plan for Codex.\
 **Implementation:** Python 3.12+\
-**Target:** A working Claude-Code-style, model-agnostic coding CLI as
+**Target:** A working hosted-agent-style, model-agnostic coding CLI as
 quickly as possible without creating an unmaintainable prototype.
 
 ------------------------------------------------------------------------

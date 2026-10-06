@@ -309,7 +309,7 @@ class PromptInput(TextArea):
             picker.action_cursor_up()
             return
         if self.cursor_location[0] == 0:
-            # Mouse captured → the wheel is a real mouse event, so ↑ can be history (Claude Code
+            # Mouse captured → the wheel is a real mouse event, so ↑ can be history (hosted-agent
             # style). Mouse released → the wheel arrives as ↑ and must scroll the transcript;
             # history is on Ctrl+↑ in that mode.
             if self._mouse_captured() and self.document.line_count == 1:
@@ -472,7 +472,7 @@ class ModelPicker(ModalScreen[str | None]):
 
 
 class CommandPicker(OptionList):
-    """Slash-command menu shown above the prompt while ``/…`` is typed (Claude Code style)."""
+    """Slash-command menu shown above the prompt while ``/…`` is typed."""
 
     def __init__(self, commands: list[tuple[str, str]]) -> None:
         super().__init__(id="cmdmenu")
@@ -564,7 +564,7 @@ class TrendLabTUI(App[None]):
     def __init__(self, tl_app: TrendLabApp) -> None:
         super().__init__()
         self.tl = tl_app
-        # Like Claude Code, the terminal keeps the mouse by default: drag selects text and the
+        # Like a plain CLI, the terminal keeps the mouse by default: drag selects text and the
         # terminal's own copy (Ctrl+Shift+C / right-click) works. F4 or /mouse on hands the mouse
         # to the app for wheel scrolling and clicking.
         self.mouse_capture = False

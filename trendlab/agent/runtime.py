@@ -149,7 +149,7 @@ class AgentRuntime:
 
     def steer(self, text: str) -> None:
         """Queue a message from the user while a run is in progress; it is delivered as the next
-        user turn before the following model call (Claude-Code-style steering)."""
+        user turn before the following model call (steering)."""
         text = text.strip()
         if text:
             self._steer.append(text)

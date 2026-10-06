@@ -20,7 +20,7 @@ runner = CliRunner()
 
 def test_version_and_help():
     r = runner.invoke(app, ["--version"])
-    assert r.exit_code == 0 and "TrendLab CLI 0.1.0" in r.output
+    assert r.exit_code == 0 and "TrendLab CLI 0.2.0" in r.output
     r = runner.invoke(app, ["--help"])
     assert r.exit_code == 0 and "TrendLab CLI" in r.output and "Forge" not in r.output
     assert "--resume" in r.output and "--output" in r.output
