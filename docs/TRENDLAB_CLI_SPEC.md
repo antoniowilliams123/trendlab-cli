@@ -4243,7 +4243,7 @@ only, so no network call on every refresh.)
 ### 91.7 Paste an image, get feedback on it
 
 Owner: "I want to be able to paste an image into TrendLab like this and
-get feedback on it." In the TUI, **Ctrl+V** reads the clipboard image
+get feedback on it." In the TUI, **Alt+V**, **Ctrl+I** or **Ctrl+V** reads the clipboard image
 (PowerShell on WSL, `wl-paste`/`xclip`/`pngpaste` elsewhere), saves it
 to a temp PNG and attaches it to the next prompt; a pasted *path* to an
 image file (or `file://` URL, as macOS and some Linux clipboards give)
@@ -4255,4 +4255,11 @@ family: Claude, GPT-5, Gemini, `-vl`/llava/gemma locals can; DeepSeek
 cannot) drives a warning at attach time with the F5 hint to switch to a
 vision model, since DeepSeek Flash — the default — cannot see images.
 `/paste` and `@shot.png` remain for the REPL.
+
+Follow-up the same night: "I pressed Ctrl+V and it didn't paste in."
+Windows Terminal binds Ctrl+V to its own paste action and swallows the
+key when the clipboard holds an image, so the app never receives it.
+Alt+V and Ctrl+I were added as alternative keys for the same action (the
+placeholder now says Alt+V); the Windows Terminal fix, if Ctrl+V is
+preferred, is to rebind its paste action to Ctrl+Shift+V only.
 

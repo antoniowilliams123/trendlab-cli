@@ -51,7 +51,7 @@ another device.
 | **Remote control from Telegram** | Turn it on and your chat becomes a second keyboard for the running session: a message starts a task, text while it runs steers it, replies answer the agent's questions, `/status` `/plan` `/diff` `/cost` `/stop` work, and every run reports back. |
 | **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
 | **See everything it does** | Every tool call shows what ran (the command, path or query), a preview of what came back, the first error line when it failed, and a reason when a call was denied, invalid or blocked. Answer first, then one quiet line: calls, time, cost, changed files, validated or not. Same in the plain REPL. |
-| **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, **Ctrl+V pastes a screenshot** straight into the prompt (`@file.png` and `/paste` too), type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
+| **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, **Alt+V (or Ctrl+V where the terminal lets it through) pastes a screenshot** straight into the prompt (`@file.png` and `/paste` too), type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
 | **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
 
 ## Screenshots

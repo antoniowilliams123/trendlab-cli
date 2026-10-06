@@ -206,6 +206,10 @@ class PromptInput(TextArea):
         Binding("ctrl+up", "history_prev", "", show=False, priority=True),
         Binding("ctrl+down", "history_next", "", show=False, priority=True),
         Binding("ctrl+v", "paste_image", "paste image", show=False, priority=True),
+        # Windows Terminal keeps Ctrl+V for its own paste and swallows it when the clipboard
+        # holds an image, so give the same action a key the terminal does not intercept.
+        Binding("alt+v", "paste_image", "paste image", show=False, priority=True),
+        Binding("ctrl+i", "paste_image", "paste image", show=False, priority=True),
     ]
 
     def action_paste_image(self) -> None:
@@ -645,7 +649,7 @@ class TrendLabTUI(App[None]):
             show_line_numbers=False,
             soft_wrap=True,
             tab_behavior="indent",
-            placeholder="type a task · / commands · @ files · Ctrl+V image · Ctrl+↑↓ history · Esc",
+            placeholder="type a task · / commands · @ files · Alt+V image · Ctrl+↑↓ history · Esc",
         )
         yield Footer()
 

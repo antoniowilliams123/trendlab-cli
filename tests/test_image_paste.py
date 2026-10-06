@@ -62,6 +62,10 @@ async def test_ctrl_v_and_pasted_path_attach_images(
         await pilot.pause()
         inp = tui.query_one("#input", PromptInput)
         inp.focus()
+        await pilot.press("alt+v")  # the key Windows Terminal lets through
+        await pilot.pause()
+        assert tui.tl.pending_images == [shot]
+        tui.tl.pending_images.clear()
         await pilot.press("ctrl+v")
         await pilot.pause()
         assert tui.tl.pending_images == [shot]
