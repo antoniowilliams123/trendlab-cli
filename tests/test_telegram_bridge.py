@@ -82,7 +82,10 @@ async def test_text_runs_prompt_and_reports_back(project: Path, _trendlab_home: 
         assert await _wait(lambda: len(fake.sent("sendMessage")) >= 3)
         texts = [m["text"] for m in fake.sent("sendMessage")]
         assert any(t.startswith("▶ Started: what does this repo do?") for t in texts)
-        assert any(t.startswith("✅ Done") and "Cost:" in t for t in texts)
+        done = next(t for t in texts if "✅ Done" in t and "Cost:" in t)
+        assert done.startswith(
+            "All good — nothing to change."
+        )  # the answer itself, then the footer
         assert br.status()["messages_in"] == 1 and br.status()["running"]
         assert tl.store.events(tl.session_id)  # audit trail includes the remote message
         types = [e["type"] for e in tl.store.events(tl.session_id)]
@@ -128,9 +131,7 @@ async def test_steering_answers_and_commands(project: Path, _trendlab_home: Path
                 m["text"].startswith("💬 Answered: sqlite") for m in fake.sent("sendMessage")
             )
         )
-        assert await _wait(
-            lambda: any(m["text"].startswith("✅ Done") for m in fake.sent("sendMessage"))
-        )
+        assert await _wait(lambda: any("✅ Done" in m["text"] for m in fake.sent("sendMessage")))
         assert br._pending_question is None
         # Commands run through the router; output comes back; dangerous ones are refused.
         n = len(fake.sent("sendMessage"))
@@ -186,7 +187,7 @@ async def test_steering_while_running(project: Path, _trendlab_home: Path, monke
             m.get("content") == "also add tests" for m in tl.context.messages
         )
         assert await _wait(
-            lambda: any(m["text"].startswith("✅ Done") for m in fake.sent("sendMessage")), n=600
+            lambda: any("✅ Done" in m["text"] for m in fake.sent("sendMessage")), n=600
         )
     finally:
         await tl.stop()
@@ -239,9 +240,7 @@ async def test_bridge_shares_poller_with_button_channel(
             }
         )
         assert await _wait(lambda: (project / "n.txt").exists(), n=600)
-        assert await _wait(
-            lambda: any(m["text"].startswith("✅ Done") for m in fake.sent("sendMessage"))
-        )
+        assert await _wait(lambda: any("✅ Done" in m["text"] for m in fake.sent("sendMessage")))
         # No duplicate "approval needed" text while the button channel is on.
         assert not any(m["text"].startswith("⏳ Approval needed") for m in fake.sent("sendMessage"))
     finally:

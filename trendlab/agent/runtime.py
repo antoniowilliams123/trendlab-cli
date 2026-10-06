@@ -485,6 +485,7 @@ class AgentRuntime:
             session_id=self.session_id,
             role=self.role,
             stop_reason=stop_reason,
+            text=(text or "")[:3000],
             changed_files=ev.changed_files,
             validated=ev.validated,
             cost_usd=round(self.costs.total_usd, 4),

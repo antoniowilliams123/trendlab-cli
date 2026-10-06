@@ -284,6 +284,12 @@ class TelegramBridge:
                 self.messages_out += 1
             except TelegramError as exc:
                 self.last_error = str(exc)
+                self.events.emit(
+                    EventType.REMOTE_DELIVERY_FAILED,
+                    session_id=self.app.session_id,
+                    channel=self.name,
+                    error=str(exc)[:200],
+                )
                 return
             if i < len(chunks) - 1:
                 await asyncio.sleep(0.5)
@@ -300,7 +306,12 @@ class TelegramBridge:
                 EventType.RUN_FAILED: "❌ Stopped",
                 EventType.RUN_CANCELED: "■ Canceled",
             }[t]
-            parts = [head]
+            parts = []
+            answer = str(d.get("text") or "").strip()
+            if answer and self.cfg.send_answers:
+                parts.append(answer[:3000] + ("\n…" if len(answer) > 3000 else ""))
+                parts.append("")
+            parts.append(head)
             if d.get("stop_reason"):
                 parts.append(f"Reason: {d['stop_reason']}")
             if d.get("changed_files"):

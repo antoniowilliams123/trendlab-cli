@@ -129,6 +129,7 @@ class TelegramBridgeConfig(BaseModel):
     enabled: bool = False
     allow_commands: bool = True  # slash commands from the chat (permission/approval ones never)
     announce: bool = True  # "online"/"session ended" messages on start and stop
+    send_answers: bool = True  # include the model's answer in the completion message
 
 
 class McpServerConfig(BaseModel):
