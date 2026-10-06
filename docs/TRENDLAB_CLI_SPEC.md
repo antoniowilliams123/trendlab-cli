@@ -2,7 +2,7 @@
 
 ## Product Requirements & Technical Specification
 
-**Version 1.4 — the complete record of what was built. §89 (Implementation Record) lists every
+**Version 1.5 — the complete record of what was built. §89 (Implementation Record) lists every
 change by date, including decisions made after the original specification (2026-10-05). §90
 specifies the second round of daily-driver features (sandbox, diagnostics, parallel tools, custom
 commands, `@file`, background processes, branching, plan gate, Telegram buttons, packaging).**
@@ -3825,6 +3825,11 @@ decisions taken after the original specification. Newest last.
     (§90.16). 271 cases (incl. rescue of an announced call after long prose and the "announced but not called" nudge).
 -   Enter no longer swallowed by a trailing path backslash; small local
     models flagged experimental (§90.17). 273 cases.
+-   Full UX/UI audit against Claude Code, 40-point rubric, every finding
+    fixed (§91, `docs/UX_AUDIT_2026-10-05.md`): tool.skipped events and
+    activity lines in both UIs, prompt history, slash-command menu,
+    compact layout, async update check, streaming retries, auth hints.
+    286 cases.
 
 ------------------------------------------------------------------------
 
@@ -4092,4 +4097,94 @@ only when it is preceded by whitespace (`foo \`) or stands alone. A
 backslash glued to a word is text. Small local Ollama models are also
 now labelled "experimental for agent work" in the picker (parameter
 count from `/api/tags`, below 30B) and the switch receipt warns.
+
+------------------------------------------------------------------------
+
+## 91. UX / UI Audit Against Claude Code and the Fixes (2026-10-05)
+
+Owner's instruction: "do the full audit and fix everything you find,
+update the spec in the end." The rubric, method, before/after scores and
+evidence per check are in `docs/UX_AUDIT_2026-10-05.md` (40 checks; 17 ✓
+before, 40 ✓ after). This section records what changed in the product.
+
+### 91.1 Transparency: every tool attempt leaves a trace
+
+-   New event `tool.skipped {tool, reason, detail, message}` for calls
+    that never ran: `denied`, `not_approved`, `invalid_args`,
+    `unknown_tool`, `malformed`, `hook_blocked`, `plan_rejected`,
+    `checkpoint_failed`. Before, these were silent in the transcript
+    (the model saw the error; the person saw nothing).
+-   `tool.started` carries `detail` (the command, path, pattern, query,
+    question or plan action), `command` and `files`; `tool.completed`
+    carries `lines`, a two-line `preview` (not for `read_file`) and the
+    first `error` line when it failed.
+-   One renderer, `trendlab/ui/activity.py::format_event`, draws activity
+    for both the TUI and the plain REPL — which previously showed no tool
+    activity at all. Diagnostics, parallel groups, retries, fallbacks,
+    compaction, loop detection, steering, attachments, remote messages,
+    plan gate and branching all have a line. BMP glyphs only (`✓ ✗ ⚠ ● ⇉
+    ⟳ ⤳ ⇅ ⑂`); emoji rendered as boxes or double-width in some terminals.
+-   Answer first, then one quiet footer line from `run_footer`: outcome,
+    calls, elapsed, cost, changed files, validation state. The old
+    "✓ Completed" heading above the answer and the "Cost" Markdown block
+    are gone from the UIs (the JSON/report contract of §50 is unchanged).
+-   A terminal bell after runs longer than 8 s.
+
+### 91.2 Input ergonomics
+
+-   Prompt history (`trendlab/ui/history.py`): per project, persisted to
+    `~/.trendlab/history/<hash>.jsonl`, deduplicated, slash commands
+    excluded. Ctrl+↑ / Ctrl+↓ always; plain ↑/↓ on a one-line prompt when
+    the mouse is captured (then the wheel is a real mouse event). With
+    the mouse released the wheel arrives as ↑/↓ and scrolls the
+    transcript, so history stays on Ctrl in that mode — the one place
+    where the copy-and-paste fix (§90.11) costs a key.
+-   Slash-command menu (`CommandPicker`): typing a bare `/…` opens a
+    filterable list built from `HELP` plus custom commands
+    (`command_catalog`); ↑↓ move, Tab or Enter complete to `/name `;
+    Enter on an exact name sends. Textual's own command palette
+    (Ctrl+P: themes, screenshots) is disabled.
+-   Placeholder in the prompt box: "type a task · / commands · @ files ·
+    Ctrl+↑↓ history · Esc interrupts".
+
+### 91.3 Layout and startup
+
+-   Header collapses to one line under 30 rows (`#header.compact`); the
+    plan panel is shown only when a plan exists and the width is ≥ 100;
+    the status bar drops the mouse hint under 110 columns and the model
+    under 90 (the header shows it). Transcript at 80×24: 17 rows instead
+    of 12.
+-   The daily update check left the startup path: a worker thread in the
+    TUI, an executor in the REPL; the hint appears in the transcript when
+    there is one. Startup no longer waits on the network.
+-   `telegram_bridge.announce` (default true) controls the "online" /
+    "session ended" messages.
+
+### 91.4 Error paths
+
+-   Streaming calls now retry retryable provider errors with the gateway's
+    backoff (`provider.retry` events) before falling back to the next
+    model; before, a single rate-limit on the TUI's streaming path failed
+    the run while the non-streaming path retried.
+-   Authentication failures print the fix: `→ run: trendlab secret set
+    VAR`. Fallback lines name the model that failed.
+-   Approval events carry `kind`; questions no longer render as
+    "approved at the keyboard" and the raw `USER ANSWER` echo is gone;
+    a denial after a prompt prints one terse skipped line.
+
+### 91.5 Audit findings that were test-harness artefacts
+
+The "`'int' object has no attribute 'append'`" seen during the overflow
+scenario was a fake provider in the audit script shadowing
+`ScriptedProvider.calls` with a counter — not a product defect. Recorded
+here so it is not chased again.
+
+### 91.6 Still open (not at par with Claude Code)
+
+-   Streaming tool output while a long command runs (TrendLab shows the
+    preview when the tool finishes).
+-   A side-by-side measurement on identical tasks; the rubric's Claude
+    Code column is the owner's daily experience, not a run.
+-   Arrow-key history in the plain REPL (its line reader is a thread
+    over stdin; readline integration is a later change).
 

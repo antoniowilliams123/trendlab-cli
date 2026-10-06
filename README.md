@@ -50,6 +50,7 @@ another device.
 | **Branch a conversation** | `/branch` forks the session to try another idea, `/tree` shows the family, `/resume` jumps back. |
 | **Remote control from Telegram** | Turn it on and your chat becomes a second keyboard for the running session: a message starts a task, text while it runs steers it, replies answer the agent's questions, `/status` `/plan` `/diff` `/cost` `/stop` work, and every run reports back. |
 | **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
+| **See everything it does** | Every tool call shows what ran (the command, path or query), a preview of what came back, the first error line when it failed, and a reason when a call was denied, invalid or blocked. Answer first, then one quiet line: calls, time, cost, changed files, validated or not. Same in the plain REPL. |
 | **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, `@file.png` or `/paste` to attach screenshots, type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
 | **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
 
@@ -58,6 +59,16 @@ another device.
 <p align="center">
   <img src="docs/screenshots/tui-approval.png" alt="Approval modal with the proposed diff inline" width="920">
   <br><sub>An approval request: the exact diff, risk level, expiry, and one-key decisions. The same request is waiting on your phone.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/transcript_activity.png" alt="Transcript: every tool call with its command, output preview, and reasons for denied or invalid calls" width="920">
+  <br><sub>Every tool call shows what ran and what came back. A denied sudo and an invalid edit are visible with their reasons instead of disappearing.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/slash_menu.png" alt="Slash-command menu" width="920">
+  <br><sub>Type / and pick a command; Tab or Enter completes it. Ctrl+↑/↓ recall earlier prompts.</sub>
 </p>
 
 <p align="center">
@@ -105,6 +116,7 @@ Install globally with `pipx install git+https://github.com/antoniowilliams123/tr
 Inside a session: `/model`, `/plan`, `/diff`, `/undo`, `/cost`, `/review`, `/commit`, `/pr`,
 `/issue`, `/worktree`, `/branch`, `/tree`, `/bg`, `/commands`, `/resume`, `/export`, `/image`,
 `/paste`, `/remote`, `/approvals`, `/help`. Type `@` and a few letters to pick a file to attach.
+Type `/` for a filterable command menu, Ctrl+↑/↓ for prompt history.
 TUI keys: F1 help, F2 plan, F3 cost, F4 mouse, F5 model, **Esc interrupts** the current step and keeps the
 conversation, and **typing while it runs steers it**: your message is delivered before the next
 model call.
@@ -220,12 +232,14 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 273 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 286 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-The product specification, including a dated implementation record of every change, is in
+The UX/UI audit against Claude Code (40 checks, before/after, evidence per check) is in
+[`docs/UX_AUDIT_2026-10-05.md`](docs/UX_AUDIT_2026-10-05.md); `scripts/ux_screenshots.py`
+regenerates the screenshots. The product specification, including a dated implementation record of every change, is in
 [`docs/TRENDLAB_CLI_SPEC.md`](docs/TRENDLAB_CLI_SPEC.md). Build history is in
 [`BUILD_STATUS.md`](BUILD_STATUS.md).
 
