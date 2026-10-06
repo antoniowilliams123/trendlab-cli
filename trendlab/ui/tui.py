@@ -747,6 +747,8 @@ class TrendLabTUI(App[None]):
             )
         elif t == EventType.STEERED:
             self.log_line(f"[bold {MINT}]↳ steering applied[/]")
+        elif t == EventType.PATHS_TRANSLATED:
+            self.log_line(f"[{GREY}]↳ translated {d.get('count')} Windows path(s) to WSL paths[/]")
         elif t == EventType.REMOTE_MESSAGE:
             self.log_line(f"[bold {MINT}]📱 Telegram ❯[/] [{MINT}]{d.get('text')}[/]")
         elif t == EventType.REMOTE_CHANNEL_STARTED and d.get("channel") == "telegram-bridge":

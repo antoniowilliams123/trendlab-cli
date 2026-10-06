@@ -115,6 +115,9 @@ size, price per million and whether its key is in place. Type to filter, ↑↓,
 conversation, plan and session carry over. `/model haiku` or `/model mini` switch directly by
 partial name.
 
+On WSL, Windows paths pasted into a prompt (`\\wsl$\Ubuntu\…`, `C:\…`) are translated to their
+Linux form before the model sees them.
+
 The TUI leaves the mouse to your terminal, so drag-select and copy (Ctrl+Shift+C, right-click)
 work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. Press F4 (or
 `/mouse on`) when you want the app to take the mouse for clicking buttons.
@@ -211,7 +214,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 256 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 259 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

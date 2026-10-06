@@ -49,6 +49,7 @@ class EventType(StrEnum):
     DIAGNOSTICS = "tool.diagnostics"
     TOOLS_PARALLEL = "tool.parallel"
     FILES_ATTACHED = "prompt.files_attached"
+    PATHS_TRANSLATED = "prompt.paths_translated"  # Windows → WSL paths rewritten
     CUSTOM_COMMAND = "prompt.custom_command"
     SANDBOX_STATUS = "security.sandbox"
     HOOK_RUN = "hook.run"

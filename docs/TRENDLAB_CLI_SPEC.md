@@ -3816,6 +3816,7 @@ decisions taken after the original specification. Newest last.
     <name>` (§90.13). 256 cases. Live config now prices every remote model
     in the catalog (DeepSeek ×2, OpenAI GPT-5 / mini / nano, Claude Opus /
     Sonnet / Haiku); Ollama rows are free.
+-   Windows → WSL path translation in prompts (§90.14). 259 cases.
 
 ------------------------------------------------------------------------
 
@@ -4013,3 +4014,15 @@ always accepted; otherwise a unique substring match (`/model haiku`,
 The plain REPL shows the same catalog as a numbered table and reads a
 number. Receipt line: `model → ref [REMOTE] · ctx · price · conversation
 kept`.
+
+### 90.14 Windows Paths in Prompts (`trendlab/ui/winpaths.py`)
+
+Owner's report: a prompt containing `\\wsl$\Ubuntu\home\tony\…` was
+refused by a local model as "outside the project". On WSL, prompts are
+rewritten before the model sees them: `\\wsl$\<distro>\…` and
+`\\wsl.localhost\<distro>\…` become the Linux path, `C:\…` becomes
+`/mnt/c/…`. URLs and times are untouched; nothing changes on a non-WSL
+host. The TUI notes "translated N Windows path(s)" and the event
+`prompt.paths_translated` is audited. (The model in that session was
+`gemma4`, a chat model; for coding tasks the local pick is
+`qwen2.5-coder:14b`.)

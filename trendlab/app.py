@@ -52,6 +52,7 @@ from trendlab.tools.task_tool import TaskTool
 from trendlab.ui.attachments import build_user_content, text_of
 from trendlab.ui.console import ConsoleInput
 from trendlab.ui.file_refs import expand_file_refs
+from trendlab.ui.winpaths import translate_windows_paths
 
 
 def machine_name(config: AppConfig) -> str:
@@ -393,6 +394,11 @@ class TrendLabApp:
             self.plan_gate.reset()
         images = [*self.pending_images, *(images or [])]
         self.pending_images = []
+        prompt, translated = translate_windows_paths(prompt)
+        if translated:
+            self.events.emit(
+                EventType.PATHS_TRANSLATED, session_id=self.session_id, count=translated
+            )
         prompt, attached = expand_file_refs(prompt, self.project_root)
         if attached:
             self.events.emit(EventType.FILES_ATTACHED, session_id=self.session_id, files=attached)
