@@ -49,6 +49,8 @@ HELP = """\
 /models                    Configured providers/models
 /review                    Run the reviewer sub-agent on the current diff
 /init                      Detect project tooling and draft TRENDLAB.md
+/memory [forget <n>|clear] Facts learned about this project (.trendlab/memory.md)
+/remember <fact>           Add a fact to project memory by hand
 /skills [use <name>]       Reusable instruction packs      /hooks    Configured hooks
 /commands [new <name>|reload]   Your own slash commands from .trendlab/commands/*.md
 /bg [logs <id> [n]|stop <id>]   Background processes started by the agent (dev servers, watchers)
@@ -134,6 +136,8 @@ class CommandRouter:
             "/review": self._review,
             "/init": self._init,
             "/skills": self._skills,
+            "/memory": self._memory,
+            "/remember": self._remember,
             "/commands": self._commands,
             "/bg": self._bg,
             "/hooks": self._hooks,
@@ -790,8 +794,7 @@ class CommandRouter:
                 self.console.print(f"[red]unknown skill {args[1]}[/red]")
                 return
             lib.activate(skill.name)
-            if self.app.context:
-                self.app.context.system_prompt = lib.apply(self.app.context.system_prompt)
+            self.app.refresh_system_prompt()
             self.console.print(f"[green]skill {skill.name} active[/green]: {skill.description}")
             return
         t = Table(title="Skills")
@@ -807,6 +810,46 @@ class CommandRouter:
         self.console.print(
             t if lib.list() else "[dim]no skills found (~/.trendlab/skills/<name>/SKILL.md)[/dim]"
         )
+
+    async def _memory(self, args: list[str]) -> None:
+        mem = self.app.memory
+        if mem is None:
+            self.console.print("[dim]project memory is disabled ([memory] enabled = false)[/dim]")
+            return
+        if args and args[0] == "clear":
+            n = mem.clear()
+            self.app.refresh_system_prompt()
+            self.console.print(f"[green]forgot {n} fact(s)[/green]")
+            return
+        if args and args[0] == "forget" and len(args) > 1 and args[1].isdigit():
+            gone = mem.forget(int(args[1]))
+            self.app.refresh_system_prompt()
+            self.console.print(
+                f"[green]forgot:[/green] {gone}" if gone else "[red]no such entry[/red]"
+            )
+            return
+        if not mem.facts:
+            self.console.print(
+                f"[dim]nothing remembered yet — facts are learned after runs that edit, validate "
+                f"or get steered; /remember <fact> adds one ({mem.path})[/dim]"
+            )
+            return
+        self.console.print(f"[bold]Project memory[/bold] [{GREY}]{mem.path}[/]")
+        for i, (when, fact) in enumerate(mem.entries, 1):
+            self.console.print(f"  {i:>2}. {fact} [{GREY}]{when}[/]")
+        self.console.print(f"[{GREY}]/memory forget <n> · /memory clear · /remember <fact>[/]")
+
+    async def _remember(self, args: list[str]) -> None:
+        mem = self.app.memory
+        text = " ".join(args).strip()
+        if mem is None or not text:
+            self.console.print("[red]usage: /remember <fact about this project>[/red]")
+            return
+        if mem.add(text):
+            self.app.refresh_system_prompt()
+            self.console.print(f"[green]remembered:[/green] {text}")
+        else:
+            self.console.print("[dim]already remembered (or too short)[/dim]")
 
     async def _commands(self, args: list[str]) -> None:
         lib = self.app.custom_commands

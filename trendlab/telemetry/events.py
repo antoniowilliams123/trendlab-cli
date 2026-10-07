@@ -59,6 +59,7 @@ class EventType(StrEnum):
     STEERED = "run.steered"
     IMAGES_ATTACHED = "run.images_attached"
     VISION_AUTOSWITCH = "model.vision_autoswitch"  # image prompt routed to a vision model
+    MEMORY_UPDATED = "memory.updated"  # project memory gained facts
     PROJECT_ROOT_CHANGED = "session.project_root_changed"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"

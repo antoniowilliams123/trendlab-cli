@@ -163,6 +163,10 @@ def format_event(event: Event) -> str | None:
             f"[bold {MINT}]👁 using {d.get('to_model')} for this prompt[/] "
             f"[{GREY}](cheapest model that can see images; back to {d.get('from_model')} after)[/]"
         )
+    if t == EventType.MEMORY_UPDATED:
+        added = d.get("added") or []
+        shown = "; ".join(escape(str(a)) for a in added[:3]) + (" …" if len(added) > 3 else "")
+        return f"[{MINT}]🧠 remembered for this project:[/] [{GREY}]{shown}[/]"
     if t == EventType.IMAGES_ATTACHED:
         return f"[{GREY}]🖼 attached {', '.join(d.get('images') or [])}[/]"
     return None

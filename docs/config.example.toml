@@ -29,6 +29,12 @@ timeout_seconds = 60
 # [diagnostics.commands]
 # ".py" = ["ruff check --output-format concise {files}", "pyright {files}"]
 
+# Project memory across sessions (spec §92.1): .trendlab/memory.md, learned after noteworthy runs
+[memory]
+enabled = true
+learn = true                     # extract facts with the summarizer role after runs that edit/validate
+max_entries = 60
+
 # Hold the first change of every run until you approve the plan (terminal, phone, Telegram)
 [plan_gate]
 enabled = false                  # or: trendlab --plan-gate · /plan gate on

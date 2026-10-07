@@ -187,8 +187,6 @@ async def test_repl_switches_unsafe_off_and_on(project, _trendlab_home):
         await repl.handle_command("/mode ask")
         assert tl.engine.mode == PermissionMode.ASK
         await repl.handle_command("/mode unsafe")
-        assert (
-            "AUTO" in console.export_text(clear=True) and tl.engine.mode == PermissionMode.UNSAFE
-        )
+        assert "AUTO" in console.export_text(clear=True) and tl.engine.mode == PermissionMode.UNSAFE
     finally:
         await tl.stop()

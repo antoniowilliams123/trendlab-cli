@@ -4,6 +4,8 @@ tools → agent. UI layers (REPL, Textual TUI) talk to ``TrendLabApp`` and conta
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -28,6 +30,13 @@ from trendlab.config.loader import trendlab_home
 from trendlab.config.schema import AppConfig, PermissionMode
 from trendlab.context.ignore import IgnoreRules
 from trendlab.context.manager import ContextManager
+from trendlab.context.project_memory import (
+    LEARN_PROMPT,
+    ProjectMemory,
+    deterministic_facts,
+    noteworthy,
+    parse_facts,
+)
 from trendlab.context.repository_map import RepositoryMap
 from trendlab.context.validation import validation_commands
 from trendlab.orchestration.subagents import SubAgentRunner, delegate_tool_factory
@@ -101,6 +110,10 @@ class TrendLabApp:
         self.web_channel: WebApprovalChannel | None = None
         self.telegram_channel: TelegramChannel | None = None
         self.plan_gate: PlanGate | None = None
+        self.memory: ProjectMemory | None = None
+        self._run_steering: list[str] = []
+        self._run_failures = 0
+        self._learn_task: asyncio.Task | None = None
         self.telegram_bridge: TelegramBridge | None = None
         # A UI may take over how remote prompts are started (TUI: its transcript + run task).
         self.on_remote_prompt: Callable[[str], Awaitable[None]] | None = None
@@ -183,7 +196,7 @@ class TrendLabApp:
             self.config.context,
             self.events,
             self.session_id,
-            system_prompt=build_system_prompt(self.project_root),
+            system_prompt=self._system_prompt_for(self.project_root),
             context_window=info.context_window or self.config.context.default_context_window,
             summarizer=self._summarize,
         )
@@ -256,6 +269,7 @@ class TrendLabApp:
         )
         await self._start_extensions()
         self.events.subscribe(self._notify_run_events)
+        self.events.subscribe(self._track_run_signals)
         self.events.emit(
             EventType.SESSION_RESUMED if self.resumed else EventType.SESSION_STARTED,
             session_id=self.session_id,
@@ -269,7 +283,15 @@ class TrendLabApp:
             await self.hooks.run("session_start")
         if self.notifier is not None and self.config.notifications.reminder_at_fraction > 0:
             self._reminder_task = asyncio.create_task(self._reminder_loop())
-        if self.config.telegram_bridge.enabled:
+        if self.config.telegram_bridge.enabled and os.environ.get(
+            "TRENDLAB_TELEGRAM", ""
+        ).lower() not in {
+            "off",
+            "0",
+            "false",
+        }:
+            # TRENDLAB_TELEGRAM=off keeps a second process (tests, scripts, a parallel session)
+            # from fighting the interactive session for the bot's single update stream.
             try:
                 await self.enable_telegram_bridge()
             except TelegramError as exc:
@@ -369,6 +391,8 @@ class TrendLabApp:
             await self.hooks.run("session_end")
         if self.mcp is not None:
             await self.mcp.stop()
+        if self._learn_task is not None and not self._learn_task.done():
+            self._learn_task.cancel()
         if self.telegram_bridge is not None:
             await self.telegram_bridge.stop()
             self.telegram_bridge = None
@@ -422,11 +446,15 @@ class TrendLabApp:
                         from_model=restore_model,
                         to_model=vision,
                     )
+        self._run_steering = []
+        self._run_failures = 0
         try:
             result = await self.agent.run(content)
         finally:
             if restore_model is not None:
                 self.switch_model(restore_model)
+        # Memory extraction runs in the background so a slow summarizer never holds the session.
+        self._learn_task = asyncio.create_task(self._learn_guarded(result))
         if self._run_checkpoint is not None and self.checkpoints is not None:
             self.checkpoints.seal(self._run_checkpoint["id"])
         self._save_state()
@@ -438,6 +466,91 @@ class TrendLabApp:
         if self.plan_gate is not None:
             await self.plan_gate.check(files)  # raises PlanRejected → mutation refused
         await self._checkpoint_before_mutation(files)
+
+    # -- project memory --------------------------------------------------------------------------
+    def _system_prompt_for(self, root: Path) -> str:
+        base = build_system_prompt(root)
+        if self.config.memory.enabled:
+            if self.memory is None or self.memory.path.parent.parent != root:
+                self.memory = ProjectMemory(root, max_entries=self.config.memory.max_entries)
+            base += self.memory.render_for_prompt()
+        return base
+
+    def refresh_system_prompt(self) -> None:
+        """Rebuild the system prompt (memory changed, skills changed); applied at the next run."""
+        if self.context is None:
+            return
+        prompt = self._system_prompt_for(self.project_root)
+        if self.skills is not None and getattr(self.skills, "active", None):
+            prompt = self.skills.apply(prompt)
+        self.context.system_prompt = prompt
+
+    def _track_run_signals(self, event: Event) -> None:
+        if event.type == EventType.STEERED:
+            self._run_steering.append(str(event.data.get("text", "")))
+        elif event.type == EventType.TOOL_COMPLETED and not event.data.get("ok", True):
+            self._run_failures += 1
+        elif event.type == EventType.TOOL_SKIPPED:
+            self._run_failures += 1
+
+    async def _learn_guarded(self, result: RunResult) -> None:
+        try:
+            await asyncio.wait_for(self.learn_from_run(result), timeout=90)
+        except (TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception:  # noqa: BLE001 — never surface memory problems as run failures
+            pass
+
+    async def wait_for_learning(self) -> None:
+        """Block until background memory extraction for the last run has finished (tests)."""
+        if self._learn_task is not None and not self._learn_task.done():
+            await self._learn_task
+
+    async def learn_from_run(self, result: RunResult) -> list[str]:
+        """Extract durable project facts from a finished run into .trendlab/memory.md."""
+        if self.memory is None or not (self.config.memory.enabled and self.config.memory.learn):
+            return []
+        evidence = {
+            "changed_files": list(result.changed_files),
+            "validation_runs": list(result.validation_runs),
+            "steering": list(self._run_steering),
+            "failures": self._run_failures,
+            "status": result.status,
+            "stop_reason": result.stop_reason,
+        }
+        if not noteworthy(evidence) or result.model_calls < 2:
+            return []
+        facts: list[str] = []
+        try:
+            msgs = self.agent.messages[-24:] if self.agent else []
+            lines = []
+            for m in msgs:
+                content = m.get("content")
+                if isinstance(content, list):
+                    content = text_of(content)
+                text = " ".join(str(content or "").split())[:400]
+                if text:
+                    lines.append(f"{m.get('role')}: {text}")
+            prompt = LEARN_PROMPT.format(
+                existing="\n".join(f"- {f}" for f in self.memory.facts[-30:]) or "(empty)",
+                evidence=json.dumps(evidence, default=str)[:2000],
+                transcript="\n".join(lines)[-6000:],
+            )
+            answer = await self._summarize([{"role": "user", "content": prompt}])
+            facts = parse_facts(answer)
+        except Exception:  # noqa: BLE001 — learning is best effort
+            facts = deterministic_facts(evidence)
+        added = self.memory.add_many(facts)
+        if added:
+            self.refresh_system_prompt()
+            self.events.emit(
+                EventType.MEMORY_UPDATED,
+                session_id=self.session_id,
+                added=added,
+                total=len(self.memory.facts),
+                path=str(self.memory.path),
+            )
+        return added
 
     async def _checkpoint_before_mutation(self, files: list[str]) -> None:
         if self.checkpoints is None:
@@ -711,7 +824,8 @@ class TrendLabApp:
         self.context.repo_map_text = self.repo_map.render(
             self.config.context.repo_map_budget_tokens * 4
         )
-        self.context.system_prompt = build_system_prompt(new_root)
+        self.memory = None
+        self.context.system_prompt = self._system_prompt_for(new_root)
         self.checkpoints = CheckpointManager(new_root, self.store, self.session_id)
         if self.subagents is not None:
             self.subagents.parent_ctx = self.tools.ctx

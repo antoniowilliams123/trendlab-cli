@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-294%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-298%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.5%20%C2%B7%2091%20sections-39ff14?style=flat-square&labelColor=000000"></a>
@@ -47,6 +47,7 @@ another device.
 | **Sandboxed shell** | Commands run under bubblewrap: read-only system, writable project, private `/tmp`, no network unless the command is a network or package tool. Defence in depth under the permission engine. |
 | **Fixes its own mistakes early** | After every edit the matching linters and type-checkers run (ruff, pyright, tsc, eslint, cargo check, go vet) and problems go straight back to the model. Read-only tool calls run in parallel. |
 | **Your own commands** | `.trendlab/commands/review.md` becomes `/review-style` with `$ARGUMENTS`; `@path` attaches a file with a fuzzy picker in the TUI; `background_process` keeps a dev server running while the agent works. |
+| **Remembers your project** | After a run that edits, validates or gets corrected, the agent writes the durable facts it learned (how tests run, conventions, pitfalls) to `.trendlab/memory.md` and loads them into every later session. `/memory` shows them, `/remember` adds one. |
 | **Branch a conversation** | `/branch` forks the session to try another idea, `/tree` shows the family, `/resume` jumps back. |
 | **Remote control from Telegram** | Turn it on and your chat becomes a second keyboard for the running session: a message starts a task, text while it runs steers it, replies answer the agent's questions, `/status` `/plan` `/diff` `/cost` `/stop` work, and every run reports back. |
 | **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
@@ -245,7 +246,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 294 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 298 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

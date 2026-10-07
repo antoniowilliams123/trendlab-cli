@@ -4302,3 +4302,27 @@ field `mode` now records `auto`. The rules themselves are unchanged.
 Other words (denied, blocked, privileged) were left as they are at the
 owner's request.
 
+------------------------------------------------------------------------
+
+## 92. Self-Healing Round (overnight, 2026-10-06)
+
+Owner: "take your time and work through these while I sleep." The five
+improvements proposed after the self-healing assessment, in order.
+
+### 92.1 Project memory across sessions (`trendlab/context/project_memory.py`)
+
+`<project>/.trendlab/memory.md` — one durable fact per line, dated —
+is loaded into the system prompt at session start (newest facts first
+within a 6 000-char budget) and refreshed whenever it changes. After a
+**noteworthy** run (files changed, validation ran, the user steered, or
+a tool failed; and at least two model calls) the summarizer role is
+asked, with the existing memory and the run's evidence, for 0–6 facts
+"still true next week": how tests/lint run, conventions, corrections,
+pitfalls. Task narration is excluded by prompt; duplicates are dropped
+by normalised text; the file is capped (`memory.max_entries`, default
+60). If the summarizer fails, the certain facts are kept instead
+(passing validation commands, steering lines). `/memory`, `/memory
+forget <n>`, `/memory clear`, `/remember <fact>`; event `memory.updated`
+with a "🧠 remembered" line. `[memory] enabled/learn` switch it off.
+Cost: one cheap summarizer call per noteworthy run.
+

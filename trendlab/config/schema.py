@@ -141,6 +141,14 @@ class TelegramBridgeConfig(BaseModel):
     send_answers: bool = True  # include the model's answer in the completion message
 
 
+class MemoryConfig(BaseModel):
+    """Project memory across sessions (spec §92.1): .trendlab/memory.md."""
+
+    enabled: bool = True
+    learn: bool = True  # extract facts after noteworthy runs (uses the summarizer role)
+    max_entries: int = Field(default=60, ge=5, le=500)
+
+
 class McpServerConfig(BaseModel):
     command: str
     args: list[str] = Field(default_factory=list)
@@ -264,6 +272,7 @@ class AppConfig(BaseModel):
     hooks: list[HookConfig] = Field(default_factory=list)
     sandbox: SandboxConfig = SandboxConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    memory: MemoryConfig = MemoryConfig()
     plan_gate: PlanGateConfig = PlanGateConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
