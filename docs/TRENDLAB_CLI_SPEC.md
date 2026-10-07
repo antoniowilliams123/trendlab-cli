@@ -2,7 +2,7 @@
 
 ## Product Requirements & Technical Specification
 
-**Version 1.5 — the complete record of what was built. §89 (Implementation Record) lists every
+**Version 1.6 — the complete record of what was built. §89 (Implementation Record) lists every
 change by date, including decisions made after the original specification (2026-10-05). §90
 specifies the second round of daily-driver features (sandbox, diagnostics, parallel tools, custom
 commands, `@file`, background processes, branching, plan gate, Telegram buttons, packaging).**
@@ -3492,6 +3492,42 @@ The workflow remains portable even when model vendors change.
 
 ## 84. Future Roadmap
 
+### Next eight (owner's request, 2026-10-06): "what would make it the best in the world overnight"
+
+Each is a few hours on top of what exists; ordered by impact, with the
+recommended build order 1, 2, 7, 3, then 4, 6, 5, 8 (the first four
+compound: swarm + critic gate make the autopilot trustworthy, scheduling
+runs it unattended).
+
+1.  **Swarm mode** — `/swarm "<task>"`: plan a split, run each part as a
+    sub-agent in its own git worktree (manager exists, §26), merge, run
+    the tests once. One prompt, many hands, no shared-file collisions.
+2.  **Critic gate** — before "done", the reviewer role (a different
+    model) reads the diff and approves or returns findings the author
+    must fix, up to two rounds; `/review` becomes the exit criterion.
+3.  **Scheduled autonomous jobs** — `trendlab schedule "02:00 run the
+    tests, fix failures, open a PR"`: cron entry, headless run with
+    project memory, result posted to Telegram.
+4.  **Browser tool** — headless Chrome via Playwright: open, click, fill,
+    screenshot; the screenshot returns to the model as an image through
+    the vision routing (§91.7), so the agent verifies web changes it made.
+5.  **Learned skills** — a cleanly completed multi-step run is distilled
+    into a draft `SKILL.md` (steps, commands, pitfalls) that the user
+    approves with one key. Memory (§92.1) stores facts; this stores
+    procedures.
+6.  **Semantic code search** — local embeddings (Ollama embedding model
+    or the OpenAI endpoint) over the repository map, refreshed on change,
+    exposed as `search_code` beside grep.
+7.  **Issue-to-PR autopilot** — `trendlab issue 42 --pr`: pull the issue,
+    branch, plan, implement, test, critic gate, open the PR with
+    "Closes #42", report to Telegram. Every piece exists; this is the
+    end-to-end command (CI-agent mode).
+8.  **Python plugin tools + streaming event API** — `.trendlab/tools/*.py`
+    register as tools with a declared permission category;
+    `trendlab -p … --output stream` emits one JSON event per line for IDE
+    extensions and other front ends.
+
+
 ### Next move (owner's decision, 2026-10-05): more agent-grade models through OpenRouter
 
 Keep DeepSeek Flash as the daily driver (proven on the owner's tasks,
@@ -3861,6 +3897,33 @@ decisions taken after the original specification. Newest last.
     (§90.16). 271 cases (incl. rescue of an announced call after long prose and the "announced but not called" nudge).
 -   Enter no longer swallowed by a trailing path backslash; small local
     models flagged experimental (§90.17). 273 cases.
+### 2026-10-06 — Overnight self-healing round, wording, image paste, GitHub
+-   Overnight (§92): project memory, quality-triggered escalation with
+    per-run restore (`routing.escalation = deepseek-v4-pro` in the owner's
+    config), streaming tool output, live failure drills (fallback 2.5 s;
+    restart mid-approval cancels cleanly), readline history in the REPL.
+    304 cases. Self-healing re-scored 8.5 → 9; overall vs Claude Code and
+    Codex 9.2.
+-   Wording: `unsafe` → `auto`, `destructive` → `irreversible` in every
+    user-facing string, aliases kept (§91.8); all screenshots regenerated
+    with versioned filenames so caches cannot show old wording.
+-   Image paste: Alt+V / Ctrl+I / Ctrl+V (Windows Terminal keeps Ctrl+V,
+    confirmed from the owner's `settings.json`; Claude Code documents the
+    same Alt+V fallback), pasted image paths attach, vision prompts
+    auto-route to the cheapest vision model and switch back (§91.7).
+-   Telegram: completion messages carry the answer; `/model` from the
+    phone lists instead of blocking; per-update handler tasks with a
+    deadline (§90.12). `TRENDLAB_TELEGRAM=off` for secondary processes.
+-   GitHub: v0.2.0 release with wheel, README refresh with Engineering
+    notes, repo topics; portfolio site and profile cards updated (421
+    tests across public systems). Secrets sweep: none of the owner's keys
+    appear in any public history, wheel or release note. Open: the repo
+    sidebar's contributors widget still shows a stale "claude" entry
+    although the API, statistics and history show the owner only;
+    private→public flip did not clear it; recreating the repository is
+    the guaranteed fix, awaiting the owner's go-ahead.
+-   Models: qwen2.5-coder:14b and gemma4 deleted (failed every live
+    task); supergemma4-26b kept; OpenRouter plan recorded (§84).
 -   Local models `qwen2.5-coder:14b` and `gemma4` deleted at the owner's
     request after failing every live task; `supergemma4-26b-uncensored`
     kept. Next move recorded in §84: OpenRouter + six agent-grade models,

@@ -13,7 +13,7 @@
   <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-304%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
-  <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.5%20%C2%B7%2091%20sections-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.6%20%C2%B7%2092%20sections-39ff14?style=flat-square&labelColor=000000"></a>
 </p>
 
 ---
