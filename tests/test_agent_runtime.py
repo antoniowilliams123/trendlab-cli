@@ -289,7 +289,8 @@ async def test_loop_escalates_to_stronger_model(project, manager_factory, events
     )
     result = await agent.run("loop")
     assert result.status == "COMPLETED" and result.text == "Strong model finished."
-    assert agent.model_ref == "strong:m"
+    # Escalation lasts for the rest of the run; the default model is restored afterwards.
+    assert agent.model_ref == "weak:m" and agent.escalation_model == "strong:m"
     esc = [e for e in recorder.of_type(EventType.RECOVERY) if e.data.get("action") == "escalate"]
     assert esc and esc[0].data["to_model"] == "strong:m"
 

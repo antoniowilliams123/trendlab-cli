@@ -4326,3 +4326,17 @@ forget <n>`, `/memory clear`, `/remember <fact>`; event `memory.updated`
 with a "🧠 remembered" line. `[memory] enabled/learn` switch it off.
 Cost: one cheap summarizer call per noteworthy run.
 
+### 92.2 Quality-triggered escalation
+
+Before: `routing.escalation` was used only when loop detection reached
+two strikes, and the switch was permanent for the session. Now a run
+escalates on either signal — two no-progress strikes, **or two
+consecutive completion-evaluator rejections** (unverified "done", empty
+answer, open tasks, announced-but-not-made action) — hands the *rest of
+that run* to the escalation model with one extra evaluator nudge, and
+restores the default model when the run ends (`recovery.action` events
+`escalate` and `restored`; activity lines "⤴ quality — handing the rest
+of this run to X" / "⤵ back to Y"). Once per run; an explicit
+`/model` switch resets the baseline. Recommended for the owner:
+`[routing] escalation = "deepseek:deepseek-v4-pro"`.
+

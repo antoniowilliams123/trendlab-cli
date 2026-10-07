@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-298%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-300%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.5%20%C2%B7%2091%20sections-39ff14?style=flat-square&labelColor=000000"></a>
@@ -246,7 +246,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 298 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 300 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

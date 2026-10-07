@@ -122,7 +122,13 @@ def format_event(event: Event) -> str | None:
         if d.get("action") == "compact":
             return f"[{AMBER}]⇅ context overflow — compacting and retrying[/]"
         if d.get("action") == "escalate":
-            return f"[{AMBER}]⤴ no progress — escalating to {d.get('to_model')}[/]"
+            why = "quality" if failure == "UNVERIFIED_COMPLETION" else "no progress"
+            return (
+                f"[{AMBER}]⤴ {why} — handing the rest of this run to {d.get('to_model')}[/] "
+                f"[{GREY}](back to {d.get('from_model')} after)[/]"
+            )
+        if d.get("action") == "restored":
+            return f"[{GREY}]⤵ back to {d.get('to_model')}[/]"
         if failure == "AUTH_FAILURE":
             err = str(d.get("error") or "")
             m = re.search(r"variable (\w+)", err)

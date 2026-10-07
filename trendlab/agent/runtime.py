@@ -102,6 +102,7 @@ class AgentRuntime:
         self.plan = plan if plan is not None else Plan()
         self.role = role
         self.escalation_model = escalation_model
+        self._escalated_from: str | None = None  # model to restore when the run ends
         self.on_token = on_token
         self.on_thinking = on_thinking
         self.on_message = on_message
@@ -143,6 +144,40 @@ class AgentRuntime:
     def set_model(self, model_ref: str) -> None:
         """Hot model switch: conversation, plan, session and tool state are preserved."""
         self.model_ref = model_ref
+        self._escalated_from = None  # an explicit switch is the new baseline
+
+    def _escalate(self, failure: str) -> bool:
+        """Hand the rest of this run to the stronger model (once per run); True when it happened."""
+        if not self.escalation_model or self._escalated_from is not None:
+            return False
+        if self.escalation_model == self.model_ref:
+            return False
+        self.events.emit(
+            EventType.RECOVERY,
+            session_id=self.session_id,
+            failure=failure,
+            action="escalate",
+            from_model=self.model_ref,
+            to_model=self.escalation_model,
+        )
+        self._escalated_from = self.model_ref
+        self.model_ref = self.escalation_model
+        self.evaluator.max_nudges += 1  # the stronger model gets one more chance to finish
+        return True
+
+    def _restore_after_escalation(self) -> None:
+        if self._escalated_from is not None:
+            self.events.emit(
+                EventType.RECOVERY,
+                session_id=self.session_id,
+                failure="ESCALATION",
+                action="restored",
+                from_model=self.model_ref,
+                to_model=self._escalated_from,
+            )
+            self.model_ref = self._escalated_from
+            self._escalated_from = None
+            self.evaluator.max_nudges = max(2, self.evaluator.max_nudges - 1)
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -277,10 +312,15 @@ class AgentRuntime:
                     action="feedback",
                     reasons=verdict.reasons,
                 )
+                if self.evaluator.nudges >= 2:
+                    # Two rejections in a row: a quality problem, not a slip. Let the stronger
+                    # model take the rest of this run (restored when the run ends).
+                    self._escalate("UNVERIFIED_COMPLETION")
                 self._append({"role": "user", "content": verdict.nudge})
         except asyncio.CancelledError:
             status, stop_reason = AgentState.CANCELED, "canceled"
         self.state.transition(status)
+        self._restore_after_escalation()
         return self._finish(status, text, stop_reason, started)
 
     def _limit_hit(self, started: float) -> str | None:
@@ -432,16 +472,9 @@ class AgentRuntime:
                 action=action.value,
             )
             if action == RecoveryAction.ESCALATE and self.escalation_model:
-                self.events.emit(
-                    EventType.RECOVERY,
-                    session_id=self.session_id,
-                    failure=FailureClass.NO_PROGRESS.value,
-                    action="escalate",
-                    from_model=self.model_ref,
-                    to_model=self.escalation_model,
-                )
-                self.model_ref = self.escalation_model
-                self.escalation_model = None
+                if not self._escalate(FailureClass.NO_PROGRESS.value):
+                    self._append(_tool_message(call, output))
+                    return f"NO_PROGRESS: {reason}", AgentState.FAILED
             elif action == RecoveryAction.STOP:
                 self._append(_tool_message(call, output))
                 return f"NO_PROGRESS: {reason}", AgentState.FAILED
