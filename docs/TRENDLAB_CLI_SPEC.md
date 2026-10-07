@@ -4351,3 +4351,21 @@ completes. `tool.output` and `model.token` are **transient**: neither the
 SQLite event table nor the JSONL audit log stores them (`TRANSIENT_EVENTS`).
 Timeouts, cancellation and the final `[stderr]` section are unchanged.
 
+### 92.4 Real-world failure drills (`scripts/failure_drills.py`)
+
+Run against the live DeepSeek API in a throwaway TrendLab home (secrets
+copied, Telegram off, memory learning off), 2026-10-06:
+
+| Drill | What was done | Result |
+|---|---|---|
+| A — provider down → fallback | Session model `dead:m` on an unresolvable host, `[fallback] "dead:m" = ["deepseek:deepseek-flash"]`, retry base 0.2 s | COMPLETED in 2.5 s: 2 retries on the dead provider (`provider.retry`), one `provider.fallback`, answer from `deepseek:deepseek-flash`, $0.0011 |
+| B — process killed mid-approval | `--safe -p "create hello_drill.txt…"`, wait for the `write_file` approval to be pending in SQLite, SIGKILL the process, start a fresh session | File never created; on restart the stale approval is `canceled` with `resolution_reason = process_restart` and one `approval.canceled` event; file still absent afterwards |
+
+Finding while building the drill: on WSL with mirrored networking a
+connection to a closed local port can be *filtered* rather than refused,
+so "dead provider" drills must use an unresolvable hostname (DNS fails
+in milliseconds) rather than `127.0.0.1:<closed port>` (hangs to the HTTP
+timeout). Not drilled live: rate limiting (cannot be forced) and a real
+context-overflow response (would need > 1 M tokens on Flash); both
+remain covered by provider-level tests with the real exception classes.
+
