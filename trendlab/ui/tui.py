@@ -621,6 +621,7 @@ class TrendLabTUI(App[None]):
         self._modals: dict[str, ApprovalModal] = {}
         self._stream_buf: list[str] = []
         self._think_buf: list[str] = []
+        self._tool_tail: tuple[str, str, float] | None = None  # (tool, tail, elapsed)
         self._spin = 0
         self._started_at: float | None = None
         self.console_out = make_console(record=True, width=100, force_terminal=False)
@@ -868,7 +869,11 @@ class TrendLabTUI(App[None]):
         pane = self.query_one("#stream", Static)
         pane.add_class("visible")
         out = Text()
-        if self._think_buf and not self._stream_buf:
+        if self._tool_tail is not None and not self._stream_buf:
+            tool, tail, elapsed = self._tool_tail
+            out.append(f"● {tool} · {elapsed:.0f}s\n", style=f"bold {NEON_DIM}")
+            out.append(tail[-900:], style=GREY)
+        elif self._think_buf and not self._stream_buf:
             thinking = "".join(self._think_buf)[-900:]
             out.append("💭 thinking  ", style=f"bold {GREY}")
             out.append(thinking, style=f"italic {GREY}")
@@ -882,6 +887,7 @@ class TrendLabTUI(App[None]):
         pane.update("")
         self._stream_buf.clear()
         self._think_buf.clear()
+        self._tool_tail = None
 
     # -- events ------------------------------------------------------------------------------------
     def _on_event(self, event: Event) -> None:
@@ -908,6 +914,17 @@ class TrendLabTUI(App[None]):
         if t == EventType.MODEL_CALL_STARTED:
             self._flush_stream()
             return
+        if t == EventType.TOOL_OUTPUT:
+            self._tool_tail = (
+                str(d.get("tool")),
+                str(d.get("tail") or ""),
+                float(d.get("elapsed_s") or 0),
+            )
+            self._render_stream()
+            return
+        if t in {EventType.TOOL_COMPLETED, EventType.TOOL_SKIPPED} and self._tool_tail is not None:
+            self._tool_tail = None
+            self._flush_stream()
         if (
             t in {EventType.AGENT_STATE_CHANGED, EventType.COST_UPDATED}
             and d.get("role", "main") == "main"

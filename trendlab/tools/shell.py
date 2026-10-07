@@ -116,8 +116,42 @@ class ShellTool(Tool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+        out_chunks: list[bytes] = []
+        err_chunks: list[bytes] = []
+        tail: list[str] = []
+        last_report = 0.0
+
+        def report(force: bool = False) -> None:
+            nonlocal last_report
+            if ctx.progress is None:
+                return
+            now = time.monotonic()
+            if force or now - last_report >= 0.3:
+                last_report = now
+                ctx.progress("\n".join(tail[-8:]))
+
+        async def pump(stream, sink: list[bytes], live: bool) -> None:
+            if stream is None:
+                return
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                sink.append(line)
+                if live:
+                    tail.append(line.decode("utf-8", "replace").rstrip("\n")[:200])
+                    del tail[:-8]
+                    report()
+
         try:
-            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=args.timeout)
+            await asyncio.wait_for(
+                asyncio.gather(
+                    pump(proc.stdout, out_chunks, True),
+                    pump(proc.stderr, err_chunks, True),
+                    proc.wait(),
+                ),
+                timeout=args.timeout,
+            )
         except asyncio.CancelledError:
             proc.kill()
             raise
@@ -129,6 +163,8 @@ class ShellTool(Tool):
                 output=f"command timed out after {args.timeout}s",
                 data={"exit_code": None, "timed_out": True},
             )
+        report(force=True)
+        stdout_b, stderr_b = b"".join(out_chunks), b"".join(err_chunks)
         duration_ms = int((time.monotonic() - started) * 1000)
         stdout = _truncate(redact_text(stdout_b.decode("utf-8", "replace")))
         stderr = _truncate(redact_text(stderr_b.decode("utf-8", "replace")))

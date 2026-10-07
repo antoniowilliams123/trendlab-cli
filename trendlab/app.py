@@ -51,7 +51,13 @@ from trendlab.security.sandbox import Sandbox
 from trendlab.sessions.checkpoints import CheckpointManager
 from trendlab.sessions.store import SessionStore
 from trendlab.telemetry.costs import CostTracker
-from trendlab.telemetry.events import Event, EventBus, EventType, JsonlEventSink
+from trendlab.telemetry.events import (
+    TRANSIENT_EVENTS,
+    Event,
+    EventBus,
+    EventType,
+    JsonlEventSink,
+)
 from trendlab.tools.ask_user import AskUserTool
 from trendlab.tools.background import BackgroundProcessManager
 from trendlab.tools.base import ToolContext
@@ -597,7 +603,7 @@ class TrendLabApp:
             self.store.append_message(self.session_id, message)
 
     def _persist_event(self, event: Event) -> None:
-        if self.store is None:
+        if self.store is None or event.type.value in TRANSIENT_EVENTS:
             return
         rec = event.to_record()
         self.store.append_event(event.session_id, rec.pop("event"), rec, rec.pop("ts"))

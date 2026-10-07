@@ -4340,3 +4340,14 @@ of this run to X" / "⤵ back to Y"). Once per run; an explicit
 `/model` switch resets the baseline. Recommended for the owner:
 `[routing] escalation = "deepseek:deepseek-v4-pro"`.
 
+### 92.3 Streaming tool output
+
+The shell tool (and `run_tests`, which delegates to it) now reads stdout
+and stderr incrementally and reports the last eight lines through
+`ToolContext.progress` at most every 0.3 s; the runtime turns that into
+`tool.output {tool, tail, elapsed_s}`. The TUI shows it in the streaming
+pane as "● shell · 12s" over the live tail and clears it when the tool
+completes. `tool.output` and `model.token` are **transient**: neither the
+SQLite event table nor the JSONL audit log stores them (`TRANSIENT_EVENTS`).
+Timeouts, cancellation and the final `[stderr]` section are unchanged.
+

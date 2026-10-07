@@ -72,6 +72,7 @@ class EventType(StrEnum):
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_SKIPPED = "tool.skipped"  # denied / invalid / unknown / blocked: never ran
+    TOOL_OUTPUT = "tool.output"  # live tail of a running command (transient: not persisted)
     FILE_CHANGED = "file.changed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"
@@ -152,6 +153,10 @@ class EventBus:
         return event
 
 
+#: High-frequency progress events that UIs consume live and no sink should store.
+TRANSIENT_EVENTS = {"tool.output", "model.token"}
+
+
 class JsonlEventSink:
     """Appends every event as one redacted JSON line — the audit log."""
 
@@ -161,6 +166,8 @@ class JsonlEventSink:
         self._lock = threading.Lock()
 
     def __call__(self, event: Event) -> None:
+        if event.type.value in TRANSIENT_EVENTS:
+            return
         line = json.dumps(event.to_record(), default=str)
         with self._lock, self.path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")

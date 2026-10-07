@@ -265,12 +265,26 @@ class ToolRuntime:
                         f"BLOCKED: checkpoint failed in AUTO mode ({exc})",
                         detail=", ".join(perm.affected_files),
                     )
+        call_started = time.monotonic()
+
+        def progress(tail: str) -> None:
+            self.events.emit(
+                EventType.TOOL_OUTPUT,
+                session_id=self.ctx.session_id,
+                tool=tool.name,
+                tail=tail[-1200:],
+                elapsed_s=round(time.monotonic() - call_started, 1),
+            )
+
+        self.ctx.progress = progress
         try:
             result = await tool.run(args, self.ctx)
         except PathOutsideProjectError as exc:
             result = ToolResult(ok=False, output=f"DENIED: {exc}")
         except Exception as exc:  # noqa: BLE001 — surface as observation, not crash
             result = ToolResult(ok=False, output=f"tool error: {exc.__class__.__name__}: {exc}")
+        finally:
+            self.ctx.progress = None
         out_lines = [ln for ln in (result.output or "").splitlines() if ln.strip()]
         self.events.emit(
             EventType.TOOL_COMPLETED,

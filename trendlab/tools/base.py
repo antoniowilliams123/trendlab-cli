@@ -33,6 +33,8 @@ class ToolContext:
     agent_role: str = "main"
     sandbox: Any = None  # trendlab.security.sandbox.Sandbox
     background: Any = None  # trendlab.tools.background.BackgroundProcessManager
+    # Set by the runtime for the duration of one call: tools report live output through it.
+    progress: Any = None  # Callable[[str], None] | None
 
     def resolve(self, raw: str) -> Path:
         """Resolve ``raw`` inside the project root, following symlinks; reject escapes.
