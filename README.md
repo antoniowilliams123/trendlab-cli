@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-303%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-304%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.5%20%C2%B7%2091%20sections-39ff14?style=flat-square&labelColor=000000"></a>
@@ -36,7 +36,7 @@ another device.
 
 | | |
 |---|---|
-| **Evidence-based completion** | A completion evaluator refuses "done" when files changed without validation or plan items are still open. Loop detection escalates to a stronger model or stops. |
+| **Evidence-based completion** | A completion evaluator refuses "done" when files changed without validation or plan items are still open. Two rejections or a detected loop hand the rest of the run to a stronger model, then the default returns. |
 | **Remote approval** | Authenticated phone page with the proposed diff inline, single-use decisions bound to an operation fingerprint, expiry, reminders, and a full audit trail. Questions from the agent can be answered from the phone too. |
 | **Any model** | Anthropic (official SDK, adaptive thinking, prompt caching), OpenAI-compatible endpoints, Ollama. Role routing sends research to a cheap model and review to a strong one. Provider fallback on infrastructure failures. |
 | **Real editing** | Exact-text `patch_file`, unified-diff `apply_patch` (multi-file, all-or-nothing), atomic writes with hash conflict protection, automatic checkpoints and `/undo`. |
@@ -138,7 +138,7 @@ On WSL, Windows paths pasted into a prompt (`\\wsl$\Ubuntu\…`, `C:\…`) are t
 Linux form before the model sees them.
 
 The TUI leaves the mouse to your terminal, so drag-select and copy (Ctrl+Shift+C, right-click)
-work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. Press F4 (or
+work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. The plain REPL has readline history (↑/↓, Ctrl+R). Press F4 (or
 `/mouse on`) when you want the app to take the mouse for clicking buttons.
 
 ## Approve from your phone
@@ -246,7 +246,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 303 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 304 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

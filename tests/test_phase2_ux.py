@@ -137,3 +137,24 @@ def test_update_check_runs_off_the_startup_path():
 
     src = inspect.getsource(cli.main_callback)
     assert "_update_hint()" not in src
+
+
+def test_repl_history_hooks(tmp_path: Path, monkeypatch):
+    """readline history is wired only on a terminal; the file round-trips when it is."""
+    from trendlab.ui.console import ConsoleInput
+
+    ci = ConsoleInput()
+    monkeypatch.setattr(type(ci), "interactive", property(lambda self: False))
+    assert ci.enable_history(tmp_path / "h.readline") is False  # not a TTY: plain reads
+    ci.save_history()  # no-op without readline
+    ci2 = ConsoleInput()
+    monkeypatch.setattr(type(ci2), "interactive", property(lambda self: True))
+    try:
+        import readline  # noqa: F401
+    except ImportError:
+        return
+    path = tmp_path / "h2.readline"
+    assert ci2.enable_history(path) is True
+    ci2._readline.add_history("first prompt")
+    ci2.save_history()
+    assert "first prompt" in path.read_text()

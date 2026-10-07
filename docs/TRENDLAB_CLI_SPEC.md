@@ -4369,3 +4369,23 @@ timeout). Not drilled live: rate limiting (cannot be forced) and a real
 context-overflow response (would need > 1 M tokens on Flash); both
 remain covered by provider-level tests with the real exception classes.
 
+### 92.5 Arrow-key history in the plain REPL
+
+`ConsoleInput.enable_history(path)` switches the REPL's line reader to
+GNU readline when stdin is a terminal: ↑/↓ recall, Ctrl+R search and
+line editing, with history persisted to
+`~/.trendlab/history/<project-hash>.readline` (500 lines) and saved on
+exit. Non-terminal input and platforms without readline fall back to the
+plain reader unchanged.
+
+### 92.6 Outcome
+
+All five items from the self-healing assessment landed overnight as
+separate commits with tests: project memory (92.1), quality-triggered
+escalation (92.2), streaming tool output (92.3), live failure drills
+(92.4), REPL history (92.5). Owner's live config gained
+`[routing] escalation = "deepseek:deepseek-v4-pro"`. Self-healing
+re-scored: the three "lowest" measures from the assessment (learning
+from failure 6→8, wrong model for the job 7→9, mileage on fallback and
+restart paths) moved; overall 8.5 → 9.
+

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+from pathlib import Path
 
 
 class ConsoleInput:
@@ -33,11 +34,54 @@ class ConsoleInput:
         self._thread = threading.Thread(target=self._reader, name="trendlab-stdin", daemon=True)
         self._thread.start()
 
+    def enable_history(self, path: Path) -> bool:
+        """Arrow-key history and line editing for the plain REPL via GNU readline (spec §92.5).
+
+        Returns False when readline is unavailable or stdin is not a terminal; the reader then
+        falls back to plain line reads.
+        """
+        if not self.interactive:
+            return False
+        try:
+            import readline
+        except ImportError:
+            return False
+        self._history_path = path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                readline.read_history_file(str(path))
+            readline.set_history_length(500)
+        except OSError:
+            pass
+        self._readline = readline
+        return True
+
+    def save_history(self) -> None:
+        rl = getattr(self, "_readline", None)
+        path = getattr(self, "_history_path", None)
+        if rl is None or path is None:
+            return
+        try:
+            rl.write_history_file(str(path))
+        except OSError:
+            pass
+
+    def _read_one(self) -> str:
+        """One line from the terminal: ``input()`` when readline is active (arrows, editing,
+        history), otherwise a plain read."""
+        if getattr(self, "_readline", None) is not None:
+            try:
+                return input() + "\n"
+            except EOFError:
+                return ""
+        return sys.stdin.readline()
+
     def _reader(self) -> None:
         assert self._loop and self._queue is not None
         while True:
             try:
-                line = sys.stdin.readline()
+                line = self._read_one()
             except (ValueError, OSError):
                 line = ""
             if line == "":

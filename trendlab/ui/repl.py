@@ -25,6 +25,10 @@ class Repl:
 
     # -- entry point ------------------------------------------------------------------------
     async def run(self) -> None:
+        from trendlab.ui.history import PromptHistory
+
+        hist_path = PromptHistory(self.app.project_root).path.with_suffix(".readline")
+        self.app.console_input.enable_history(hist_path)  # ↑/↓ recall, Ctrl+R search, editing
         await self.app.start(interactive=True, command_handler=self.handle_command)
         self.app.events.subscribe(self._on_event)
         self._header()
@@ -60,6 +64,7 @@ class Repl:
                 else:
                     await self._prompt(text)
         finally:
+            self.app.console_input.save_history()
             await self.app.stop()
 
     def _header(self) -> None:
