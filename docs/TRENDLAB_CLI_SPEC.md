@@ -3492,6 +3492,23 @@ The workflow remains portable even when model vendors change.
 
 ## 84. Future Roadmap
 
+### Architecture audit against the LangSmith Engine pillars (2026-10-07)
+
+`docs/ARCHITECTURE_AUDIT_2026-10-07.md` scores TrendLab against the ten
+pillars of the Engine strategy (external orchestration, progressive
+ingestion, org-chart delegation, autonomy over workflows, skillification,
+inbox over PR spam, sleeptime memory, model cocktail, synthetic evals,
+verify-then-surface): average **6.0 / 10, par** with Claude Code and
+Codex — ahead on autonomy, memory, cost and human-in-the-loop breadth;
+behind on tiered context, structural screening, the ambient inbox and
+verified patches. Its top three upgrades (structural screener with tiered
+tool output; verify-then-surface in a worktree with a verifier role and a
+regression-test gate; a durable daemon with inbox, sleeptime memory and a
+meta-loop over the harness's own traces) subsume and reorder the "next
+eight" below: the critic gate, swarm and scheduled jobs become parts of
+upgrades 2 and 3.
+
+
 ### Next eight (owner's request, 2026-10-06): "what would make it the best in the world overnight"
 
 Each is a few hours on top of what exists; ordered by impact, with the
