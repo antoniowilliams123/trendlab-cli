@@ -112,8 +112,9 @@ class Engine:
             elif job == "sleep":
                 from trendlab.engine.jobs import sleep_projects
 
-                result["sleep"] = await sleep_projects(self.projects, self.config)
+                # stamp first: a failing pass must not retry on every tick
                 self.state["sleep_day"] = now.strftime("%Y-%m-%d")
+                result["sleep"] = await sleep_projects(self.projects, self.config)
             elif job == "meta":
                 from trendlab.engine.jobs import meta_scan
 
