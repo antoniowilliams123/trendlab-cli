@@ -97,6 +97,9 @@ class Engine:
         if job == "prune":
             stamp = now.strftime("%Y-%m-%d")
             return not warm and now.hour >= 4 and self.state.get("prune_day") != stamp
+        if job == "health":
+            stamp = now.strftime("%Y-%m-%d")
+            return not warm and now.hour >= 5 and self.state.get("health_day") != stamp
         if job == "budget":
             econ = self.config.economics
             if not (econ.monthly_budget_usd or econ.project_budgets):
@@ -149,6 +152,11 @@ class Engine:
                     )
                 finally:
                     store.close()
+            elif job == "health":
+                from trendlab.engine.health import health_projects
+
+                self.state["health_day"] = now.strftime("%Y-%m-%d")
+                result["health"] = await health_projects(self.inbox, self.projects)
             elif job == "budget":
                 from trendlab.engine.jobs import budget_check
 
@@ -213,6 +221,7 @@ class Engine:
                 "canary",
                 "prune",
                 "budget",
+                "health",
             }:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
@@ -241,7 +250,16 @@ class Engine:
         try:
             while not self._stop.is_set():
                 now = self.now()
-                for job in ("watch", "sleep", "meta", "digest", "canary", "prune", "budget"):
+                for job in (
+                    "watch",
+                    "sleep",
+                    "meta",
+                    "digest",
+                    "canary",
+                    "prune",
+                    "budget",
+                    "health",
+                ):
                     if self.due(job, now):
                         await self.run_job(job)
                 try:

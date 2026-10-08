@@ -1386,6 +1386,57 @@ def review_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("health")
+def health_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    backfill_n: int = typer.Option(0, "--backfill", help="Also measure N past commits."),
+    step: int = typer.Option(5, "--step", help="Backfill every STEP-th commit."),
+    save: bool = typer.Option(False, "--save", help="Append this snapshot to the history."),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Code health (U14): size-adjusted function length and complexity, test ratio,
+    duplication, debt markers and dependencies, with the trend against the 7-day baseline or a
+    backfill of past commits."""
+    from datetime import datetime
+
+    from trendlab.engine.health import backfill, baseline, history, record, snapshot, trend
+
+    root = project.resolve()
+    snap = snapshot(root)
+    past = backfill(root, backfill_n, step) if backfill_n else []
+    base = past[0] if past else baseline(history(root))
+    t = trend(base, snap) if base else None
+    if save:
+        record(root, snap, at=datetime.now().astimezone().isoformat(timespec="seconds"))
+    if output == "json":
+        typer.echo(
+            json.dumps({"snapshot": snap, "baseline": base, "trend": t, "backfill": past}, indent=2)
+        )
+        return
+    console.print(
+        f"[neon]health[/neon] {root.name}: {snap['source_lines']:,} source lines · test ratio "
+        f"{snap['test_ratio']} · long functions {snap['long_function_share'] or 0:.1%} · complex "
+        f"{snap['complex_function_share'] or 0:.1%} · mean complexity {snap['mean_complexity']} "
+        f"· duplication {snap['duplication']:.2%} · debt markers {snap['debt_markers']}"
+    )
+    for h in past:
+        console.print(
+            f"  {h['commit']} {h['date'][:10]} {h['source_lines']:>7,} lines · tests "
+            f"{h['test_ratio']} · long {h['long_function_share'] or 0:.1%} · complex "
+            f"{h['complex_function_share'] or 0:.1%}"
+        )
+    if t:
+        verdict = (
+            "[danger]degraded[/danger]: " + ", ".join(t["worse"])
+            if t["degraded"]
+            else ("[ok]no degradation[/ok]")
+        )
+        console.print(
+            f"  vs baseline: {verdict}"
+            + (f" · better: {', '.join(t['better'])}" if t["better"] else "")
+        )
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
