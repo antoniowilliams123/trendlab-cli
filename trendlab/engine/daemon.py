@@ -81,12 +81,16 @@ class Engine:
         last = self.state.get(f"last_{job}")
         if job == "watch":
             return not last or (now.timestamp() - float(last)) >= ecfg.watch_minutes * 60
+        warm = (time.time() - self.started) < 120  # model-backed jobs wait out the first tick
         if job == "sleep":
-            hour = int(ecfg.sleep_at.split(":")[0])
+            hour, minute = (int(x) for x in ecfg.sleep_at.split(":")[:2])
             stamp = now.strftime("%Y-%m-%d")
-            return now.hour >= hour and self.state.get("sleep_day") != stamp
+            after = (now.hour, now.minute) >= (hour, minute)
+            return not warm and after and self.state.get("sleep_day") != stamp
         if job == "meta":
-            return not last or (now.timestamp() - float(last)) >= ecfg.meta_days * 86400
+            return not warm and (
+                not last or (now.timestamp() - float(last)) >= ecfg.meta_days * 86400
+            )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
         return False

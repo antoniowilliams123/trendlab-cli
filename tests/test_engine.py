@@ -209,6 +209,8 @@ async def test_engine_schedule_socket_and_digest(tmp_path: Path, monkeypatch, _t
     cfg.engine.sleep_at = "02:30"
     eng = Engine(projects=[tmp_path], config=cfg, tick_seconds=0.05)
     now = datetime(2026, 10, 8, 3, 0, tzinfo=UTC)
+    assert not eng.due("sleep", now) and not eng.due("meta", now)  # warm-up: no model jobs yet
+    eng.started -= 1000
     assert eng.due("watch", now) and eng.due("meta", now) and eng.due("digest", now)
     assert eng.due("sleep", now)  # 03:00 >= 02:30 and not done today
     eng.state["sleep_day"] = "2026-10-08"

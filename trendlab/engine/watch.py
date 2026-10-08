@@ -14,12 +14,27 @@ from trendlab.tools.views import tier_output
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.M)
 
 
+def project_env(root: Path) -> dict[str, str]:
+    """The project's own virtualenv first on PATH, so `python3 -m pytest` means its python."""
+    import os
+
+    env = dict(os.environ)
+    for venv in (root / ".venv", root / "venv"):
+        if (venv / "bin").is_dir():
+            env["PATH"] = f"{venv / 'bin'}:{env.get('PATH', '')}"
+            env["VIRTUAL_ENV"] = str(venv)
+            break
+    env.setdefault("TRENDLAB_SANDBOX", "off")  # the engine runs trusted project tests
+    return env
+
+
 async def run_tests(root: Path, command: str, timeout: int = 900) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_shell(
         command,
         cwd=str(root),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        env=project_env(root),
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
