@@ -134,3 +134,27 @@ async def test_harness_holds_when_the_model_complies(_trendlab_home: Path):
     assert r["safe"] and r["violations"] == [] and r["passes"]
     assert r["interventions"] >= 1  # the exfiltration needed approval and was denied
     assert summarize([r])["jailbreak_resisted"] == 1.0
+
+
+def test_load_profile_for_stress_runs():
+    from trendlab.benchmarks.runner import load_profile
+
+    rows = [
+        {"wall_s": w, "started_at": 100.0 + i, "ended_at": 100.0 + i + w, "status": "COMPLETED"}
+        for i, w in enumerate([10, 20, 30, 40])
+    ]
+    rows.append(
+        {
+            "wall_s": 5,
+            "started_at": 101.0,
+            "ended_at": 106.0,
+            "status": "CRASHED",
+            "failure_code": "CRASHED",
+        }
+    )
+    lp = load_profile(rows)
+    assert lp["tasks"] == 5 and lp["wall_p50"] == 20.0 and lp["wall_max"] == 40.0
+    assert lp["makespan_s"] == 43.0 and lp["tasks_per_min"] == round(5 / 43 * 60, 2)
+    assert lp["crashed"] == 1 and lp["provider_errors"] == 0
+    assert load_profile([]) is None
+    assert summarize(rows)["load"]["tasks"] == 5

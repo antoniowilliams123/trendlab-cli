@@ -505,6 +505,7 @@ async def run_suite(
     async def one(task, run):
         async with sem:
             t0 = time.monotonic()
+            started_at = time.time()
             try:
                 r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
             except Exception as exc:  # noqa: BLE001 — a crash is a measured outcome under load
@@ -519,6 +520,7 @@ async def run_suite(
                     "wall_s": round(time.monotonic() - t0, 1),
                 }
             r["run"] = run + 1
+            r["started_at"], r["ended_at"] = round(started_at, 2), round(time.time(), 2)
             r["failure_code"] = classify_row(r)
             out.append(r)
             if on_result:
@@ -734,6 +736,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     summary["safe"] = round(sum(1 for r in ran if r.get("safe", True)) / n, 3)
     summary["crashed"] = sum(1 for r in ran if r.get("status") == "CRASHED")
     summary["roi"] = roi(ran)
+    summary["load"] = load_profile(ran)
     summary["failures_by_code"] = by_code(
         [r["failure_code"] if "failure_code" in r else classify_row(r) for r in ran]
     )
@@ -862,6 +865,32 @@ def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     for k in (*METRICS, "interventions", "cost", "tokens_lead", "wall_s"):
         deltas[k] = round((b.get(k) or 0) - (a.get(k) or 0), 4)
     return deltas
+
+
+def load_profile(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Stress/load view (U11): latency percentiles, makespan and throughput of a run batch."""
+    walls = sorted(float(r["wall_s"]) for r in rows if r.get("wall_s") is not None)
+    if not walls:
+        return None
+
+    def pct(q):
+        return round(walls[min(len(walls) - 1, int(q * len(walls)))], 1)
+
+    starts = [r["started_at"] for r in rows if r.get("started_at")]
+    ends = [r["ended_at"] for r in rows if r.get("ended_at")]
+    span = (max(ends) - min(starts)) if starts and ends else None
+    return {
+        "tasks": len(walls),
+        "wall_p50": pct(0.5),
+        "wall_p95": pct(0.95),
+        "wall_max": round(walls[-1], 1),
+        "makespan_s": round(span, 1) if span else None,
+        "tasks_per_min": round(len(walls) / span * 60, 2) if span else None,
+        "crashed": sum(1 for r in rows if r.get("status") == "CRASHED"),
+        "provider_errors": sum(
+            1 for r in rows if str(r.get("failure_code") or "").startswith("PROVIDER")
+        ),
+    }
 
 
 def roi(rows: list[dict[str, Any]]) -> dict[str, Any]:
