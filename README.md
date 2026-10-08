@@ -144,6 +144,27 @@ The TUI leaves the mouse to your terminal, so drag-select and copy (Ctrl+Shift+C
 work exactly as in any terminal; the wheel, ↑/↓ and PgUp/PgDn scroll the transcript. The plain REPL has readline history (↑/↓, Ctrl+R). Press F4 (or
 `/mouse on`) when you want the app to take the mouse for clicking buttons.
 
+## Plugins and your own status line
+
+Plugins bundle slash commands, skills, hooks and MCP servers. TrendLab ships a small built-in
+marketplace; add your own from a folder, a git repository or a JSON URL.
+
+```bash
+trendlab plugin search                      # what your marketplaces offer
+trendlab plugin install review-pack         # shows what it adds and runs, then asks
+trendlab plugin list                        # installed, on/off, what each adds
+trendlab plugin marketplace add <folder|git-url|https://…/catalogue.json>
+trendlab plugin new my-tool                 # scaffold one to publish
+```
+
+Plugins install only into your own TrendLab folder; a repository can never install or enable
+one. Git plugins are pinned to the commit you reviewed, and `trendlab plugin update` shows the
+new version before it replaces the old one.
+
+A custom status line is any command that prints one line. It gets the session as JSON on stdin
+(model, cost, context %, git branch, pending approvals…). `/statusline init` writes a starter
+script and turns it on; only your own config can set it.
+
 ## Approve from your phone
 
 ```bash

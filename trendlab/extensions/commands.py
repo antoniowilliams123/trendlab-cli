@@ -88,15 +88,19 @@ def parse_command_file(path: Path, source: str) -> CustomCommand | None:
 
 
 class CustomCommandLibrary:
-    def __init__(self, project_root: Path, home: Path) -> None:
+    def __init__(
+        self, project_root: Path, home: Path, plugin_dirs: list[tuple[Path, str]] | None = None
+    ) -> None:
         self.project_dir = project_root / ".trendlab" / "commands"
         self.global_dir = home / "commands"
+        self.plugin_dirs = list(plugin_dirs or [])  # (dir, "plugin:<name>"), lowest priority
         self._commands: dict[str, CustomCommand] = {}
         self.reload()
 
     def reload(self) -> None:
         self._commands.clear()
-        for base, source in ((self.global_dir, "global"), (self.project_dir, "project")):
+        order = [*self.plugin_dirs, (self.global_dir, "global"), (self.project_dir, "project")]
+        for base, source in order:
             if not base.is_dir():
                 continue
             for md in sorted(base.glob("*.md")):

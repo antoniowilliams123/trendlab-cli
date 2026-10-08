@@ -636,6 +636,10 @@ class TrendLabTUI(App[None]):
         self.commands.register("/mouse", self._mouse_command)
         self.file_index = FileIndex(tl_app.project_root)
         self.history = PromptHistory(tl_app.project_root)
+        from trendlab.ui.statusline import StatusLine
+
+        self.statusline = StatusLine()
+        self.commands._statusline_owner = self  # /statusline reload swaps it in place
 
     # -- layout ------------------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -650,6 +654,7 @@ class TrendLabTUI(App[None]):
             plan.border_title = "plan"
             yield plan
         yield Static(id="status")
+        yield Static(id="statusline")
         menu = CommandPicker(self._command_catalog())
         menu.border_title = "commands"
         yield menu
@@ -827,6 +832,21 @@ class TrendLabTUI(App[None]):
         elif width < 90:
             parts = [p for p in parts if tl.model_ref not in p]  # the header shows the model
         self.query_one("#status", Static).update("  │  ".join(parts))
+        if self.statusline.enabled:
+            self.statusline.schedule(
+                tl,
+                self._show_statusline,
+                running_s=time.monotonic() - self._started_at
+                if running and self._started_at
+                else None,
+            )
+
+    def _show_statusline(self, text: str) -> None:
+        from rich.text import Text
+
+        line = self.query_one("#statusline", Static)
+        line.display = bool(text)
+        line.update(Text.from_ansi(text, no_wrap=True, overflow="ellipsis"))
 
     def _refresh_plan(self) -> None:
         plan = self.tl.plan
@@ -855,6 +875,8 @@ class TrendLabTUI(App[None]):
         if self._run_task is not None and not self._run_task.done():
             self._spin += 1
             self._refresh_status()
+        elif self.statusline.due():  # idle: keep the custom line fresh (branch, cost…)
+            self.statusline.schedule(self.tl, self._show_statusline)
 
     # -- streaming ---------------------------------------------------------------------------------
     def _on_token(self, text: str) -> None:

@@ -2873,3 +2873,234 @@ def pr_workspace_cmd(
 
 if __name__ == "__main__":
     main()
+
+
+plugin_app = typer.Typer(help="Plugins (commands, skills, hooks, MCP servers) and marketplaces.")
+app.add_typer(plugin_app, name="plugin")
+market_app = typer.Typer(help="Plugin marketplaces: folders, git repos or JSON URLs.")
+plugin_app.add_typer(market_app, name="marketplace")
+
+
+def _plugins():
+    from trendlab.config.loader import global_config_path
+    from trendlab.extensions.plugins import PluginManager
+
+    return PluginManager(global_config_path().parent)
+
+
+def _plugin_fail(exc: Exception) -> None:
+    console.print(f"[error]{exc}[/error]")
+    raise typer.Exit(1)
+
+
+@plugin_app.command("list")
+def plugin_list() -> None:
+    """Installed plugins and what each one adds."""
+    rows = _plugins().installed()
+    if not rows:
+        console.print("[dim]no plugins installed — trendlab plugin search[/dim]")
+        return
+    t = Table(title="Installed plugins")
+    for col in ("name", "version", "on", "adds", "from"):
+        t.add_column(col)
+    for p, meta in rows:
+        adds = [f"/{c}" for c in p.commands] + [f"skill {s}" for s in p.skills]
+        adds += [f"hook {h['event']}" for h in p.hooks] + [f"mcp {m}" for m in p.mcp]
+        t.add_row(
+            p.name,
+            p.version,
+            "yes" if meta.get("enabled", True) else "no",
+            ", ".join(adds) or "-",
+            str(meta.get("marketplace") or "-"),
+        )
+    console.print(t)
+
+
+@plugin_app.command("search")
+def plugin_search(query: str = typer.Argument("", help="Words to match (empty = all).")) -> None:
+    """Plugins offered by your marketplaces."""
+    pm = _plugins()
+    installed = {p.name for p, _ in pm.installed()}
+    found = pm.available(query)
+    if not found:
+        console.print("[dim]nothing matches[/dim]")
+        return
+    t = Table(title="Available plugins")
+    for col in ("name", "version", "description", "marketplace", ""):
+        t.add_column(col)
+    for p in found:
+        t.add_row(
+            p["name"],
+            str(p.get("version", "")),
+            str(p.get("description", ""))[:70],
+            p["marketplace"],
+            "installed" if p["name"] in installed else "",
+        )
+    console.print(t)
+
+
+def _review(plugin) -> None:
+    console.print(f"[bold]{plugin.name}[/bold] {plugin.version} — {plugin.description}")
+    if plugin.commands:
+        console.print("  commands: " + ", ".join(f"/{c}" for c in plugin.commands))
+    if plugin.skills:
+        console.print("  skills:   " + ", ".join(plugin.skills))
+    runs = plugin.runs()
+    if runs:
+        console.print("[warning]  runs these commands on your machine:[/warning]")
+        for r in runs:
+            console.print(f"    {r}")
+    else:
+        console.print("  runs no commands of its own (prompts and instructions only)")
+
+
+@plugin_app.command("install")
+def plugin_install(
+    spec: str = typer.Argument(..., help="name or name@marketplace"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Install without asking."),
+) -> None:
+    """Review a plugin, then install and enable it (pinned to the reviewed version)."""
+    import shutil as _shutil
+
+    from trendlab.extensions.plugins import PluginError
+
+    pm = _plugins()
+    try:
+        plugin, entry, tmp = pm.fetch(spec)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    _review(plugin)
+    if not yes and not typer.confirm("Install it?", default=bool(not plugin.runs())):
+        _shutil.rmtree(tmp, ignore_errors=True)
+        console.print("[dim]not installed[/dim]")
+        return
+    pm.install(plugin, entry, tmp)
+    console.print(f"[ok]installed {plugin.name}[/ok] — active in new sessions (/commands reload)")
+
+
+@plugin_app.command("update")
+def plugin_update(
+    name: str = typer.Argument("", help="One plugin (empty = all)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Update without asking."),
+) -> None:
+    """Fetch newer versions; each change is shown and confirmed before it replaces the old one."""
+    import shutil as _shutil
+
+    from trendlab.extensions.plugins import PluginError
+
+    pm = _plugins()
+    for plugin, meta in pm.installed():
+        if name and plugin.name != name:
+            continue
+        market = meta.get("marketplace")
+        spec = f"{plugin.name}@{market}" if market else plugin.name
+        try:
+            fresh, entry, tmp = pm.fetch(spec)
+        except PluginError as exc:
+            console.print(f"[warning]{plugin.name}: {exc}[/warning]")
+            continue
+        if entry.get("_commit") == meta.get("pinned"):
+            _shutil.rmtree(tmp, ignore_errors=True)
+            console.print(f"{plugin.name}: up to date")
+            continue
+        _review(fresh)
+        if yes or typer.confirm(f"Update {plugin.name} to this version?", default=False):
+            enabled = meta.get("enabled", True)
+            pm.install(fresh, entry, tmp)
+            pm.set_enabled(fresh.name, enabled)
+            console.print(f"[ok]updated {plugin.name}[/ok]")
+        else:
+            _shutil.rmtree(tmp, ignore_errors=True)
+
+
+@plugin_app.command("uninstall")
+def plugin_uninstall(name: str) -> None:
+    """Remove a plugin and its files."""
+    from trendlab.extensions.plugins import PluginError
+
+    try:
+        _plugins().uninstall(name)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(f"[ok]removed {name}[/ok]")
+
+
+@plugin_app.command("enable")
+def plugin_enable(name: str) -> None:
+    """Turn an installed plugin back on."""
+    from trendlab.extensions.plugins import PluginError
+
+    try:
+        _plugins().set_enabled(name, True)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(f"[ok]{name} on[/ok]")
+
+
+@plugin_app.command("disable")
+def plugin_disable(name: str) -> None:
+    """Keep a plugin installed but stop loading it."""
+    from trendlab.extensions.plugins import PluginError
+
+    try:
+        _plugins().set_enabled(name, False)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(f"[ok]{name} off[/ok]")
+
+
+@plugin_app.command("new")
+def plugin_new(
+    name: str,
+    dest: Path = typer.Option(Path("."), "--dest", help="Folder to create it in."),
+) -> None:
+    """Scaffold a plugin to edit and publish (one command, one skill, hook/MCP examples)."""
+    from trendlab.extensions.plugins import PluginError, scaffold
+
+    try:
+        root = scaffold(dest, name)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(
+        f"[ok]created {root}[/ok]\nlist it in a trendlab-marketplace.json, then "
+        "trendlab plugin marketplace add <that folder or repo>"
+    )
+
+
+@market_app.command("add")
+def marketplace_add(
+    source: str = typer.Argument(..., help="Folder, git repo URL, or https URL of a JSON file."),
+    name: str = typer.Option("", "--name", help="Override the catalogue's name."),
+) -> None:
+    """Add a marketplace."""
+    from trendlab.extensions.plugins import PluginError
+
+    try:
+        added = _plugins().add_marketplace(source, name)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(f"[ok]added marketplace {added}[/ok] — trendlab plugin search")
+
+
+@market_app.command("list")
+def marketplace_list() -> None:
+    """Your marketplaces."""
+    t = Table(title="Marketplaces")
+    t.add_column("name")
+    t.add_column("source")
+    for name, m in _plugins().marketplaces().items():
+        src = "built in" if m.get("builtin") else str(m.get("source"))
+        t.add_row(name, src)
+    console.print(t)
+
+
+@market_app.command("remove")
+def marketplace_remove(name: str) -> None:
+    """Remove a marketplace (installed plugins stay)."""
+    from trendlab.extensions.plugins import PluginError
+
+    try:
+        _plugins().remove_marketplace(name)
+    except PluginError as exc:
+        _plugin_fail(exc)
+    console.print(f"[ok]removed marketplace {name}[/ok]")

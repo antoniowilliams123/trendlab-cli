@@ -394,11 +394,23 @@ class TrendLabApp:
 
     async def _start_extensions(self) -> None:
         """Hooks, skills and MCP servers are optional; failures are reported, never fatal."""
+        from trendlab.config.schema import HookConfig, McpServerConfig
+        from trendlab.extensions.plugins import PluginManager
+
+        self.plugins = PluginManager(self.data_dir)
+        try:
+            plugin_hooks = [HookConfig(**h) for h in self.plugins.hooks()]
+            plugin_mcp = {k: McpServerConfig(**v) for k, v in self.plugins.mcp_servers().items()}
+            command_dirs = self.plugins.command_dirs()
+            skill_dirs = self.plugins.skill_dirs()
+        except Exception as exc:  # noqa: BLE001 — a broken plugin never stops the session
+            self.console.print(f"[warning]plugins not loaded: {exc}[/warning]")
+            plugin_hooks, plugin_mcp, command_dirs, skill_dirs = [], {}, [], []
         try:
             from trendlab.extensions.hooks import HookRunner
 
             self.hooks = HookRunner(
-                self.config.hooks, self.project_root, self.events, self.session_id
+                [*self.config.hooks, *plugin_hooks], self.project_root, self.events, self.session_id
             )
             self.tools.hooks = self.hooks  # type: ignore[union-attr]
             self.agent.hooks = self.hooks  # type: ignore[union-attr]
@@ -407,7 +419,7 @@ class TrendLabApp:
         try:
             from trendlab.extensions.skills import SkillLibrary
 
-            self.skills = SkillLibrary(self.project_root, self.data_dir)
+            self.skills = SkillLibrary(self.project_root, self.data_dir, skill_dirs)
             if self.agent is not None:
                 self.agent.skills = self.skills
         except ImportError:
@@ -415,10 +427,12 @@ class TrendLabApp:
         try:
             from trendlab.extensions.commands import CustomCommandLibrary
 
-            self.custom_commands = CustomCommandLibrary(self.project_root, self.data_dir)
+            self.custom_commands = CustomCommandLibrary(
+                self.project_root, self.data_dir, command_dirs
+            )
         except ImportError:
             pass
-        servers = self.config.mcp_servers()
+        servers = {**plugin_mcp, **self.config.mcp_servers()}
         if servers:
             try:
                 from trendlab.extensions.mcp import McpManager

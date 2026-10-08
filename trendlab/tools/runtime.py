@@ -438,12 +438,13 @@ class ToolRuntime:
                     )
         call_started = time.monotonic()
 
-        def progress(tail: str) -> None:
+        def progress(tail: str, lines: int | None = None) -> None:
             self.events.emit(
                 EventType.TOOL_OUTPUT,
                 session_id=self.ctx.session_id,
                 tool=tool.name,
                 tail=tail[-1200:],
+                lines=lines,
                 elapsed_s=round(time.monotonic() - call_started, 1),
             )
 

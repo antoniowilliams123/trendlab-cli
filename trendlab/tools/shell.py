@@ -119,6 +119,7 @@ class ShellTool(Tool):
         out_chunks: list[bytes] = []
         err_chunks: list[bytes] = []
         tail: list[str] = []
+        seen = 0  # lines produced so far, so a viewer can print only the new ones
         last_report = 0.0
 
         def report(force: bool = False) -> None:
@@ -128,9 +129,13 @@ class ShellTool(Tool):
             now = time.monotonic()
             if force or now - last_report >= 0.3:
                 last_report = now
-                ctx.progress("\n".join(tail[-8:]))
+                try:
+                    ctx.progress("\n".join(tail[-8:]), seen)
+                except TypeError:  # a progress callback that takes only the tail
+                    ctx.progress("\n".join(tail[-8:]))
 
         async def pump(stream, sink: list[bytes], live: bool) -> None:
+            nonlocal seen
             if stream is None:
                 return
             while True:
@@ -139,6 +144,7 @@ class ShellTool(Tool):
                     break
                 sink.append(line)
                 if live:
+                    seen += 1
                     tail.append(line.decode("utf-8", "replace").rstrip("\n")[:200])
                     del tail[:-8]
                     report()

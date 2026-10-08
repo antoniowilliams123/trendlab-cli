@@ -448,8 +448,17 @@ class NotificationsConfig(BaseModel):
         return v
 
 
+class UiConfig(BaseModel):
+    """Interface settings. ``statusline`` is read from the user's own config only (a project's
+    config cannot make TrendLab run a command); see trendlab/ui/statusline.py."""
+
+    statusline: str = ""  # command printing one line; gets the session as JSON on stdin
+    statusline_interval_s: float = Field(default=2.0, ge=0.5)
+
+
 class AppConfig(BaseModel):
     defaults: DefaultsConfig = DefaultsConfig()
+    ui: UiConfig = UiConfig()
     limits: LimitsConfig = LimitsConfig()
     context: ContextConfig = ContextConfig()
     git: GitConfig = GitConfig()

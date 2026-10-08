@@ -1,0 +1,3 @@
+name = "review-pack"
+version = "1.0.0"
+description = "/security-review and /perf-review of the current diff"

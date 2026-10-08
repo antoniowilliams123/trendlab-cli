@@ -4923,6 +4923,20 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
 - Handoff evidence resolves a bare file name when exactly one project file matches.
 - 8 terms re-rated (559, 566, 571, 586, 629, 631, 848, 22); 139 below 9.
 
+#### 2026-10-08 — polish: plugins + marketplace, custom status line, live output in plain mode
+
+- `trendlab plugin` (search, install, list, update, enable, disable, uninstall, new) and
+  `trendlab plugin marketplace` (add, list, remove). A plugin bundles commands, skills, hooks
+  and MCP servers (`trendlab-plugin.toml`); marketplaces are folders, git repos or JSON URLs
+  (`trendlab-marketplace.json`). Built-in marketplace: plain-english, review-pack,
+  python-format. Install shows every command a plugin runs and asks; git installs are pinned
+  to the reviewed commit; plugins live only in the user's TrendLab folder. `/plugins` in session.
+- Custom status line: `[ui] statusline` in the user's own config (never a project's); the
+  command gets session JSON on stdin; first line shown under the TUI status bar and above the
+  plain prompt; `/statusline init|reload`; 2 s timeout, throttled, off the UI thread.
+- Plain REPL streams new lines of commands running longer than 2 s (shell and run_tests).
+- Known, not changed: a project's `.trendlab/config.toml` can still add hooks and MCP servers.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

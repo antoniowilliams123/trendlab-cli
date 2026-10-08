@@ -32,6 +32,7 @@ include = ["trendlab*"]
 [tool.setuptools.package-data]
 "trendlab.approvals.channels" = ["*.html"]
 "trendlab.prompts" = ["drivers/*.md", "drivers/models/*.md"]
+"trendlab" = ["marketplace/*.json", "marketplace/plugins/**/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

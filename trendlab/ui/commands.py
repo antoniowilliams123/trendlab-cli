@@ -54,6 +54,8 @@ HELP = """\
 /memory [forget <n>|clear] Facts learned about this project (.trendlab/memory.md)
 /remember <fact>           Add a fact to project memory by hand
 /skills [use <name>]       Reusable instruction packs      /hooks    Configured hooks
+/statusline [init|reload]  Your own status line: a command that prints one line (JSON on stdin)
+/plugins [available]       Installed plugins (install with: trendlab plugin install <name>)
 /commands [new <name>|reload]   Your own slash commands from .trendlab/commands/*.md
 /bg [logs <id> [n]|stop <id>]   Background processes started by the agent (dev servers, watchers)
 @path                      In any prompt: attach a file (or folder listing); TUI: Tab picks a match
@@ -145,6 +147,8 @@ class CommandRouter:
             "/commands": self._commands,
             "/bg": self._bg,
             "/hooks": self._hooks,
+            "/statusline": self._statusline,
+            "/plugins": self._plugins,
             "/mcp": self._mcp,
             "/paste": self._paste,
             "/image": self._image,
@@ -1113,6 +1117,68 @@ class CommandRouter:
                 str(p.log_path.name),
             )
         self.console.print(t)
+
+    async def _statusline(self, args: list[str]) -> None:
+        """Show, set up or reload the custom status line (user config only)."""
+        from trendlab.config.loader import global_config_path, update_global_config
+        from trendlab.ui.statusline import SAMPLE_SCRIPT, StatusLine, render, session_info
+
+        sub = args[0].lower() if args else ""
+        if sub == "init":
+            script = global_config_path().parent / "statusline.sh"
+            if not script.exists():
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text(SAMPLE_SCRIPT, encoding="utf-8")
+                script.chmod(0o755)
+            update_global_config("ui", {"statusline": str(script)})
+            self.console.print(
+                f"[ok]status line on[/ok]: {script.name} in your TrendLab folder — edit it to "
+                "change what it shows; /statusline reload picks up changes to the config"
+            )
+            sub = "reload"
+        line = StatusLine()
+        if sub == "reload":
+            ui = getattr(self, "_statusline_owner", None)
+            if ui is not None:
+                ui.statusline = line
+        if not line.enabled:
+            self.console.print(
+                "[dim]no status line set. /statusline init writes a starter script, or set "
+                '[ui] statusline = "<command>" in your own config.toml[/dim]'
+            )
+            return
+        info = session_info(self.app)
+        out = await render(line.command, info, self.app.project_root)
+        self.console.print(f"command  {line.command}  (every {line.interval:g}s)")
+        self.console.print("fields   " + ", ".join(info))
+        self.console.print("preview  ", end="")
+        from rich.text import Text
+
+        self.console.print(Text.from_ansi(out or "(empty)"))
+
+    async def _plugins(self, args: list[str]) -> None:
+        pm = getattr(self.app, "plugins", None)
+        if pm is None:
+            self.console.print("[dim]plugins are not loaded in this session[/dim]")
+            return
+        if args and args[0] == "available":
+            have = {p.name for p, _ in pm.installed()}
+            for p in pm.available():
+                mark = " (installed)" if p["name"] in have else ""
+                self.console.print(
+                    f"  {p['name']}@{p['marketplace']}{mark} — {p.get('description', '')}"
+                )
+            self.console.print("[dim]install: trendlab plugin install <name>[/dim]")
+            return
+        rows = pm.installed()
+        if not rows:
+            self.console.print("[dim]no plugins installed — /plugins available[/dim]")
+            return
+        for p, meta in rows:
+            state = "on" if meta.get("enabled", True) else "off"
+            adds = [f"/{c}" for c in p.commands] + [f"skill {s}" for s in p.skills]
+            adds += [f"hook {h['event']}" for h in p.hooks] + [f"mcp {m}" for m in p.mcp]
+            self.console.print(f"  {p.name} {p.version} [{state}] — {', '.join(adds) or '-'}")
 
     async def _hooks(self, args: list[str]) -> None:
         hooks = self.app.config.hooks

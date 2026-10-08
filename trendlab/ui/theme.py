@@ -148,6 +148,12 @@ Screen {{
     color: {NEON};
     padding: 0 1;
 }}
+#statusline {{
+    height: auto;
+    max-height: 1;
+    padding: 0 1;
+    display: none;
+}}
 #input {{
     dock: bottom;
     height: auto;

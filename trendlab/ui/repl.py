@@ -6,9 +6,11 @@ import asyncio
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 
 from trendlab import __version__
 from trendlab.app import TrendLabApp
+from trendlab.telemetry.events import EventType
 from trendlab.ui.activity import format_event, run_footer
 from trendlab.ui.commands import CommandRouter
 from trendlab.ui.prompt_rules import continues_line
@@ -33,8 +35,18 @@ class Repl:
         self.app.events.subscribe(self._on_event)
         self._header()
         asyncio.get_running_loop().run_in_executor(None, self._update_check)
+        from trendlab.ui.statusline import StatusLine
+
+        self.statusline = StatusLine()
+        self.commands._statusline_owner = self  # /statusline reload swaps it in place
         try:
             while self._running:
+                if self.statusline.enabled:
+                    from rich.text import Text
+
+                    line = await self.statusline.refresh(self.app)
+                    if line:
+                        self.console.print(Text.from_ansi(line, no_wrap=True, overflow="ellipsis"))
                 self.console.print(f"[bold {MINT}]❯[/] ", end="")
                 line = await self.app.console_input.readline()
                 if line is None:
@@ -153,9 +165,33 @@ class Repl:
     def _on_event(self, event) -> None:
         if event.data.get("role", "main") != "main" and event.type.value.startswith("tool."):
             return
+        if event.type == EventType.TOOL_OUTPUT:
+            self._live_output(event.data)
+            return
+        if event.type in (EventType.TOOL_COMPLETED, EventType.TOOL_SKIPPED):
+            self._live_seen = 0
         line = format_event(event)
         if line:
             self.console.print(line, highlight=False)
+
+    _live_seen = 0
+    LIVE_AFTER_S = 2.0  # quick commands stay quiet; their result line says enough
+
+    def _live_output(self, data: dict) -> None:
+        """Stream new lines of a long-running command, dimmed and indented."""
+        total = data.get("lines")
+        if total is None or (data.get("elapsed_s") or 0) < self.LIVE_AFTER_S:
+            return
+        tail = (data.get("tail") or "").splitlines()
+        new = total - self._live_seen
+        if new <= 0:
+            return
+        shown = tail[-min(new, len(tail)) :]
+        if new > len(shown):
+            self.console.print(f"[{GREY}]  │ … {new - len(shown)} more lines[/]", highlight=False)
+        for ln in shown:
+            self.console.print(f"[{GREY}]  │ {escape(ln)}[/]", highlight=False)
+        self._live_seen = total
 
     def cancel_current(self) -> bool:
         if self._current is not None and not self._current.done():

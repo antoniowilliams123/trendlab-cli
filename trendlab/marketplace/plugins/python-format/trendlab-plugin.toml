@@ -1,0 +1,8 @@
+name = "python-format"
+version = "1.0.0"
+description = "Formats each Python file the agent writes with ruff (if installed)"
+
+[[hooks]]
+event = "after_write"
+command = "sh ${PLUGIN_DIR}/format.sh"
+timeout_seconds = 30

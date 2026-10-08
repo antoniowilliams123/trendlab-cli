@@ -1,0 +1,24 @@
+{
+  "name": "trendlab",
+  "description": "Plugins that ship with TrendLab CLI",
+  "plugins": [
+    {
+      "name": "plain-english",
+      "version": "1.0.0",
+      "description": "Answers in short, plain sentences; /plain rewrites any text that way",
+      "source": "./plugins/plain-english"
+    },
+    {
+      "name": "review-pack",
+      "version": "1.0.0",
+      "description": "/security-review and /perf-review of the current diff",
+      "source": "./plugins/review-pack"
+    },
+    {
+      "name": "python-format",
+      "version": "1.0.0",
+      "description": "Formats each Python file the agent writes with ruff (if installed)",
+      "source": "./plugins/python-format"
+    }
+  ]
+}

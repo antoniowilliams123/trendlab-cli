@@ -24,8 +24,11 @@ class Skill:
 
 
 class SkillLibrary:
-    def __init__(self, project_root: Path, home: Path) -> None:
-        self.dirs = [home / "skills", project_root / ".trendlab" / "skills"]
+    def __init__(
+        self, project_root: Path, home: Path, plugin_dirs: list[Path] | None = None
+    ) -> None:
+        # later directories override earlier ones: plugins < global < project
+        self.dirs = [*(plugin_dirs or []), home / "skills", project_root / ".trendlab" / "skills"]
         self.active: list[str] = []
         self._skills: dict[str, Skill] = {}
         self.reload()
