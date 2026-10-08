@@ -436,6 +436,11 @@ def bench_cmd(
     scorecard_path: Path | None = typer.Option(
         None, "--scorecard", help="Write a markdown scorecard of the suite run to this file."
     ),
+    perturb: str | None = typer.Option(
+        None, "--perturb", help="Rewrite prompts: typos | terse | verbose (robustness eval)."
+    ),
+    chaos: float = typer.Option(0.0, "--chaos", help="Share of model calls that fail transiently."),
+    concurrency: int = typer.Option(1, "--concurrency", help="Tasks run at once (stress test)."),
     save_rows: Path | None = typer.Option(
         None, "--save-rows", help="Write every task row (with diffs) as JSON for label/judge-bias."
     ),
@@ -501,6 +506,9 @@ def bench_cmd(
                     tier=tier,
                     runs=runs,
                     holdout=holdout,
+                    concurrency=concurrency,
+                    perturbation=perturb,
+                    chaos=chaos,
                 )
             )
             summary = {"config": spec, **summarize(results)}

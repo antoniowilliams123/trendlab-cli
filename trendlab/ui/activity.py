@@ -104,6 +104,12 @@ def format_event(event: Event) -> str | None:
             f"  [{GREY}]⑂ candidate {d.get('n')}:[/] {mark} [{GREY}]{d.get('diff_lines')} diff lines"
             f" · ${d.get('cost_usd', 0):.3f} · {d.get('elapsed_s', 0):.0f}s[/]"
         )
+    if t == EventType.INJECTION_SUSPECTED:
+        first = (d.get("hits") or [{}])[0]
+        return (
+            f"[bold {AMBER}]⚠ {d.get('tool')} returned text that tries to instruct the agent[/] "
+            f"[{GREY}]{escape(str(first.get('reason', '')))}: {escape(_short(str(first.get('line', '')), 90))}[/]"
+        )
     if t == EventType.SCOPE_CHECKED:
         if d.get("ok"):
             ts = d.get("test_strength")

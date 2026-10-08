@@ -25,6 +25,24 @@ from trendlab.tools.registry import ToolRegistry
 
 StateHook = Callable[[str], None]
 MUTATING_TOOLS = {"write_file", "patch_file", "apply_patch", "delete_file"}
+# Tools whose output is content from outside the user's request (scanned for injection).
+SCANNED_TOOLS = {
+    "read_file",
+    "shell",
+    "run_tests",
+    "web_fetch",
+    "web_search",
+    "search_text",
+    "git_log",
+    "git_diff",
+}
+TAINT_GATED = {
+    OperationCategory.FILE_DELETE,
+    OperationCategory.NETWORK,
+    OperationCategory.PACKAGE_INSTALL,
+    OperationCategory.DESTRUCTIVE,
+    OperationCategory.OUTSIDE_PROJECT,
+}
 
 
 class ToolRuntime:
@@ -55,6 +73,9 @@ class ToolRuntime:
         from trendlab.tools.health import ToolHealth
 
         self.health = ToolHealth()  # per-tool counters + circuit breaker (uplift U4)
+        # Prompt-injection taint: set when a tool result addressed the agent; until reset (run
+        # start), harmful categories need approval even in AUTO mode.
+        self.tainted: list[dict[str, str]] = []
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -115,6 +136,12 @@ class ToolRuntime:
 
         perm = tool.permission(args, self.ctx)
         verdict = self.engine.evaluate(perm)
+        if self.tainted and verdict.decision == Decision.ALLOW and perm.category in TAINT_GATED:
+            verdict = type(verdict)(
+                Decision.ASK,
+                "approval required: this run read content that tried to instruct the agent",
+                verdict.risk,
+            )
         self.events.emit(
             EventType.PERMISSION_DECIDED,
             session_id=self.ctx.session_id,
@@ -307,6 +334,20 @@ class ToolRuntime:
         finally:
             self.ctx.progress = None
         duration_ms = int((time.monotonic() - call_started) * 1000)
+        if tool.name in SCANNED_TOOLS and result.output:
+            from trendlab.security.injection import scan, warning
+
+            hits = scan(result.output)
+            if hits:
+                self.tainted.extend(hits)
+                result.output = warning(hits) + result.output
+                result.data["injection_suspected"] = hits
+                self.events.emit(
+                    EventType.INJECTION_SUSPECTED,
+                    session_id=self.ctx.session_id,
+                    tool=tool.name,
+                    hits=hits,
+                )
         error_text = (result.output or "")[:200] if not result.ok else ""
         tool_error = (
             (not result.ok)

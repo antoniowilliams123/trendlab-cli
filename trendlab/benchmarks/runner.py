@@ -177,8 +177,12 @@ async def run_task(
     home: Path | None = None,
     profile: str = "harness",
     sandbox: str | None = None,
+    perturbation: str | None = None,
+    chaos: float = 0.0,
 ) -> dict[str, Any]:
-    """One suite task → metrics (§8.2). ``sandbox='docker'`` runs commands in a pinned image."""
+    """One suite task → metrics (§8.2). ``sandbox='docker'`` runs commands in a pinned image;
+    ``perturbation`` rewrites the prompt (typos | terse | verbose); ``chaos`` makes that share
+    of model calls fail transiently."""
     import os
     import shutil
 
@@ -207,6 +211,10 @@ async def run_task(
     with tempfile.TemporaryDirectory(prefix=f"trendlab-suite-{task.id}-") as tmp:
         root = Path(tmp) / "repo"
         prompt = suite_mod.materialize(task, root)
+        if perturbation:
+            from trendlab.benchmarks.perturb import perturb
+
+            prompt = perturb(prompt, perturbation, seed=task.id)
         before = {
             str(p.relative_to(root)): p.read_text(errors="replace")
             for p in root.rglob("*")
@@ -220,12 +228,36 @@ async def run_task(
             console=Console(quiet=True),
             data_dir=home,
         )
+        chaos_wrappers: list[Any] = []
+        if chaos > 0 and tl.gateway is not None:
+            from trendlab.benchmarks.perturb import ChaosProvider
+
+            inner_factory = tl.gateway._factory  # noqa: SLF001 — test hook for chaos runs
+
+            def chaotic(ref, _inner=inner_factory):
+                w = ChaosProvider(_inner(ref), chaos, seed=f"{task.id}:{ref}")
+                chaos_wrappers.append(w)
+                return w
+
+            tl.gateway._factory = chaotic  # noqa: SLF001
+            tl.gateway._providers.clear()  # noqa: SLF001
         interventions = 0
         guards: dict[str, int] = {}
         tools: dict[str, dict[str, int]] = {}
+        commands: list[str] = []
+        sequence: list[tuple[str, str]] = []  # (tool, path) in order, for tool-use metrics
+        plan_files: list[str] = []
 
         def count(e):
             nonlocal interventions
+            if e.type == EventType.TOOL_STARTED:
+                if e.data.get("command"):
+                    commands.append(str(e.data["command"]))
+                files = e.data.get("files") or []
+                sequence.append((str(e.data.get("tool")), str(files[0]) if files else ""))
+            if e.type == EventType.PLANNER_CALLED:
+                for fs in e.data.get("files") or []:
+                    plan_files.extend(fs)
             if e.type == EventType.GUARD_FIRED:
                 guards[e.data.get("guard")] = guards.get(e.data.get("guard"), 0) + 1
             if e.type in {EventType.TOOL_COMPLETED, EventType.TOOL_SKIPPED}:
@@ -251,6 +283,8 @@ async def run_task(
         await tl.start(interactive=False)
         try:
             result = await tl.run_prompt(prompt)
+            for follow in task.followups:  # multi-turn: same session, same context
+                result = await tl.run_prompt(follow)
         finally:
             await tl.stop()
         wall = time.monotonic() - started
@@ -261,7 +295,8 @@ async def run_task(
         proc = subprocess.run(
             task.test_command, shell=True, cwd=root, capture_output=True, text=True, env=env
         )
-        passes = proc.returncode == 0
+        passes = proc.returncode == 0  # safety (adversarial tier) is reported separately as "safe"
+        violations = suite_mod.check_forbid(task, root, commands)
         shutil.rmtree(root / ".trendlab", ignore_errors=True)
         located = task.answer_file in changed
         root_cause = False
@@ -292,6 +327,24 @@ async def run_task(
         run_diff = "\n".join(diff_parts)[:20_000]
         context_text = json.dumps(tl.context.messages if tl.context else [], default=str)
         leak = suite_mod.leakage(task, context_text)
+        # tool-use eval: every edited file was read first; validation ran after the last edit
+        edits = [
+            i
+            for i, (t, _p) in enumerate(sequence)
+            if t in {"write_file", "patch_file", "apply_patch"}
+        ]
+        read_paths = {p for t, p in sequence if t == "read_file"}
+        read_before_edit = all(
+            sequence[i][1] in read_paths or sequence[i][0] == "write_file" for i in edits
+        )
+        validated_after_edit = not edits or any(
+            t in {"run_tests", "shell"} for t, _p in sequence[edits[-1] + 1 :]
+        )
+        plan_recall = None
+        if plan_files:
+            planned = {p.strip("./") for p in plan_files}
+            expected = {p.strip("./") for p in task.expected_changed}
+            plan_recall = round(len(planned & expected) / len(expected), 3) if expected else None
         ref = suite_mod.reference_content(task, task.answer_file)
         final = (root / task.answer_file).read_text() if (root / task.answer_file).is_file() else ""
         exact_match = ref is not None and final == ref
@@ -302,6 +355,14 @@ async def run_task(
             "task": task.id,
             "lang": task.lang,
             "tier": task.tier,
+            "safe": not violations,
+            "violations": violations,
+            "turns": 1 + len(task.followups),
+            "perturbation": perturbation,
+            "chaos_injected": sum(w.injected for w in chaos_wrappers),
+            "read_before_edit": read_before_edit,
+            "validated_after_edit": validated_after_edit,
+            "plan_recall": plan_recall,
             "suite_version": suite_mod.SUITE_VERSION,
             "leakage": leak,
             "diff": run_diff,
@@ -379,17 +440,45 @@ async def run_suite(
     tier: str = "base",
     runs: int = 1,
     holdout: bool = False,
+    concurrency: int = 1,
     **kw,
 ) -> list[dict[str, Any]]:
-    """``runs`` > 1 repeats every task so pass@k, flakiness and intervals mean something."""
-    out = []
-    for task in select_tasks(selector, lang, tier, holdout=holdout):
-        for run in range(max(1, runs)):
-            r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
+    """``runs`` > 1 repeats every task so pass@k, flakiness and intervals mean something;
+    ``concurrency`` > 1 runs that many tasks at once (stress / load test of the harness)."""
+    jobs = [
+        (task, run)
+        for task in select_tasks(selector, lang, tier, holdout=holdout)
+        for run in range(max(1, runs))
+    ]
+    out: list[dict[str, Any]] = []
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(task, run):
+        async with sem:
+            t0 = time.monotonic()
+            try:
+                r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
+            except Exception as exc:  # noqa: BLE001 — a crash is a measured outcome under load
+                r = {
+                    "task": task.id,
+                    "lang": task.lang,
+                    "tier": task.tier,
+                    "passes": False,
+                    "status": "CRASHED",
+                    "error": f"{exc.__class__.__name__}: {exc}"[:300],
+                    "cost": 0.0,
+                    "wall_s": round(time.monotonic() - t0, 1),
+                }
             r["run"] = run + 1
             out.append(r)
             if on_result:
                 on_result(r)
+
+    if concurrency <= 1:
+        for task, run in jobs:
+            await one(task, run)
+    else:
+        await asyncio.gather(*(one(t, r) for t, r in jobs))
     return out
 
 
@@ -442,6 +531,21 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         round(sum(r["ref_similarity"] for r in with_ref) / len(with_ref), 4) if with_ref else None
     )
     summary["leakage"] = sum(1 for r in ran if r.get("leakage"))
+    adv = [r for r in ran if r.get("tier") == "adversarial"]
+    summary["injection_resisted"] = (
+        round(sum(1 for r in adv if r.get("safe")) / len(adv), 3) if adv else None
+    )
+    summary["safe"] = round(sum(1 for r in ran if r.get("safe", True)) / n, 3)
+    summary["crashed"] = sum(1 for r in ran if r.get("status") == "CRASHED")
+    summary["read_before_edit"] = round(
+        sum(1 for r in ran if r.get("read_before_edit", True)) / n, 3
+    )
+    summary["validated_after_edit"] = round(
+        sum(1 for r in ran if r.get("validated_after_edit", True)) / n, 3
+    )
+    recalls = [r["plan_recall"] for r in ran if r.get("plan_recall") is not None]
+    summary["plan_recall"] = round(sum(recalls) / len(recalls), 3) if recalls else None
+    summary["chaos_injected"] = sum(r.get("chaos_injected", 0) for r in ran)
     summary["hallucination_rate"] = round(sum(1 for r in ran if r.get("unsupported_claims")) / n, 3)
     summary["capability"] = {
         "by_defect": capability_map(ran, "defect_kind"),

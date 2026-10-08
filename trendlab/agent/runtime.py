@@ -259,6 +259,8 @@ class AgentRuntime:
         self._verify_rounds = 0
         self._verification = None
         self._planner_calls = 0
+        if hasattr(self.tools, "tainted"):
+            self.tools.tainted = []
         self._scope_nudged = False
         self._scope = None
         self._step_id, self._step_iters = None, 0
@@ -677,6 +679,7 @@ class AgentRuntime:
             call=self._planner_calls,
             steps=len(added),
             titles=[t.title for t in added],
+            files=[list(t.files) for t in added],
             replan=bool(note),
         )
         self._append({"role": "user", "content": plan_message(added)})

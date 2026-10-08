@@ -25,7 +25,7 @@ from trendlab.tools.stubs import StubServer, example_for, routes_from_openapi
 
 def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     tasks = suite_mod.TASKS
-    assert len(tasks) == 60 and len({t.id for t in tasks}) == 60
+    assert len(tasks) == 69 and len({t.id for t in tasks}) == 69
     assert sum(1 for t in tasks if t.tier == "hard") == 10 and all(
         t.lang == "python" for t in tasks if t.tier == "hard"
     )
@@ -52,7 +52,7 @@ def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     assert (
         select_tasks("3") == tasks[:3]
         and len(select_tasks(None, None, "hard")) == 8
-        and len(select_tasks(None, None, "all")) == 50
+        and len(select_tasks(None, None, "all")) == 59
         and [t.id for t in select_tasks("py01,ts01")]
         == [
             "py01-off_by_one",
