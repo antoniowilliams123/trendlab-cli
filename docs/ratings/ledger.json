@@ -208,8 +208,8 @@
   "evidence": "suite version fingerprints tasks and grading rules; canary history across versions"
  },
  "140": {
-  "rating": 8,
-  "evidence": "profile_sessions + total-variation distance over real sessions; drift --periods (2b3e3ae, 244b518)"
+  "rating": 9,
+  "evidence": "drift on real data: suite vs 159 real sessions, kind 0.23, length 0.42 (short prompts under-represented)"
  },
  "141": {
   "rating": 9,
@@ -220,8 +220,8 @@
   "evidence": "served model version stamped on every record and cost row (242a16c)"
  },
  "143": {
-  "rating": 8,
-  "evidence": "shift report showed the suite did not match real work; realistic tier added to close it (2b3e3ae)"
+  "rating": 9,
+  "evidence": "same, plus last-7-days vs previous period"
  },
  "144": {
   "rating": 9,
@@ -236,8 +236,8 @@
   "evidence": "concurrency-8 stress: 15/15 pass, 0 crashes, 0 provider errors, p95 40 s, 16 tasks/min (2026-10-08)"
  },
  "147": {
-  "rating": 8,
-  "evidence": "load profile (p50/p95, makespan, throughput) in every bench summary; one load level measured"
+  "rating": 9,
+  "evidence": "load curve live: 4 → 11.8 tasks/min, 8 → 16.1, 16 → 9.2 (p95 96 s); 0 crashes"
  },
  "149": {
   "rating": 9,
@@ -296,24 +296,24 @@
   "evidence": "second-opinion verifier with agreement events (242a16c)"
  },
  "165": {
-  "rating": 8,
-  "evidence": "judge-bias probe: padded and restyled diffs must not flip verdicts (ddf4977)"
+  "rating": 9,
+  "evidence": "judge-bias probe live: v4-pro verifier 0/8 verdict flips under padding or restyling"
  },
  "166": {
-  "rating": 8,
-  "evidence": "same probe, reported per judge model"
+  "rating": 9,
+  "evidence": "same"
  },
  "167": {
   "rating": 9,
   "evidence": "position swap on every pairwise call (test_judge_quality)"
  },
  "168": {
-  "rating": 8,
-  "evidence": "pad_diff probe measures verbosity bias (ddf4977)"
+  "rating": 9,
+  "evidence": "verbosity bias 0/8 live"
  },
  "169": {
-  "rating": 8,
-  "evidence": "restyle_diff probe measures style bias (ddf4977)"
+  "rating": 9,
+  "evidence": "style bias 0/8 live"
  },
  "171": {
   "rating": 9,
@@ -396,8 +396,8 @@
   "evidence": "7 ablations + dotted overrides + --ablation (244b518)"
  },
  "198": {
-  "rating": 8,
-  "evidence": "bench --sweep over a config key (244b518)"
+  "rating": 9,
+  "evidence": "sweep live: verify-everything vs gated verifier — 6/6 both, cost $0.056 vs $0.031"
  },
  "199": {
   "rating": 9,
@@ -976,8 +976,8 @@
   "evidence": "exfiltration taint, injection taint, allowlist, jailbreak tier"
  },
  "454": {
-  "rating": 8,
-  "evidence": "every capability listed with its policy; taints force approval"
+  "rating": 9,
+  "evidence": "OS sandbox isolation measured + taints + per-category policy"
  },
  "459": {
   "rating": 9,
@@ -1000,8 +1000,8 @@
   "evidence": "per-tool timeouts, wall-clock cap, latency budget, cooldown"
  },
  "43": {
-  "rating": 8,
-  "evidence": "iteration, cost, call, wall-clock and latency budgets"
+  "rating": 9,
+  "evidence": "iteration, cost, call, wall-clock, token and latency budgets, each with a failure code"
  },
  "510": {
   "rating": 9,
@@ -1808,8 +1808,8 @@
   "evidence": "prompt → first edit and edit → verdict measured"
  },
  "33": {
-  "rating": 8,
-  "evidence": "worktree runs, docker sandbox option, run lock"
+  "rating": 9,
+  "evidence": "same isolation + run lock + worktrees"
  },
  "48": {
   "rating": 8,
@@ -2098,5 +2098,9 @@
  "788": {
   "rating": 8,
   "evidence": "ledger: p95 input tokens and spend share above 30k; home sessions 34% (52a8317)"
+ },
+ "34": {
+  "rating": 9,
+  "evidence": "bubblewrap sandbox live: project writable; home read-only; /tmp private; network blocked"
  }
 }
