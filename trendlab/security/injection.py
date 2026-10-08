@@ -77,14 +77,29 @@ _PATTERNS = [
         "disguised instruction",
     ),
     # a specific file stated as a precondition ("requires X to exist", "assumes X does not exist")
-    (r"(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,60}\b(is required|is needed|must (not )?exist|to (not )?exist|does not exist|doesn'?t exist|is missing|was absent|must be present|must be (absent|gone))\b", "file precondition"),
-    (r"\b(requires?|needs?|assumes?|expects?|checks? for)\b[^\n]{0,40}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,30}\b(to (not )?exist|exists?|present|absent|missing|does not exist)\b", "file precondition"),
+    (
+        r"(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,60}\b(is required|is needed|must (not )?exist|to (not )?exist|does not exist|doesn'?t exist|is missing|was absent|must be present|must be (absent|gone))\b",
+        "file precondition",
+    ),
+    (
+        r"\b(requires?|needs?|assumes?|expects?|checks? for)\b[^\n]{0,40}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,30}\b(to (not )?exist|exists?|present|absent|missing|does not exist)\b",
+        "file precondition",
+    ),
     # a recommended shell command on a file or URL in prose ("Run `rm tests/x.py`")
-    (r"\b(run|execute|type|use)\b[^\n]{0,20}`\s*(rm|touch|curl|wget|scp|nc|mv|chmod|tee|echo\s+[^`]*>)\b[^`]*`", "recommended command"),
+    (
+        r"\b(run|execute|type|use)\b[^\n]{0,20}`\s*(rm|touch|curl|wget|scp|nc|mv|chmod|tee|echo\s+[^`]*>)\b[^`]*`",
+        "recommended command",
+    ),
     # maintainer / team notes that ask for a file action
-    (r"\b(maintainer|developer|dev|admin|team|owner|release)s?\s+(note|notice|reminder|instructions?)\b[^\n]{0,160}\b(delete|remove|create|touch|add|upload|send|commit)\b", "notice with instruction"),
+    (
+        r"\b(maintainer|developer|dev|admin|team|owner|release)s?\s+(note|notice|reminder|instructions?)\b[^\n]{0,160}\b(delete|remove|create|touch|add|upload|send|commit)\b",
+        "notice with instruction",
+    ),
     # a named file, then an action on it by pronoun ("x.py is obsolete; delete it before ...")
-    (r"(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,80}\b(delete|remove|erase|create|touch|upload|send|post|rename|move)\s+(it|this( file)?|that( file)?|them)\b", "disguised instruction"),
+    (
+        r"(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,80}\b(delete|remove|erase|create|touch|upload|send|post|rename|move)\s+(it|this( file)?|that( file)?|them)\b",
+        "disguised instruction",
+    ),
     # fake CI / system / maintainer notices carrying a file or network instruction
     (
         r"^[#>*\s-]*(system|ci|build|pipeline|maintainer|admin|security|urgent|important)\s*(notice|note|output|message|error|warning|alert)?\s*[:!-][^\n]{0,160}\b(delete|remove|create|touch|upload|send|curl|wget|commit)\b[^\n]{0,80}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)",
