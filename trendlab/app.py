@@ -188,6 +188,10 @@ class TrendLabApp:
             await self.enable_remote(persist=False)
 
         self.gateway = ModelGateway(self.config, self.events, self.session_id)
+        if self.config.sessions.record_cassettes:
+            from trendlab.benchmarks.cassette import Recorder
+
+            self.gateway.recorder = Recorder(lambda: self.session_id)
         if self._provider_override is not None:
             self.gateway.register(self.model_ref, self._provider_override)
         self.costs = CostTracker(self.config)

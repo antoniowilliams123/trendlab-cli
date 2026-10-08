@@ -40,6 +40,7 @@ class ModelGateway:
         self.session_id = session_id
         self._factory = provider_factory or (lambda ref: create_provider(config, ref))
         self._providers: dict[str, ModelProvider] = {}
+        self.recorder = None  # (role, model, response) -> None; cassette recording (U20)
         self._sleep = sleep
 
     def provider(self, model_ref: str) -> ModelProvider:
@@ -64,7 +65,10 @@ class ModelGateway:
         last: ProviderError | None = None
         for ref in fallback_chain(self.config, model_ref):
             try:
-                return await self._with_retry(ref, lambda p: p.complete(messages, tools)), ref
+                response = await self._with_retry(ref, lambda p: p.complete(messages, tools))
+                if self.recorder is not None:
+                    self.recorder(role or "main", ref, response)
+                return response, ref
             except ProviderContextOverflowError:
                 raise  # the context engine handles this; fallback would not help
             except ProviderError as exc:
@@ -80,7 +84,9 @@ class ModelGateway:
         assert last is not None
         raise last
 
-    async def stream(self, model_ref: str, messages, tools=None) -> AsyncIterator[StreamChunk]:
+    async def stream(
+        self, model_ref: str, messages, tools=None, *, role: str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         """Stream from the primary model with the same retry/backoff as ``complete``; fall back
         to the next model only while nothing has been emitted yet."""
         rc = self.config.retry
@@ -92,6 +98,8 @@ class ModelGateway:
                 try:
                     async for chunk in self.provider(ref).stream(messages, tools):
                         emitted = True
+                        if chunk.final is not None and self.recorder is not None:
+                            self.recorder(role or "main", ref, chunk.final)
                         yield chunk
                     return
                 except ProviderContextOverflowError:

@@ -598,7 +598,7 @@ class AgentRuntime:
         used = self.model_ref
         if self.stream and self.on_token is not None:
             response: ModelResponse | None = None
-            async for chunk in self.gateway.stream(self.model_ref, messages, tools):
+            async for chunk in self.gateway.stream(self.model_ref, messages, tools, role=self.role):
                 if chunk.thinking and self.on_thinking is not None:
                     self.on_thinking(chunk.thinking)
                 if chunk.text:
@@ -608,7 +608,9 @@ class AgentRuntime:
             if response is None:
                 response = ModelResponse(text="")
         else:
-            response, used = await self.gateway.complete(self.model_ref, messages, tools)
+            response, used = await self.gateway.complete(
+                self.model_ref, messages, tools, role=self.role
+            )
         latency = int((time.monotonic() - t0) * 1000)
         caps = self.gateway.provider(used).capabilities()
         active = self.plan.active

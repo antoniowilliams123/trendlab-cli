@@ -156,6 +156,9 @@ class Engine:
                         older_than_days=self.config.sessions.retention_days,
                         keep_latest=self.config.sessions.keep_latest,
                     )
+                    from trendlab.benchmarks.cassette import prune_cassettes
+
+                    result["cassettes_pruned"] = prune_cassettes(store)
                 finally:
                     store.close()
             elif job == "review":

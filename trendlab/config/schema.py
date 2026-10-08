@@ -273,6 +273,8 @@ class SessionsConfig(BaseModel):
 
     retention_days: int = Field(default=90, ge=1)
     keep_latest: int = Field(default=50, ge=1)
+    # record every model response so sessions can be replayed deterministically (U20)
+    record_cassettes: bool = True
 
 
 class GovernanceConfig(BaseModel):

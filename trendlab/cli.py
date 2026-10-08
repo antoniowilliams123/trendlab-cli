@@ -965,20 +965,90 @@ def stub_cmd(
 
 @app.command("replay")
 def replay_cmd(
-    session_id: str = typer.Argument(..., help="Stored session id (see `trendlab sessions`)."),
+    session_id: str = typer.Argument(
+        "", help="Stored session id (see `trendlab sessions`); omit with --recent."
+    ),
     model: str | None = typer.Option(
         None, "--model", "-m", help="Model for the replay (default: the session's)."
     ),
+    recent: int = typer.Option(
+        0, "--recent", help="With --deterministic: replay the N latest recorded sessions."
+    ),
     max_prompts: int | None = typer.Option(None, "--max-prompts"),
+    deterministic: bool = typer.Option(
+        False,
+        "--deterministic",
+        help="Serve every model response from the session's cassette ($0): a regression test of "
+        "the harness against the real session.",
+    ),
     output: str = typer.Option("text", help="text | json"),
 ) -> None:
-    """Shadow replay: re-run a stored session's prompts against the current build (spec §8.6)."""
+    """Shadow replay: re-run a stored session's prompts against the current build (spec §8.6);
+    --deterministic replays the recorded model responses instead of calling a model (U20)."""
     from trendlab.benchmarks.replay import replay_session
     from trendlab.config.loader import load_config, trendlab_home
     from trendlab.sessions.store import SessionStore
 
     config = load_config()
     store = SessionStore(trendlab_home() / "sessions.db")
+    if deterministic and recent:
+        from trendlab.benchmarks.cassette import cassette_dir, deterministic_replay
+
+        files = sorted(cassette_dir().glob("*.jsonl"), key=lambda f: f.stat().st_mtime)[-recent:]
+        reports = []
+        try:
+            for f in files:
+                if store.get_session(f.stem) is None:
+                    continue
+                reports.append(
+                    asyncio.run(deterministic_replay(store, f.stem, config=load_config()))
+                )
+        finally:
+            store.close()
+        ok = [r for r in reports if r.get("identical")]
+        bad = [r for r in reports if not r.get("identical")]
+        summary = {
+            "replayed": len(reports),
+            "identical": len(ok),
+            "diverged": [
+                {"session": r["session"], "why": (r.get("divergences") or [r.get("error")])[:2]}
+                for r in bad
+            ],
+            "model_calls_served": sum(r.get("model_calls_served", 0) for r in reports),
+        }
+        if output == "json":
+            typer.echo(json.dumps(summary, indent=2))
+        else:
+            console.print(
+                f"[neon]replay regression[/neon]: {summary['identical']}/{summary['replayed']} "
+                f"sessions identical · {summary['model_calls_served']} model calls from cassettes "
+                "· $0"
+            )
+            for d in summary["diverged"]:
+                console.print(f"  [danger]✗[/danger] {d['session']}: {d['why']}")
+        raise typer.Exit(code=0 if not bad else 1)
+    if not session_id:
+        raise typer.BadParameter("give a session id, or --deterministic --recent N")
+    if deterministic:
+        from trendlab.benchmarks.cassette import deterministic_replay
+
+        try:
+            report = asyncio.run(deterministic_replay(store, session_id, config=config))
+        finally:
+            store.close()
+        if output == "json" or "error" in report:
+            typer.echo(json.dumps(report, indent=2))
+        else:
+            verdict = "[ok]identical[/ok]" if report["identical"] else "[danger]diverged[/danger]"
+            console.print(
+                f"replay {session_id}: {verdict} · {report['model_calls_served']}/"
+                f"{report['model_calls_recorded']} recorded model calls served · tools "
+                f"{report['tool_calls_before']} → {report['tool_calls_after']} · outcomes "
+                f"{report['outcomes_before']} → {report['outcomes_after']} · $0"
+            )
+            for d in report["divergences"]:
+                console.print(f"  · {d}")
+        raise typer.Exit(code=0 if report.get("identical") else 1)
     try:
         report = asyncio.run(
             replay_session(store, session_id, config=config, model=model, max_prompts=max_prompts)
