@@ -1934,6 +1934,42 @@ def prompts_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("tail")
+def tail_cmd(
+    session: str | None = typer.Argument(None, help="Only this session (default: all)."),
+    follow: bool = typer.Option(True, "--follow/--once", help="Keep following new events."),
+    last: int = typer.Option(20, "--last", help="Show this many recent events first."),
+    interval: float = typer.Option(1.0, "--interval"),
+) -> None:
+    """Live session monitoring (U29): follow any run's events as they happen."""
+    import time as _time
+
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.tail import fetch, line
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        with store._lock:  # noqa: SLF001
+            top = store._conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]  # noqa: SLF001
+        cursor = max(0, top - last * 5)
+        backlog = [e for e in fetch(store, cursor, session, limit=last * 5)]
+        shown = [ln for ln in (line(e) for e in backlog) if ln][-last:]
+        for ln in shown:
+            typer.echo(ln)
+        cursor = backlog[-1]["id"] if backlog else top
+        while follow:
+            _time.sleep(interval)
+            for e in fetch(store, cursor, session):
+                cursor = e["id"]
+                ln = line(e)
+                if ln:
+                    typer.echo(ln)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        store.close()
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
