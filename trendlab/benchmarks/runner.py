@@ -1017,14 +1017,16 @@ def summarize_delegate_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-async def critique_eval(reviewers: dict[str, Any], *, adversary=None) -> dict[str, Any]:
+async def critique_eval(
+    reviewers: dict[str, Any], *, adversary=None, hard: bool = False
+) -> dict[str, Any]:
     """U15 panel eval: recall of planted design flaws for each reviewer alone and for the panel
     (union), plus the false-consensus check: how many consensus points match no planted flaw."""
     from trendlab.agent.critique import critique
-    from trendlab.benchmarks.designs import DESIGNS, found
+    from trendlab.benchmarks.designs import DESIGNS, HARD_DESIGNS, found
 
     rows = []
-    for d in DESIGNS:
+    for d in HARD_DESIGNS if hard else DESIGNS:
         res = await critique(d["doc"], reviewers, adversary=adversary)
         row = {"design": d["id"], "points": len(res["points"]), "consensus": res["consensus"]}
         for name, pts in res["raw"].items():

@@ -165,3 +165,14 @@ async def test_critique_eval_scores_planted_flaws():
     # the idempotency claim matches the webhook and jobs designs' idempotency flaws
     assert res["recall"]["a"] == 0.25 and res["recall"]["adversary"] == 0.0
     assert res["recall"]["panel"] == 0.25
+
+
+async def test_hard_design_set_is_selectable():
+    from trendlab.benchmarks.designs import HARD_DESIGNS
+    from trendlab.benchmarks.runner import critique_eval
+
+    async def silent(messages):
+        return '{"points": []}'
+
+    res = await critique_eval({"a": silent}, hard=True)
+    assert res["designs"] == len(HARD_DESIGNS) and res["flaws"] == 8 and res["recall"]["a"] == 0.0

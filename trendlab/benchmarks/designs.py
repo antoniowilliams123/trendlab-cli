@@ -63,6 +63,57 @@ wins.""",
 ]
 
 
+# Harder set: each flaw is a second-order consequence of a reasonable-sounding decision.
+HARD_DESIGNS = [
+    {
+        "id": "signup",
+        "doc": """# Unique usernames
+On signup the API runs `SELECT 1 FROM users WHERE username = $1`; if no row comes back it runs
+`INSERT INTO users (...)`. The users table has an index on username for fast lookups. The API
+runs on 8 instances behind a load balancer; marketing expects 50k signups in the first hour of
+the launch email.""",
+        "flaws": {
+            "race: check-then-insert lets two concurrent signups take the same name (no unique constraint)": r"race|concurren|simultaneous|at the same time|unique (constraint|index)|both (insert|succeed)|toctou|check.then",
+        },
+    },
+    {
+        "id": "billing",
+        "doc": """# Monthly billing run
+A cron job runs at 00:05 server time (UTC) on the 1st of each month. For every active
+subscription it charges `price` and sets `paid_until = paid_until + 30 days`. Customers are
+global; invoices show the billing month in the customer's local time zone. Annual plans are
+billed the same way with `price * 12`.""",
+        "flaws": {
+            "30-day increments drift from calendar months (billing date walks; Feb/31-day months)": r"30 days|drift|calendar month|february|31|month length|walk",
+            "UTC run vs local-time invoice month: customers west of UTC see the previous month": r"time ?zone|utc|local time|wrong month|previous month|offset",
+            "annual plans charged price*12 every month": r"annual.*(every|each) month|charged? (monthly|twelve|12 times)|annual.*monthly|12x|overcharg",
+        },
+    },
+    {
+        "id": "feed",
+        "doc": """# Activity feed API
+GET /feed?page=N returns 50 items with `ORDER BY created_at DESC OFFSET N*50 LIMIT 50`. New
+activity is written constantly (about 200 items a minute at peak). The mobile app loads page 0,
+then page 1 when the user scrolls. Each item shows the author's avatar; the handler loads the
+author for each item with `get_user(item.author_id)`.""",
+        "flaws": {
+            "offset pagination with live inserts: items repeat or get skipped between pages": r"offset|skip|duplicat|repeat|shift|cursor|keyset|seek",
+            "N+1 queries loading each author": r"n ?\+ ?1|per item|each item.*(query|call)|batch|join|50 (queries|calls)",
+        },
+    },
+    {
+        "id": "cache_stampede",
+        "doc": """# Pricing cache
+Prices come from a slow pricing service (2-3 s per call). We cache the full price list in Redis
+with a 10-minute TTL. On a cache miss, the request handler calls the pricing service and writes
+the result to Redis. The site serves 400 requests per second, most of which need prices.""",
+        "flaws": {
+            "stampede: when the TTL expires every concurrent request hits the slow service": r"stampede|thundering|dog.?pil|herd|concurrent (miss|request)|all (requests|at once)|single.?flight|lock",
+        },
+    },
+]
+
+
 def found(points: list[dict], pattern: str) -> bool:
     rx = re.compile(pattern, re.I)
     return any(rx.search(p.get("claim", "") + " " + p.get("why", "")) for p in points)

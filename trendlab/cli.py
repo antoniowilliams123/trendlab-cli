@@ -1498,6 +1498,7 @@ def critique_cmd(
     eval_: bool = typer.Option(
         False, "--eval", help="Score the panel on built-in designs with planted flaws."
     ),
+    hard: bool = typer.Option(False, "--hard", help="With --eval: the subtler design set."),
     output: str = typer.Option("text", help="text | json"),
 ) -> None:
     """Multi-model design review (U15): critics per model plus an adversary; agreed points are
@@ -1523,7 +1524,7 @@ def critique_cmd(
             if eval_:
                 from trendlab.benchmarks.runner import critique_eval
 
-                return await critique_eval(callers, adversary=adv)
+                return await critique_eval(callers, adversary=adv, hard=hard)
             if doc is None:
                 raise typer.BadParameter("give a document, or --eval")
             return await critique(doc.read_text(), callers, adversary=adv)
