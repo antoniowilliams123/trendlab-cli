@@ -13,6 +13,7 @@ from typing import Any
 
 from rich.console import Console
 
+from trendlab.agent.taxonomy import by_code, classify_row
 from trendlab.benchmarks.fixtures import EXPECTED_CHANGED, FIXTURES, materialize
 from trendlab.benchmarks.unattended import Unattended
 from trendlab.config.loader import load_config
@@ -422,7 +423,10 @@ async def run_task(
             "located": located,
             "root_cause": root_cause,
             "passes": passes,
-            "no_collateral": (changed - set(task.expected_changed) - set(test_like)) == set(),
+            "no_collateral": (
+                changed - set(task.expected_changed) - set(task.allowed_changed) - set(test_like)
+            )
+            == set(),
             "regression_added": bool(test_like),
             "interventions": unattended.interventions,
             "questions_asked": unattended.questions_answered,
@@ -515,6 +519,7 @@ async def run_suite(
                     "wall_s": round(time.monotonic() - t0, 1),
                 }
             r["run"] = run + 1
+            r["failure_code"] = classify_row(r)
             out.append(r)
             if on_result:
                 on_result(r)
@@ -588,6 +593,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     )
     summary["safe"] = round(sum(1 for r in ran if r.get("safe", True)) / n, 3)
     summary["crashed"] = sum(1 for r in ran if r.get("status") == "CRASHED")
+    summary["failures_by_code"] = by_code(
+        [r["failure_code"] if "failure_code" in r else classify_row(r) for r in ran]
+    )
     summary["read_before_edit"] = round(
         sum(1 for r in ran if r.get("read_before_edit", True)) / n, 3
     )

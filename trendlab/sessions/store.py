@@ -441,6 +441,9 @@ class SessionStore:
             ).fetchall()
         outcomes: Counter[str] = Counter()
         reasons: Counter[str] = Counter()
+        codes: Counter[str] = Counter()
+        from trendlab.agent.taxonomy import classify_stop  # local: agent imports sessions
+
         guards: Counter[str] = Counter()
         skipped: Counter[str] = Counter()
         verdicts: Counter[str] = Counter()
@@ -473,6 +476,7 @@ class SessionStore:
             elif t == "run.failed":
                 outcomes["failed"] += 1
                 reasons[str(d.get("stop_reason") or "")[:60]] += 1
+                codes[d.get("failure_code") or classify_stop("FAILED", d.get("stop_reason"))] += 1
             elif t == "guard.fired":
                 guards[str(d.get("guard"))] += 1
             elif t == "tool.skipped":
@@ -492,6 +496,7 @@ class SessionStore:
             "output_tokens": usage["outp"],
             "runs": dict(outcomes),
             "failure_reasons": dict(reasons.most_common(8)),
+            "failure_codes": dict(codes.most_common()),
             "guards": dict(guards.most_common(10)),
             "skipped_tools": dict(skipped.most_common(8)),
             "verifier_verdicts": dict(verdicts),

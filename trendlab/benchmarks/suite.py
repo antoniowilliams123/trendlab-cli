@@ -963,6 +963,8 @@ class Task:
     followups: tuple[str, ...] = ()  # multi-turn: further prompts in the same session
     # question tasks: the answer must mention every keyword ('a|b' = either) and no file may change
     answer_keywords: tuple[str, ...] = ()
+    # files a correct solution may also touch (call sites of a rename); not collateral damage
+    allowed_changed: frozenset[str] = frozenset()
 
 
 def _line_of(base: dict[str, str], file: str, old: str) -> int:
@@ -1380,8 +1382,9 @@ def _more_tasks() -> list[Task]:
     def feat(kind, file, anchor, hidden_file, hidden):
         return Defect(kind, file, anchor, anchor, "", hidden_file, hidden, False)
 
-    def task(tid, tier, d, prompt, *, followups=(), expected=None):
+    def task(tid, tier, d, prompt, *, followups=(), expected=None, allowed=()):
         return Task(
+            allowed_changed=frozenset(allowed),
             id=tid,
             lang="python",
             defect=d,
@@ -1425,6 +1428,7 @@ def _more_tasks() -> list[Task]:
                 "Now give below_threshold an inclusive flag (default True); with inclusive=False a "
                 "level equal to the threshold is not reported. Add tests.",
             ),
+            allowed=("shop/report.py",),  # updating the one caller is correct for a rename
         ),
         task(
             "lh03-persist_orders",
@@ -1553,6 +1557,7 @@ def _suite_version() -> str:
     h = hashlib.sha256()
     for t in build_tasks():
         h.update(f"{t.id}|{t.defect.old}|{t.defect.new}|{t.defect.hidden_test}".encode())
+        h.update("|".join(sorted(t.expected_changed | t.allowed_changed)).encode())
     return h.hexdigest()[:12]
 
 

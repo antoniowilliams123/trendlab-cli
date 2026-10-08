@@ -58,6 +58,7 @@ class RunResult:
     model_calls: int = 0
     iterations: int = 0
     stop_reason: str | None = None
+    failure_code: str | None = None
     plan: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
     scope: dict[str, Any] | None = None  # diff shape, budget and test strength (uplift U5)
@@ -78,6 +79,7 @@ class RunResult:
             "model_calls": self.model_calls,
             "iterations": self.iterations,
             "stop_reason": self.stop_reason,
+            "failure_code": self.failure_code,
             "plan": self.plan,
         }
 
@@ -1105,7 +1107,11 @@ class AgentRuntime:
         )
         if claims:
             self.events.emit(EventType.CLAIM_UNSUPPORTED, session_id=self.session_id, claims=claims)
+        from trendlab.agent.taxonomy import classify_stop
+
+        failure_code = classify_stop(status.value, stop_reason)
         result = RunResult(
+            failure_code=failure_code,
             unsupported_claims=claims,
             verification=self._verification,
             scope=self._scope,
@@ -1130,6 +1136,7 @@ class AgentRuntime:
             session_id=self.session_id,
             role=self.role,
             stop_reason=stop_reason,
+            failure_code=failure_code,
             text=(text or "")[:3000],
             changed_files=ev.changed_files,
             validated=ev.validated,

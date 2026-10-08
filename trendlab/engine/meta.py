@@ -13,11 +13,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from trendlab.agent.taxonomy import CODES, classify_stop
 from trendlab.engine.inbox import Inbox
 
 HARNESS_PROJECT = "harness:trendlab-cli"
 SIGNALS = {
-    "run.failed": lambda d: ("stop_reason", str(d.get("stop_reason") or "")[:120]),
+    # failed runs cluster by taxonomy code (U8), not by free-text stop reason
+    "run.failed": lambda d: (
+        "failure",
+        d.get("failure_code") or classify_stop("FAILED", d.get("stop_reason")) or "UNKNOWN",
+    ),
     "tool.skipped": lambda d: ("tool_skipped", f"{d.get('tool')}:{d.get('reason')}"),
     "guard.fired": lambda d: ("guard", f"{d.get('guard')}@{d.get('model')}"),
     "loop.detected": lambda d: ("loop", f"{d.get('tool')}:{str(d.get('reason') or '')[:60]}"),
@@ -87,6 +92,7 @@ def scan(store, *, days: int = 7, min_count: int = 2) -> list[dict[str, Any]]:
 
 TITLES = {
     "stop_reason": "runs stop with: {value}",
+    "failure": "runs fail with {value}",
     "tool_skipped": "tool call skipped repeatedly: {value}",
     "guard": "guard keeps firing: {value}",
     "loop": "loop detected on {value}",
@@ -101,6 +107,9 @@ def file_cards(
     cards = []
     for c in clusters[:limit]:
         title = TITLES.get(c["kind"], "{value}").format(value=c["value"])
+        code = CODES.get(c["value"]) if c["kind"] == "failure" else None
+        if code:
+            title += f" ({code.summary}; try: {code.remedies[0] if code.remedies else 'see rca'})"
         card = inbox.record(
             project=HARNESS_PROJECT,
             title=title,
@@ -109,8 +118,9 @@ def file_cards(
             evidence=[f"session {s}" for s in c["sessions"]],
             severity="high"
             if c["kind"] in {"stop_reason", "verifier_fail", "cost_outlier"}
+            or (code is not None and code.severity >= 6)
             else "med",
-            impacted_files=_suspects(c["kind"]),
+            impacted_files=list(code.suspects) if code else _suspects(c["kind"]),
         )
         cards.append(card)
     return cards

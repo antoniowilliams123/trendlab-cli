@@ -321,6 +321,9 @@ async def test_limits_stop_the_run(project, manager_factory, events, recorder):
         and result.iterations == 3
     )
     assert recorder.of_type(EventType.RUN_FAILED)
+    # U8: the failed run carries its taxonomy code, on the result and on the event
+    assert result.failure_code == "BUDGET_ITERATIONS"
+    assert recorder.of_type(EventType.RUN_FAILED)[-1].data["failure_code"] == "BUDGET_ITERATIONS"
 
     from trendlab.config.schema import ModelPricing
     from trendlab.providers.base import TokenUsage

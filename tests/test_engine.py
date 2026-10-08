@@ -176,7 +176,7 @@ def test_meta_scan_clusters_signals(project: Path, _trendlab_home: Path, tmp_pat
     clusters = scan(store, days=7, min_count=2)
     store.close()
     kinds = {(c["kind"], c["value"]): c["count"] for c in clusters}
-    assert kinds[("stop_reason", "max_iterations (50) reached")] == 3
+    assert kinds[("failure", "BUDGET_ITERATIONS")] == 3  # clustered by taxonomy code
     assert kinds[("guard", "announced_action@deepseek:deepseek-flash")] == 3
     assert ("verifier_fail", "strong") not in kinds  # below min_count
     inbox = Inbox(tmp_path / "inbox.db")

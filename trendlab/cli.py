@@ -1008,6 +1008,78 @@ def meta_cmd(
     typer.echo(json.dumps(res, indent=2, default=str))
 
 
+@app.command("failures")
+def failures_cmd(
+    days: int = typer.Option(7, "--days"),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Failed runs by taxonomy code, ranked as a failure-mode table (severity x occurrence x
+    detection). Codes and remedies come from trendlab/agent/taxonomy.py (U8)."""
+    from trendlab.agent.taxonomy import CODES, fmea
+    from trendlab.sessions.store import SessionStore
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        st = store.stats(days)
+    finally:
+        store.close()
+    runs = sum(st["runs"].values())
+    table = fmea(st.get("failure_codes", {}), runs)
+    if output == "json":
+        typer.echo(json.dumps({"runs": runs, "failures": table}, indent=2))
+        return
+    if not table:
+        console.print(f"[ok]no failed runs in the last {days} days[/ok] ({runs} runs)")
+        return
+    console.print(f"[neon]Failure modes, last {days} days[/neon] · {runs} runs")
+    console.print("  RPN  S O D  count  code — what it means · first remedy")
+    for r in table:
+        c = CODES.get(r["code"], CODES["UNKNOWN"])
+        console.print(
+            f"  {r['rpn']:>3}  {r['severity']} {r['occurrence']} {r['detection']}  {r['count']:>5}"
+            f"  {r['code']} — {c.summary} · {r['remedy']}"
+        )
+
+
+@app.command("rca")
+def rca_cmd(
+    session_id: str = typer.Argument(..., help="Session id (see `trendlab sessions`)."),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Root-cause analysis of a session's runs: the failure code, the first warning sign, the
+    chain of signals before the stop, likely causes, remedies and files to suspect (U8)."""
+    from rich.markup import escape
+
+    from trendlab.agent.taxonomy import rca
+    from trendlab.sessions.store import SessionStore
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        runs = rca(store.events(session_id))
+    finally:
+        store.close()
+    if output == "json":
+        typer.echo(json.dumps(runs, indent=2, default=str))
+        return
+    if not runs:
+        console.print("[dim]no finished runs in this session[/dim]")
+        return
+    for i, r in enumerate(runs, 1):
+        head = f"run {i} · {r['status']}" + (
+            f" · {r['code']} ({r['summary']})" if r["code"] else ""
+        )
+        console.print(f"[neon]{escape(head)}[/neon]")
+        if r["stop_reason"]:
+            console.print(f"  stopped: {escape(str(r['stop_reason'])[:200])}")
+        if r["first_sign"]:
+            console.print(f"  first sign: {escape(r['first_sign'])}")
+        for s in r["signals"]:
+            console.print(f"    · {escape(s)}")
+        for label in ("likely_causes", "remedies", "suspects"):
+            if r.get(label):
+                console.print(f"  {label.replace('_', ' ')}: " + escape("; ".join(r[label])))
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
