@@ -14,6 +14,7 @@ from typing import Any
 from rich.console import Console
 
 from trendlab.benchmarks.fixtures import EXPECTED_CHANGED, FIXTURES, materialize
+from trendlab.benchmarks.unattended import Unattended
 from trendlab.config.loader import load_config
 from trendlab.config.schema import AppConfig, PermissionMode
 from trendlab.telemetry.events import EventType
@@ -57,28 +58,17 @@ async def run_fixture(
             data_dir=home,
         )
         tool_calls = 0
-        interventions = 0
-
         guards: dict[str, int] = {}
 
         def count(e):
-            nonlocal tool_calls, interventions
+            nonlocal tool_calls
             if e.type == EventType.TOOL_STARTED:
                 tool_calls += 1
             if e.type == EventType.GUARD_FIRED:
                 guards[e.data.get("guard")] = guards.get(e.data.get("guard"), 0) + 1
-            if e.type == EventType.APPROVAL_REQUESTED:
-                # Unattended: nobody can answer, so the request is denied at once (and counted)
-                # instead of blocking the run until the approval times out.
-                interventions += 1
-                try:
-                    tl.approvals.decide(
-                        e.data["approval_id"], "deny", via="benchmark", trusted=True
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
 
         tl.events.subscribe(count)
+        unattended = Unattended(tl)  # deny approvals, answer questions: nobody is watching
         started = time.monotonic()
         await tl.start(interactive=False)
         try:
@@ -109,7 +99,7 @@ async def run_fixture(
             "elapsed_s": round(time.monotonic() - started, 1),
             "files_changed": len(changed),
             "unnecessary_changes": sorted(changed - EXPECTED_CHANGED[name]),
-            "human_interventions": interventions,
+            "human_interventions": unattended.interventions,
             "stop_reason": result.stop_reason,
         }
 
@@ -242,7 +232,6 @@ async def run_task(
 
             tl.gateway._factory = chaotic  # noqa: SLF001
             tl.gateway._providers.clear()  # noqa: SLF001
-        interventions = 0
         guards: dict[str, int] = {}
         tools: dict[str, dict[str, int]] = {}
         commands: list[str] = []
@@ -251,7 +240,6 @@ async def run_task(
         route_kind: list[str] = []
 
         def count(e):
-            nonlocal interventions
             if e.type == EventType.TOOL_STARTED:
                 if e.data.get("command"):
                     commands.append(str(e.data["command"]))
@@ -273,16 +261,9 @@ async def run_task(
                 elif not e.data.get("ok", True) and name not in {"shell", "run_tests"}:
                     # a non-zero exit from a command is a result, not a tool failure
                     d["failed"] += 1
-            if e.type == EventType.APPROVAL_REQUESTED:
-                interventions += 1
-                try:
-                    tl.approvals.decide(
-                        e.data["approval_id"], "deny", via="benchmark", trusted=True
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
 
         tl.events.subscribe(count)
+        unattended = Unattended(tl)
         started = time.monotonic()
         await tl.start(interactive=False)
         try:
@@ -394,7 +375,8 @@ async def run_task(
             "passes": passes,
             "no_collateral": (changed - set(task.expected_changed) - set(test_like)) == set(),
             "regression_added": bool(test_like),
-            "interventions": interventions,
+            "interventions": unattended.interventions,
+            "questions_asked": unattended.questions_answered,
             "status": result.status,
             "cost": round(result.cost_usd, 4),
             "tokens_lead": sum(r.input_tokens + r.output_tokens for r in lead),

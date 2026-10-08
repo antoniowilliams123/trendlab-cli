@@ -167,6 +167,9 @@ async def replay_session(
             console=Console(quiet=True),
             data_dir=home,
         )
+        from trendlab.benchmarks.unattended import Unattended
+
+        Unattended(tl)  # nobody watches a replay: deny approvals, answer questions
         await tl.start(interactive=False)
         shim = ReplayTools(tl.tools, rec, tl.events, tl.session_id)
         tl.agent.tools = shim  # type: ignore[assignment]

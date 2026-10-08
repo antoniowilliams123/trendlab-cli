@@ -66,6 +66,9 @@ async def meta_draft(inbox: Inbox, config, *, issue_id: str | None = None) -> di
     config.verification.workspace = "worktree"
     config.defaults.permission_mode = PermissionMode.UNSAFE
     tl = TrendLabApp(root, config, console=Console(quiet=True))
+    from trendlab.benchmarks.unattended import Unattended
+
+    Unattended(tl)  # the meta-loop runs unattended
     await tl.start(interactive=False)
     try:
         prompt = (
