@@ -6,8 +6,9 @@ Two kinds of pass:
   source changes with no test change;
 * model lenses: one focused question per dimension — correctness, edge cases, structure
   (architecture and design), performance, tests, security. Focused prompts find more with a
-  cheap model than one "review everything" prompt. ``quick`` asks all lenses in one call; a
-  large diff is reviewed in file chunks so nothing is elided.
+  cheap model than one "review everything" prompt — that was the hypothesis; measured, one
+  ``quick`` call over all lenses caught as much with far less noise, so it is the default and
+  ``deep`` (one call per lens) is opt-in. A large diff is reviewed in file chunks.
 
 Findings get stable ids and live in a per-project ledger (``.trendlab/reviews.json``). A
 re-check asks, for each open finding, whether the current diff resolves it — that is finding
@@ -38,7 +39,6 @@ LENSES: dict[str, str] = {
     "security": "injection, secrets, unsafe deserialisation, path traversal, missing auth "
     "checks, data exposure",
 }
-SMALL_DIFF_LINES = 400
 CHUNK_CHARS = 24_000
 
 PROMPT = """You review a code change. Report only real problems you can point to in the diff,
@@ -257,7 +257,10 @@ async def review_diff(
     lines = sum(1 for ln in diff.splitlines() if ln[:1] in "+-" and ln[:3] not in ("+++", "---"))
     chunks = split_diff(diff)
     if mode == "auto":
-        mode = "deep" if lines <= SMALL_DIFF_LINES and len(chunks) == 1 else "quick"
+        # Measured on 32 seeded defects (Flash): deep and quick both caught 32/32, but deep
+        # raised 1.16 findings per correct fix vs 0.47 for quick, at 6x the calls; quick plus
+        # the confirmation pass gave 0.16. So auto is quick; deep stays available on request.
+        mode = "quick"
     intent = intent.strip()[:3000] or "(not stated; judge the change on its own terms)"
     jobs = []
     for chunk in chunks:

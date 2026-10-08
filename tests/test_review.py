@@ -89,7 +89,7 @@ async def test_deep_review_asks_each_lens_and_merges():
         return '{"findings": []}'
 
     call, calls = _call(answer)
-    res = await review_diff(call, DIFF, intent="cleanup", mode="auto")
+    res = await review_diff(call, DIFF, intent="cleanup", mode="deep")
     # one call per lens, plus one confirmation call for the high finding
     assert res["mode"] == "deep" and res["calls"] == len(LENSES) + 1 == len(calls)
     assert res["findings"][0]["lens"] == "correctness" and res["findings"][0]["severity"] == "high"
@@ -190,7 +190,6 @@ def test_review_command_ledger_and_pre_pr_gate(project: Path, _trendlab_home: Pa
     (project / "src/app.py").write_text("TIMEOUT = 30\nprint('debug')\n")
     answers = iter(
         [
-            *['{"findings": []}'] * (len(LENSES) - 1),
             '{"findings": [{"file": "src/app.py", "line": 2, "issue": "stray print in module scope",'
             ' "severity": "med"}]}',
             '{"keep": [], "drop": []}',  # confirmation pass keeps the finding
@@ -206,7 +205,7 @@ def test_review_command_ledger_and_pre_pr_gate(project: Path, _trendlab_home: Pa
     out = runner.invoke(app, ["review", "-C", str(project), "--base", "main", "--output", "json"])
     assert out.exit_code == 0, out.output
     review = json.loads(out.output)
-    assert review["source"] == "branch vs main" and review["mode"] == "deep"
+    assert review["source"] == "branch vs main" and review["mode"] == "quick"  # the default
     assert any(f["issue"].startswith("stray print") for f in review["findings"])
     assert any(f.get("static") for f in review["findings"])  # leftover debug output
     assert not review["closed"]
