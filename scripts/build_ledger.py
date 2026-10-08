@@ -9,7 +9,8 @@ from pathlib import Path
 
 D = Path(__file__).resolve().parent.parent / "docs" / "ratings"
 ledger = {}
-for p in sorted(D.glob("part*.py")):
+# numeric order: part10 comes after part9 (a plain sort would put it after part1)
+for p in sorted(D.glob("part*.py"), key=lambda f: int(f.stem.removeprefix("part"))):
     spec = importlib.util.spec_from_file_location(p.stem, p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
