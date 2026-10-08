@@ -138,6 +138,7 @@ class AgentRuntime:
         self._scope_nudged = False
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
+        self._cooldowns = 0
         self._scope: dict[str, Any] | None = None
         self.regression_gate = False
         self._verify_rounds = 0
@@ -150,6 +151,9 @@ class AgentRuntime:
         self.planner: Any = None  # async (task_text, note) -> list[step dict] | None
         self.planner_max_calls = 3
         self.planner_min_chars = 400
+        # run-level recovery from transient provider outages (after the gateway's own retries)
+        self.provider_cooldowns = 2
+        self.provider_cooldown_s = 10.0
         self._planner_calls = 0
         self.plan_review: dict[str, Any] | None = None  # set by the app's planner call (U7)
         self._replanned_divergence = False
@@ -278,6 +282,7 @@ class AgentRuntime:
         self._scope_nudged = False
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
+        self._cooldowns = 0
         self._scope = None
         self._step_id, self._step_iters = None, 0
         self._verified_steps = set()
@@ -389,6 +394,21 @@ class AgentRuntime:
                     continue
                 except ProviderError as exc:
                     failure = classify_provider_error(exc)
+                    if exc.retryable and self._cooldowns < self.provider_cooldowns:
+                        # The gateway already retried; a transient outage often clears after a
+                        # pause. Wait, then repeat this step instead of losing the run.
+                        self._cooldowns += 1
+                        self.events.emit(
+                            EventType.RECOVERY,
+                            session_id=self.session_id,
+                            failure=failure.value,
+                            action="cooldown_retry",
+                            attempt=self._cooldowns,
+                            error=str(exc)[:300],
+                        )
+                        await asyncio.sleep(self.provider_cooldown_s * self._cooldowns)
+                        self.iterations -= 1
+                        continue
                     self.events.emit(
                         EventType.RECOVERY,
                         session_id=self.session_id,

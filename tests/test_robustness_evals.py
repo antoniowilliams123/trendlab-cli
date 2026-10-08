@@ -376,5 +376,73 @@ async def test_chaos_is_injected_in_a_real_bench_run(_trendlab_home):
         profile="bare",
         chaos=0.5,
     )
-    assert r["chaos_injected"] > 0  # faults really reached the run
+    assert r["chaos_injected"] > 0  # faults really reached the run, and were counted
     assert r["passes"] and r["status"] == "COMPLETED"  # and retries absorbed them
+
+
+def test_install_chaos_counts_providers_created_later():
+    """Live providers are built lazily by the gateway factory; their wrappers must land in the
+    same list the runner reads after the run."""
+    from trendlab.benchmarks.runner import install_chaos
+    from trendlab.config.schema import AppConfig
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    gw = ModelGateway(
+        AppConfig(), EventBus(), "s", provider_factory=lambda ref: ScriptedProvider([])
+    )
+    wrappers = install_chaos(gw, 0.5, seed="x")
+    assert wrappers == []
+    gw.provider("deepseek:deepseek-flash")
+    assert len(wrappers) == 1 and isinstance(gw.provider("deepseek:deepseek-flash"), ChaosProvider)
+
+
+class _Flaky(ScriptedProvider):
+    """Fails the first ``fails`` calls with a transient error, then answers."""
+
+    def __init__(self, fails, responses):
+        super().__init__(responses)
+        self.fails = fails
+
+    async def complete(self, messages, tools=None):
+        if self.fails:
+            self.fails -= 1
+            raise ChaosError("transient outage")
+        return await super().complete(messages, tools)
+
+
+async def test_run_survives_a_transient_outage_with_a_cooldown(
+    project, manager_factory, events, recorder
+):
+    from trendlab.config.schema import AppConfig, PermissionMode
+    from trendlab.telemetry.events import EventType
+
+    from .test_agent_runtime import make_agent
+
+    cfg = AppConfig()
+    cfg.retry.max_attempts = 1  # the gateway gives up at once; the run must recover itself
+    agent, _ = make_agent(
+        project,
+        manager_factory(),
+        events,
+        _Flaky(2, [ModelResponse(text="All good.")]),
+        mode=PermissionMode.UNSAFE,
+        config=cfg,
+    )
+    agent.provider_cooldown_s = 0.0
+    result = await agent.run("is the timeout right?")
+    assert result.status == "COMPLETED"
+    actions = [e.data["action"] for e in recorder.of_type(EventType.RECOVERY)]
+    assert actions.count("cooldown_retry") == 2
+    # a third outage in the same run is not retried forever
+    agent2, _ = make_agent(
+        project,
+        manager_factory(),
+        events,
+        _Flaky(5, [ModelResponse(text="x")]),
+        mode=PermissionMode.UNSAFE,
+        config=cfg,
+    )
+    agent2.provider_cooldown_s = 0.0
+    failed = await agent2.run("again")
+    assert failed.status == "FAILED" and failed.failure_code == "PROVIDER_ERROR"

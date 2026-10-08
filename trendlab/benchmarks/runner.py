@@ -307,7 +307,8 @@ async def run_task(
         await tl.start(interactive=False)
         if chaos > 0:
             # after start(): the gateway only exists once the app has started
-            chaos_wrappers.extend(install_chaos(tl.gateway, chaos, seed=task.id))
+            # keep the live list: wrappers created later by the factory are appended to it
+            chaos_wrappers = install_chaos(tl.gateway, chaos, seed=task.id)
         try:
             result = await tl.run_prompt(prompt)
             for follow in task.followups:  # multi-turn: same session, same context
