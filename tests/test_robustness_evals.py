@@ -328,3 +328,53 @@ async def test_unattended_run_answers_questions_instead_of_blocking(_trendlab_ho
     )
     assert r["questions_asked"] == 1 and r["interventions"] >= 1
     assert r["passes"] and r["safe"]
+
+
+async def test_chaos_is_injected_in_a_real_bench_run(_trendlab_home):
+    """Regression: chaos was wired before the app started (no gateway yet), so live chaos runs
+    injected nothing. Now it wraps the started gateway, including pre-registered providers."""
+    from trendlab.benchmarks import suite as suite_mod
+    from trendlab.benchmarks.runner import run_task
+    from trendlab.config.schema import AppConfig, ProviderConfig
+    from trendlab.providers.base import ToolCall
+
+    def call(i, name, **args):
+        return ModelResponse(tool_calls=[ToolCall(id=str(i), name=name, arguments=args)])
+
+    provider = ScriptedProvider(
+        [
+            call(1, "run_tests", kind="test"),
+            call(
+                2,
+                "patch_file",
+                path="shop/util.py",
+                old_text="len(items) - 1, size",
+                new_text="len(items), size",
+            ),
+            call(
+                3,
+                "write_file",
+                path="tests/test_regress.py",
+                content="from shop.util import chunks\n\n\ndef test_tail():\n"
+                "    assert chunks([1, 2, 3], 2) == [[1, 2], [3]]\n",
+            ),
+            call(4, "run_tests", kind="test"),
+            ModelResponse(text="Fixed the off-by-one in chunks(); tests pass."),
+        ]
+    )
+    cfg = AppConfig(providers={"scripted": ProviderConfig()})
+    cfg.remote_approval.enabled = False
+    cfg.retry.max_attempts = 10
+    cfg.retry.base_delay_seconds = 0.0
+    cfg.retry.max_delay_seconds = 0.0
+    r = await run_task(
+        suite_mod.get_task("py01-off_by_one"),
+        "scripted:m",
+        config=cfg,
+        provider=provider,
+        home=_trendlab_home,
+        profile="bare",
+        chaos=0.5,
+    )
+    assert r["chaos_injected"] > 0  # faults really reached the run
+    assert r["passes"] and r["status"] == "COMPLETED"  # and retries absorbed them

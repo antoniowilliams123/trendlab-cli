@@ -50,6 +50,7 @@ class TaskTool(Tool):
 
     async def run(self, args: TaskInput, ctx: ToolContext) -> ToolResult:
         plan, a = self.plan, args.action.lower()
+        unmet_on_complete: list[str] = []
         if a == "plan":
             if not args.titles:
                 return ToolResult(ok=False, output="'plan' needs titles")
@@ -97,6 +98,16 @@ class TaskTool(Tool):
                     return ToolResult(
                         ok=False, output="'complete' requires evidence (what proves it is done?)"
                     )
+                unmet = plan.unmet(plan.get(args.task_id))
+                if a == "complete":
+                    unmet_on_complete = unmet
+                if a == "update" and unmet:
+                    # the task graph is honoured: a step cannot start before what it needs
+                    return ToolResult(
+                        ok=False,
+                        output=f"{args.task_id} depends on {', '.join(unmet)}, which "
+                        "is not complete yet. Finish that first. Current plan:\n" + plan.render(),
+                    )
                 plan.update(
                     args.task_id,
                     status=status,
@@ -104,10 +115,12 @@ class TaskTool(Tool):
                     description=args.description or None,
                     evidence=args.evidence or None,
                 )
-                if a == "complete":
-                    nxt = next((t for t in plan.open if t.status == TaskStatus.PENDING), None)
-                    if nxt and plan.active is None:
-                        plan.update(nxt.id, status=TaskStatus.ACTIVE)
+                if a == "fail":
+                    plan.block_dependents(args.task_id)
+                if a in {"complete", "fail"}:
+                    ready = plan.ready()
+                    if ready and plan.active is None:
+                        plan.update(ready[0].id, status=TaskStatus.ACTIVE)
         elif a != "list":
             return ToolResult(ok=False, output=f"unknown action {a!r}")
         self.events.emit(
@@ -118,4 +131,10 @@ class TaskTool(Tool):
             total=len(plan.tasks),
             plan=plan.to_json(),
         )
-        return ToolResult(ok=True, output=plan.render(), data={"plan": plan.to_json()})
+        out = plan.render()
+        if a == "complete" and unmet_on_complete:
+            out = (
+                f"Note: {args.task_id} was completed before {', '.join(unmet_on_complete)}; "
+                "check that work does not depend on it.\n" + out
+            )
+        return ToolResult(ok=True, output=out, data={"plan": plan.to_json()})

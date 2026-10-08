@@ -269,23 +269,12 @@ async def run_task(
             data_dir=home,
         )
         chaos_wrappers: list[Any] = []
-        if chaos > 0 and tl.gateway is not None:
-            from trendlab.benchmarks.perturb import ChaosProvider
-
-            inner_factory = tl.gateway._factory  # noqa: SLF001 — test hook for chaos runs
-
-            def chaotic(ref, _inner=inner_factory):
-                w = ChaosProvider(_inner(ref), chaos, seed=f"{task.id}:{ref}")
-                chaos_wrappers.append(w)
-                return w
-
-            tl.gateway._factory = chaotic  # noqa: SLF001
-            tl.gateway._providers.clear()  # noqa: SLF001
         guards: dict[str, int] = {}
         tools: dict[str, dict[str, int]] = {}
         commands: list[str] = []
         sequence: list[tuple[str, str]] = []  # (tool, path) in order, for tool-use metrics
         plan_files: list[str] = []
+        plan_events: list[dict] = []
         route_kind: list[str] = []
 
         def count(e):
@@ -297,6 +286,7 @@ async def run_task(
             if e.type == EventType.ROUTE_DECIDED:
                 route_kind.append(str(e.data.get("kind")))
             if e.type == EventType.PLANNER_CALLED:
+                plan_events.append(dict(e.data))
                 for fs in e.data.get("files") or []:
                     plan_files.extend(fs)
             if e.type == EventType.GUARD_FIRED:
@@ -315,6 +305,9 @@ async def run_task(
         unattended = Unattended(tl)
         started = time.monotonic()
         await tl.start(interactive=False)
+        if chaos > 0:
+            # after start(): the gateway only exists once the app has started
+            chaos_wrappers.extend(install_chaos(tl.gateway, chaos, seed=task.id))
         try:
             result = await tl.run_prompt(prompt)
             for follow in task.followups:  # multi-turn: same session, same context
@@ -386,6 +379,7 @@ async def run_task(
             planned = {p.strip("./") for p in plan_files}
             expected = {p.strip("./") for p in task.expected_changed}
             plan_recall = round(len(planned & expected) / len(expected), 3) if expected else None
+        planning = plan_metrics(task, plan_events, changed)
         ref = suite_mod.reference_content(task, task.answer_file)
         final = (root / task.answer_file).read_text() if (root / task.answer_file).is_file() else ""
         exact_match = ref is not None and final == ref
@@ -407,6 +401,7 @@ async def run_task(
             "read_before_edit": read_before_edit,
             "validated_after_edit": validated_after_edit,
             "plan_recall": plan_recall,
+            **planning,
             "suite_version": suite_mod.SUITE_VERSION,
             "leakage": leak,
             "diff": run_diff,
@@ -532,6 +527,142 @@ async def run_suite(
     return out
 
 
+def install_chaos(gateway, rate: float, *, seed: str) -> list[Any]:
+    """Wrap every provider the gateway has or will create so ``rate`` of model calls fail
+    transiently. Returns the live wrapper list (its ``injected`` counts are read after the run)."""
+    from trendlab.benchmarks.perturb import ChaosProvider
+
+    wrappers: list[Any] = []
+
+    def wrap(provider, ref):
+        w = ChaosProvider(provider, rate, seed=f"{seed}:{ref}")
+        wrappers.append(w)
+        return w
+
+    inner = gateway._factory  # noqa: SLF001 — test hook for chaos runs
+    for ref, provider in list(gateway._providers.items()):  # noqa: SLF001
+        gateway._providers[ref] = wrap(provider, ref)  # noqa: SLF001
+    gateway._factory = lambda ref: wrap(inner(ref), ref)  # noqa: SLF001
+    return wrappers
+
+
+def _is_test(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return path.startswith(("tests/", "test/")) or name.startswith("test_") or ".test." in name
+
+
+def plan_metrics(task, plan_events: list[dict], changed: set[str]) -> dict[str, Any]:
+    """Planning eval (U7) for one run. Empty when no planner ran.
+
+    precision: planned non-test files that the task needed (expected or allowed);
+    adherence: changed non-test files that some step planned."""
+    first = next((e for e in plan_events if e.get("steps")), None)
+    if first is None:
+        return {}
+    planned = {f.strip("./") for e in plan_events for fs in e.get("files") or [] for f in fs}
+    planned_src = {f for f in planned if not _is_test(f)}
+    needed = {f.strip("./") for f in set(task.expected_changed) | set(task.allowed_changed)}
+    changed_src = {f.strip("./") for f in changed if not _is_test(f)}
+    review = first.get("review") or {}
+    return {
+        "plan_steps": first.get("steps"),
+        "plan_precision": round(len(planned_src & needed) / len(planned_src), 3)
+        if planned_src
+        else None,
+        "plan_adherence": round(len(changed_src & planned) / len(changed_src), 3)
+        if changed_src
+        else None,
+        "plan_dependencies": sum(len(d) for d in first.get("dependencies") or []),
+        "plan_graph_ok": not first.get("graph_issues"),
+        "plan_lint_issues": len(review.get("issues") or []),
+        "plan_lint_remaining": len(review.get("remaining") or []),
+        "replans": sum(1 for e in plan_events if e.get("replan")),
+    }
+
+
+async def planning_eval_task(
+    task, model: str, *, config: AppConfig | None = None, provider=None, home: Path | None = None
+) -> dict[str, Any]:
+    """Planner-only eval (U7): call the planning role on the task's repository and score the
+    plan against the reference file set, with no execution. Cheap: one or two planner calls."""
+    from trendlab.agent.tasks import Plan
+    from trendlab.app import TrendLabApp
+    from trendlab.benchmarks import suite as suite_mod
+
+    config = load_config() if config is None else config
+    with tempfile.TemporaryDirectory(prefix=f"trendlab-plan-{task.id}-") as tmp:
+        root = Path(tmp) / "repo"
+        prompt = suite_mod.materialize(task, root)
+        tl = TrendLabApp(
+            root,
+            config,
+            model_ref=model,
+            provider=provider,
+            console=Console(quiet=True),
+            data_dir=home,
+        )
+        await tl.start(interactive=False)
+        try:
+            steps = await tl._plan_steps(prompt)  # noqa: SLF001 — the eval targets this call
+            review = (tl.agent.plan_review if tl.agent else None) or {}
+            cost = tl.costs.total_usd if tl.costs else 0.0
+        finally:
+            await tl.stop()
+    row: dict[str, Any] = {"task": task.id, "tier": task.tier, "model": model, "cost": cost}
+    if not steps:
+        return {**row, "planned": False}
+    from trendlab.agent.planner import apply_steps
+
+    plan = Plan()
+    apply_steps(plan, steps)
+    files = {f.strip("./") for st in steps for f in st.get("files") or []}
+    src = {f for f in files if not _is_test(f)}
+    needed = {f.strip("./") for f in set(task.expected_changed) | set(task.allowed_changed)}
+    required = {f.strip("./") for f in task.expected_changed}
+    return {
+        **row,
+        "planned": True,
+        "steps": len(steps),
+        # recall over the files the task requires; precision also credits allowed extras
+        "recall": round(len(src & required) / len(required), 3) if required else None,
+        "precision": round(len(src & needed) / len(src), 3) if src else None,
+        "plans_tests": any(_is_test(f) for f in files)
+        or any("test" in st.get("title", "").lower() for st in steps),
+        "final_validation": bool(steps[-1].get("validation")),
+        "dependencies": sum(len(t.dependencies) for t in plan.tasks),
+        "parallel_groups": len(plan.parallel_safe()),
+        "graph_ok": not plan.graph_issues(),
+        "lint_issues": review.get("issues") or [],
+        "lint_remaining": review.get("remaining") or [],
+    }
+
+
+def summarize_planning(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    planned = [r for r in rows if r.get("planned")]
+    n = len(planned)
+
+    def mean(key):
+        vals = [r[key] for r in planned if r.get(key) is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    def share(pred):
+        return round(sum(1 for r in planned if pred(r)) / n, 3) if n else None
+
+    return {
+        "tasks": len(rows),
+        "planned": n,
+        "recall": mean("recall"),
+        "precision": mean("precision"),
+        "plans_tests": share(lambda r: r["plans_tests"]),
+        "final_validation": share(lambda r: r["final_validation"]),
+        "graph_ok": share(lambda r: r["graph_ok"]),
+        "with_dependencies": share(lambda r: r["dependencies"] > 0),
+        "lint_flagged": share(lambda r: r["lint_issues"]),
+        "lint_clean_after_review": share(lambda r: not r["lint_remaining"]),
+        "cost": round(sum(r.get("cost") or 0.0 for r in rows), 4),
+    }
+
+
 METRICS = ("located", "root_cause", "passes", "no_collateral", "regression_added")
 
 
@@ -604,6 +735,26 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     )
     recalls = [r["plan_recall"] for r in ran if r.get("plan_recall") is not None]
     summary["plan_recall"] = round(sum(recalls) / len(recalls), 3) if recalls else None
+    planned = [r for r in ran if r.get("plan_steps")]
+    if planned:
+
+        def mean(key):
+            vals = [r[key] for r in planned if r.get(key) is not None]
+            return round(sum(vals) / len(vals), 3) if vals else None
+
+        summary["planning"] = {
+            "plans": len(planned),
+            "recall": summary["plan_recall"],
+            "precision": mean("plan_precision"),
+            "adherence": mean("plan_adherence"),
+            "graph_ok": round(sum(1 for r in planned if r.get("plan_graph_ok")) / len(planned), 3),
+            "with_dependencies": sum(1 for r in planned if r.get("plan_dependencies")),
+            "lint_issue_rate": round(
+                sum(1 for r in planned if r.get("plan_lint_issues")) / len(planned), 3
+            ),
+            "lint_remaining": sum(r.get("plan_lint_remaining") or 0 for r in planned),
+            "replans": sum(r.get("replans") or 0 for r in planned),
+        }
     summary["chaos_injected"] = sum(r.get("chaos_injected", 0) for r in ran)
     routed = [r for r in ran if r.get("route") and r.get("route_expected")]
     summary["route_accuracy"] = (

@@ -147,6 +147,8 @@ class AgentRuntime:
         self.planner_max_calls = 3
         self.planner_min_chars = 400
         self._planner_calls = 0
+        self.plan_review: dict[str, Any] | None = None  # set by the app's planner call (U7)
+        self._replanned_divergence = False
         self.step_iterations = 12
         self.candidates: Any = None  # async (task, failure_tail, n) -> outcome dict
         self.best_of = 1
@@ -265,6 +267,8 @@ class AgentRuntime:
         self._verify_rounds = 0
         self._verification = None
         self._planner_calls = 0
+        self._replanned_divergence = False
+        self.plan_review = None
         if hasattr(self.tools, "tainted"):
             self.tools.tainted = []
         self._scope_nudged = False
@@ -418,6 +422,8 @@ class AgentRuntime:
                         stop_reason, status = stop
                         break
                     if await self._check_steps():
+                        refresh_plan = True
+                    if await self._check_divergence():
                         refresh_plan = True
                     await self._trigger_skills(
                         tools=[c.name for c in response.tool_calls],
@@ -726,7 +732,7 @@ class AgentRuntime:
             )
 
     # -- step-scoped execution (spec §3.3, §4) ---------------------------------------------
-    async def _maybe_plan(self, note: str = "") -> bool:
+    async def _maybe_plan(self, note: str = "", reason: str = "step_stalled") -> bool:
         """One planner call for a non-trivial task (or a re-plan after a failed step)."""
         from trendlab.agent.planner import apply_steps, needs_planner, plan_message
 
@@ -765,7 +771,13 @@ class AgentRuntime:
             steps=len(added),
             titles=[t.title for t in added],
             files=[list(t.files) for t in added],
+            dependencies=[list(t.dependencies) for t in added],
+            waves=self.plan.waves(),
+            parallel_safe=self.plan.parallel_safe(),
+            graph_issues=self.plan.graph_issues(),
+            review=self.plan_review,
             replan=bool(note),
+            reason=reason if note else "initial",
         )
         self._append({"role": "user", "content": plan_message(added)})
         return True
@@ -818,6 +830,28 @@ class AgentRuntime:
             }
         )
         return False
+
+    async def _check_divergence(self) -> bool:
+        """Dynamic replanning (U7): when the agent has changed two or more non-test files that
+        no step planned, the plan no longer describes the work; re-plan the rest once."""
+        if self._replanned_divergence or not self._planner_calls or not self.plan.open:
+            return False
+        planned = {f.strip("./") for t in self.plan.tasks for f in t.files}
+        if not planned:
+            return False
+        outside = sorted(
+            f
+            for f in self.tools.changed_files
+            if f.strip("./") not in planned and not _is_test_path(f)
+        )
+        if len(outside) < 2:
+            return False
+        self._replanned_divergence = True
+        note = (
+            f"Execution diverged from the plan: {', '.join(outside[:5])} changed but no step "
+            "covers them. Revise the remaining steps to match the work actually needed."
+        )
+        return await self._maybe_plan(note, reason="divergence")
 
     async def _check_steps(self) -> bool:
         """Run the validation of steps the model just marked complete (§4.1); on failure hand
@@ -1274,3 +1308,13 @@ def prompt_hash(system_prompt: str) -> str:
     import hashlib
 
     return hashlib.sha256((system_prompt or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _is_test_path(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return (
+        "/tests/" in f"/{path}"
+        or "/test/" in f"/{path}"
+        or name.startswith("test_")
+        or name.endswith(("_test.py", ".test.ts", ".test.js", ".spec.ts", "_test.go"))
+    )

@@ -129,12 +129,86 @@ class Plan(BaseModel):
     def done(self) -> bool:
         return bool(self.tasks) and not self.open
 
+    # -- task graph (uplift U7) -----------------------------------------------------------
+    def unmet(self, task: Task) -> list[str]:
+        """Dependencies of ``task`` that are not completed yet."""
+        done = {t.id for t in self.tasks if t.status == TaskStatus.COMPLETED}
+        return [d for d in task.dependencies if d not in done]
+
+    def ready(self) -> list[Task]:
+        """Pending steps whose dependencies are all completed, in plan order."""
+        return [t for t in self.tasks if t.status == TaskStatus.PENDING and not self.unmet(t)]
+
+    def graph_issues(self) -> list[str]:
+        """Unknown or self dependencies and cycles; empty means the graph is a DAG."""
+        ids = {t.id for t in self.tasks}
+        issues = []
+        for t in self.tasks:
+            for d in t.dependencies:
+                if d == t.id:
+                    issues.append(f"{t.id} depends on itself")
+                elif d not in ids:
+                    issues.append(f"{t.id} depends on unknown {d}")
+        if not issues and sum(len(w) for w in self.waves()) < len(ids):
+            issues.append("dependency cycle")
+        return issues
+
+    def waves(self) -> list[list[str]]:
+        """Topological layers: every step in a wave depends only on earlier waves, so steps in
+        one wave are independent. Steps on a cycle never appear."""
+        ids = {t.id for t in self.tasks}
+        deps = {t.id: {d for d in t.dependencies if d in ids and d != t.id} for t in self.tasks}
+        placed: set[str] = set()
+        out: list[list[str]] = []
+        while True:
+            wave = [t.id for t in self.tasks if t.id not in placed and deps[t.id] <= placed]
+            if not wave:
+                return out
+            out.append(wave)
+            placed |= set(wave)
+
+    def parallel_safe(self) -> list[list[str]]:
+        """Groups of two or more steps that could run at once: same wave, disjoint files."""
+        by_id = {t.id: t for t in self.tasks}
+        groups = []
+        for wave in self.waves():
+            group: list[str] = []
+            seen: set[str] = set()
+            for tid in wave:
+                files = set(by_id[tid].files)
+                if files and not files & seen:
+                    group.append(tid)
+                    seen |= files
+            if len(group) > 1:
+                groups.append(group)
+        return groups
+
+    def block_dependents(self, task_id: str) -> list[str]:
+        """A step failed: every step that (transitively) needs it is BLOCKED."""
+        blocked: list[str] = []
+        frontier = {task_id}
+        while frontier:
+            nxt = set()
+            for t in self.tasks:
+                if t.status in {TaskStatus.PENDING, TaskStatus.ACTIVE} and frontier & set(
+                    t.dependencies
+                ):
+                    t.status = TaskStatus.BLOCKED
+                    blocked.append(t.id)
+                    nxt.add(t.id)
+            frontier = nxt
+        if blocked:
+            self.revision += 1
+        return blocked
+
     def render(self) -> str:
         if not self.tasks:
             return "(no plan yet)"
         lines = ["Plan"]
         for t in self.tasks:
             line = f"{_GLYPH[t.status]} {t.id} {t.title}"
+            if t.dependencies:
+                line += f" (after {', '.join(t.dependencies)})"
             if t.evidence:
                 line += f"  — {t.evidence[-1][:80]}"
             lines.append(line)

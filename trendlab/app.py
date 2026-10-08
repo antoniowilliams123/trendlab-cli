@@ -569,6 +569,35 @@ class TrendLabApp:
             return response.text
 
         steps, _ = await ask_json(call, messages, parse_steps)
+        # Pre-implementation review (U7): a deterministic lint; one repair call only when it
+        # finds problems, and the repaired plan is kept only if it is no worse.
+        from trendlab.agent.planner import lint_plan, repair_messages
+
+        validation = self.tools.ctx.validation_commands if self.tools else None
+        root = self.project_root
+
+        def exists(rel: str) -> bool:
+            return (root / rel).exists()
+
+        before = lint_plan(steps or [], exists=exists, validation=validation) if steps else []
+        after = before
+        if steps and before:
+            shown = json.dumps(
+                {"steps": [{k: v for k, v in st.items() if k != "_index"} for st in steps]}
+            )
+            fixed, _ = await ask_json(call, repair_messages(messages, shown, before), parse_steps)
+            if fixed:
+                after = lint_plan(fixed, exists=exists, validation=validation)
+                if len(after) <= len(before):
+                    steps = fixed
+                else:
+                    after = before
+        if self.agent is not None:
+            self.agent.plan_review = {
+                "issues": before,
+                "remaining": after,
+                "repaired": bool(before),
+            }
         return steps
 
     def _retrieve(self, task_text: str):

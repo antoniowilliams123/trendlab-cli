@@ -467,6 +467,11 @@ def bench_cmd(
     verify_suite: bool = typer.Option(
         False, "--verify-suite", help="Check every suite task is well-formed, then exit."
     ),
+    planning_eval: bool = typer.Option(
+        False,
+        "--planning-eval",
+        help="Planner only: plan each selected task (no execution) and score the plans.",
+    ),
 ) -> None:
     """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
@@ -480,6 +485,38 @@ def bench_cmd(
         verify_suite_tasks,
     )
 
+    if planning_eval:
+        from trendlab.benchmarks.runner import (
+            planning_eval_task,
+            select_tasks,
+            summarize_planning,
+        )
+
+        chosen = select_tasks(tasks, lang, tier, holdout=holdout)
+
+        async def _plan_all():
+            out = []
+            for t in chosen:
+                row = await planning_eval_task(t, model)
+                out.append(row)
+                if output != "json":
+                    console.print(
+                        f"  {t.id}: steps={row.get('steps')} recall={row.get('recall')} "
+                        f"precision={row.get('precision')} deps={row.get('dependencies')} "
+                        f"lint={len(row.get('lint_issues') or [])}→"
+                        f"{len(row.get('lint_remaining') or [])} ${row['cost']:.4f}"
+                    )
+            return out
+
+        rows = asyncio.run(_plan_all())
+        summary = summarize_planning(rows)
+        if save_rows is not None:
+            save_rows.write_text(json.dumps(rows, indent=1, default=str))
+        if output == "json":
+            typer.echo(json.dumps({"summary": summary, "rows": rows}, indent=2, default=str))
+        else:
+            console.print(f"[neon]planning eval[/neon] {model}: " + json.dumps(summary))
+        return
     if verify_suite:
         problems = verify_suite_tasks()
         if problems:
