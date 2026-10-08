@@ -2504,5 +2504,72 @@ def main() -> None:
     app()
 
 
+pr_app = typer.Typer(help="Pull-request triage, throughput and workspaces (U21; read-only gh).")
+app.add_typer(pr_app, name="pr")
+
+
+@pr_app.command("list")
+def pr_list_cmd(
+    repo: str | None = typer.Option(None, "--repo", help="owner/name (default: this repo)."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    limit: int = typer.Option(50, "--limit"),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Triage open PRs: size, CI, review state, idle time and the next action for each."""
+    from trendlab.orchestration.prs import list_open, triage
+
+    rows = triage(list_open(repo, project.resolve(), limit))
+    if output == "json":
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    t = Table(title=f"Open PRs · {repo or project.resolve().name}")
+    for col in ("#", "action", "size", "CI", "review", "idle", "title"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(
+            str(r["number"]),
+            r["action"] + (f" ({r['note']})" if r["note"] else ""),
+            f"{r['size']} {r['lines']}",
+            r["ci"],
+            r["review"].lower().replace("_", " "),
+            f"{r['idle_days']}d",
+            r["title"][:60],
+        )
+    console.print(t if rows else "[dim]no open pull requests[/dim]")
+
+
+@pr_app.command("stats")
+def pr_stats_cmd(
+    repo: str | None = typer.Option(None, "--repo"),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    days: int = typer.Option(30, "--days"),
+) -> None:
+    """PR throughput: merged per week, hours to merge (median, p90), size merged."""
+    from trendlab.orchestration.prs import list_merged, throughput
+
+    typer.echo(json.dumps(throughput(list_merged(repo, project.resolve(), days), days=days)))
+
+
+@pr_app.command("workspace")
+def pr_workspace_cmd(
+    number: int = typer.Argument(..., help="PR number."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    prompt: str | None = typer.Option(
+        None, "--agent", help="Run the agent in the PR worktree with this prompt."
+    ),
+) -> None:
+    """Check a PR out into its own worktree (current checkout untouched); optionally run the
+    agent there. Review it with `trendlab review -C <worktree>`."""
+    from trendlab.orchestration.prs import workspace
+
+    dest = workspace(project.resolve(), number)
+    console.print(f"[ok]PR #{number}[/ok] in {dest}")
+    if prompt:
+        import subprocess
+
+        rc = subprocess.run([sys.executable, "-m", "trendlab.cli", "-C", str(dest), "-p", prompt])
+        raise typer.Exit(code=rc.returncode)
+
+
 if __name__ == "__main__":
     main()
