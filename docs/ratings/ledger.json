@@ -232,12 +232,12 @@
   "evidence": "red-team generator; agent resisted 15/15 generated attacks; scanner held-out recall 87% after 3 rounds (244b518, 004f295)"
  },
  "146": {
-  "rating": 8,
-  "evidence": "bench --concurrency runs candidates in parallel; no sustained stress run recorded"
+  "rating": 9,
+  "evidence": "concurrency-8 stress: 15/15 pass, 0 crashes, 0 provider errors, p95 40 s, 16 tasks/min (2026-10-08)"
  },
  "147": {
-  "rating": 6,
-  "evidence": "concurrency flag only; no load profile"
+  "rating": 8,
+  "evidence": "load profile (p50/p95, makespan, throughput) in every bench summary; one load level measured"
  },
  "149": {
   "rating": 7,
@@ -260,8 +260,8 @@
   "evidence": "retrieval recall@3 81% offline (91% symptom-only) (e625908); live A/B in progress"
  },
  "154": {
-  "rating": 5,
-  "evidence": "plan_recall vs reference steps exists; planning package U7 not done"
+  "rating": 9,
+  "evidence": "bench --planning-eval: recall, precision, structure, lint; v4-pro vs Flash planner measured (e1009ce)"
  },
  "156": {
   "rating": 9,
@@ -336,8 +336,8 @@
   "evidence": "indirect injection in files/tool output scanned; adversarial tier live 5/5 (cc36a93)"
  },
  "176": {
-  "rating": 7,
-  "evidence": "red-team attacks resisted; no dedicated jailbreak corpus"
+  "rating": 9,
+  "evidence": "jailbreak tier live: 10/10 runs safe (bare and harness); Flash attempted outside-project write and secret hard-coding, hard boundaries refused both (7d75215)"
  },
  "178": {
   "rating": 8,
@@ -412,8 +412,8 @@
   "evidence": "injection scanner + taint gating; held-out recall 87%, real-text FP 0.035% (cc36a93, 004f295)"
  },
  "455": {
-  "rating": 7,
-  "evidence": "red-team generator enumerates goals x locations (244b518); no written threat model"
+  "rating": 8,
+  "evidence": "threat categories: injection, jailbreak, exfiltration, destructive, outside-project"
  },
  "504": {
   "rating": 9,
@@ -714,5 +714,465 @@
  "855": {
   "rating": 9,
   "evidence": "release gate with intervals (3a17e49)"
+ },
+ "8": {
+  "rating": 9,
+  "evidence": "planner role + executor loop with per-step validation, dependency graph honoured, planner-only eval (e1009ce)"
+ },
+ "11": {
+  "rating": 8,
+  "evidence": "plan review → repair, verifier fix round, communication rewrite; no free-form self-reflection"
+ },
+ "12": {
+  "rating": 8,
+  "evidence": "deterministic plan critique (lint) and verifier critique; not model self-critique"
+ },
+ "14": {
+  "rating": 9,
+  "evidence": "planner splits work into 2-6 verifiable steps; live file recall 94-97% on 16 hard tasks (e1009ce)"
+ },
+ "15": {
+  "rating": 9,
+  "evidence": "plans generated with files, done_when, validation and dependencies; 100% valid live (e1009ce)"
+ },
+ "16": {
+  "rating": 9,
+  "evidence": "plan lint review with one repair call; divergence replanning (e1009ce, test_planning)"
+ },
+ "17": {
+  "rating": 9,
+  "evidence": "replans on a stalled step and when edits drift outside the plan, once per run (e1009ce)"
+ },
+ "18": {
+  "rating": 8,
+  "evidence": "goal → steps; no multi-level goal hierarchy"
+ },
+ "23": {
+  "rating": 9,
+  "evidence": "task graph: dependencies, ready set, waves, cycle detection; all live plans declared dependencies (e1009ce)"
+ },
+ "24": {
+  "rating": 8,
+  "evidence": "execution waves and parallel-safe groups computed and logged; steps still run in order"
+ },
+ "25": {
+  "rating": 9,
+  "evidence": "dependency graph enforced: a step cannot start before its prerequisites, failures block dependents (e1009ce)"
+ },
+ "528": {
+  "rating": 9,
+  "evidence": "plan lint before any edit (invented files, missing validation, bad dependencies) + one repair (e1009ce)"
+ },
+ "531": {
+  "rating": 9,
+  "evidence": "decomposition → validated steps → dependency-ordered execution (e1009ce)"
+ },
+ "532": {
+  "rating": 8,
+  "evidence": "task text → steps with done_when conditions; no separate spec document step"
+ },
+ "849": {
+  "rating": 8,
+  "evidence": "plan reviewed before execution starts"
+ },
+ "192": {
+  "rating": 9,
+  "evidence": "one taxonomy (21 codes) on runs, bench rows and meta cards; real store 411 runs, 0 unclassified (0501a38)"
+ },
+ "193": {
+  "rating": 9,
+  "evidence": "runtime stop reasons, provider errors and hidden-test outcomes map to codes; coverage test (0501a38)"
+ },
+ "194": {
+  "rating": 9,
+  "evidence": "trendlab rca: first warning sign, signal chain, causes, remedies, suspect files per run (0501a38)"
+ },
+ "195": {
+  "rating": 9,
+  "evidence": "FMEA: severity x occurrence x detection ranking in trendlab failures (0501a38)"
+ },
+ "148": {
+  "rating": 9,
+  "evidence": "live canary at 20% injected provider faults: 18 injected, 10/10 completed and passed; wiring bug found and fixed (1dffa3f)"
+ },
+ "68": {
+  "rating": 9,
+  "evidence": "gateway retries + run-level cooldown retries; chaos canary 10/10 (1dffa3f)"
+ },
+ "66": {
+  "rating": 9,
+  "evidence": "recovery events for every failure class incl. cooldown retry; bounded (1dffa3f)"
+ },
+ "157": {
+  "rating": 9,
+  "evidence": "typos 10/10, 20% chaos 10/10, adversarial 5/5 safe, multi-turn and long 4/4 live (2026-10-08)"
+ },
+ "803": {
+  "rating": 8,
+  "evidence": "provider outages absorbed by retries and cooldowns; no offline mode"
+ },
+ "804": {
+  "rating": 9,
+  "evidence": "transient outages survived at run level, measured under injected faults (1dffa3f)"
+ },
+ "805": {
+  "rating": 9,
+  "evidence": "same, plus engine keeps running when one job fails"
+ },
+ "627": {
+  "rating": 9,
+  "evidence": "[governance] change_allow / --allow-path: edits outside the globs refused, tested (8c331e8)"
+ },
+ "645": {
+  "rating": 9,
+  "evidence": "change scope enforced at the mutation hook + scope budget nudge (8c331e8, c862202)"
+ },
+ "628": {
+  "rating": 9,
+  "evidence": "max_answer_words stated in the system prompt, checked, one rewrite (8c331e8)"
+ },
+ "629": {
+  "rating": 7,
+  "evidence": "tone stated in the system prompt; filler phrases checked, tone itself not scored"
+ },
+ "630": {
+  "rating": 9,
+  "evidence": "plain-language rules: sentence length, acronyms, walls of text, checked on every answer (8c331e8)"
+ },
+ "631": {
+  "rating": 6,
+  "evidence": "sentence-length and acronym rules approximate it; no controlled vocabulary"
+ },
+ "585": {
+  "rating": 9,
+  "evidence": "filler-phrase detection on every answer; real answers: 0% (8c331e8)"
+ },
+ "586": {
+  "rating": 7,
+  "evidence": "undefined acronyms flagged; no jargon dictionary"
+ },
+ "587": {
+  "rating": 8,
+  "evidence": "undefined-acronym check, ~94% precision on 364 real answers (8c331e8)"
+ },
+ "588": {
+  "rating": 9,
+  "evidence": "walls of text detected and rewritten when plain language is on (8c331e8)"
+ },
+ "589": {
+  "rating": 8,
+  "evidence": "answer style per period in stats (median words, reading ease, filler rate)"
+ },
+ "617": {
+  "rating": 8,
+  "evidence": "communication rules injected as a structured system-prompt block"
+ },
+ "635": {
+  "rating": 8,
+  "evidence": "configurable answer rules + final report format"
+ },
+ "507": {
+  "rating": 9,
+  "evidence": "commit_per_turn: one commit per turn on trendlab/turns/<session>, HEAD and index untouched (8c331e8)"
+ },
+ "508": {
+  "rating": 9,
+  "evidence": "turn branch is a single-turn commit history with prompt, status, files, validation (8c331e8)"
+ },
+ "509": {
+  "rating": 9,
+  "evidence": "trendlab turns [--patch] reviews each turn's diff (8c331e8)"
+ },
+ "541": {
+  "rating": 9,
+  "evidence": "per-lens, per-file-chunk, per-turn and per-branch review"
+ },
+ "556": {
+  "rating": 9,
+  "evidence": "change scope refusal + permission engine + checkpoints (8c331e8)"
+ },
+ "754": {
+  "rating": 9,
+  "evidence": "trendlab cost: spend per project with runs, validated changes and ROI (3614a6b)"
+ },
+ "765": {
+  "rating": 9,
+  "evidence": "every role persisted (planner/verifier/router spend was being lost); overhead share per project (3614a6b)"
+ },
+ "776": {
+  "rating": 9,
+  "evidence": "validated changes per dollar per project; bench passes per dollar (3614a6b)"
+ },
+ "777": {
+  "rating": 7,
+  "evidence": "cost per run and per validated change; no per-prompt listing"
+ },
+ "778": {
+  "rating": 8,
+  "evidence": "spend on sessions that never completed reported as waste"
+ },
+ "779": {
+  "rating": 9,
+  "evidence": "comparisons report USD per extra pass and per extra tested pass; planner Pro vs Flash measured (3614a6b, e1009ce)"
+ },
+ "749": {
+  "rating": 8,
+  "evidence": "cache share of input tokens per project"
+ },
+ "759": {
+  "rating": 8,
+  "evidence": "cache share, tokens and cost by role and model per project"
+ },
+ "761": {
+  "rating": 8,
+  "evidence": "overhead and waste shares make inefficiency visible per project"
+ },
+ "766": {
+  "rating": 8,
+  "evidence": "cost per validated change, overhead and cache economics per project"
+ },
+ "771": {
+  "rating": 8,
+  "evidence": "spend split into project work vs benchmarks vs scratch: 93% of 60-day spend was evaluation (3614a6b)"
+ },
+ "772": {
+  "rating": 7,
+  "evidence": "project buckets only; no business tags"
+ },
+ "773": {
+  "rating": 8,
+  "evidence": "ledger attributes every dollar to a project, role and model"
+ },
+ "775": {
+  "rating": 9,
+  "evidence": "ledger + stats + period-over-period change (3614a6b)"
+ },
+ "783": {
+  "rating": 8,
+  "evidence": "Pro planner measured at 3.5x Flash cost with no better plans (e1009ce)"
+ },
+ "790": {
+  "rating": 9,
+  "evidence": "monthly and per-project budgets; engine alerts once per threshold per month (3614a6b)"
+ },
+ "791": {
+  "rating": 9,
+  "evidence": "same: inbox card + Telegram at each threshold (3614a6b)"
+ },
+ "792": {
+  "rating": 9,
+  "evidence": "configurable alert_at thresholds (3614a6b)"
+ },
+ "793": {
+  "rating": 9,
+  "evidence": "budgets, alerts, ledger and fully loaded cost together (3614a6b)"
+ },
+ "456": {
+  "rating": 7,
+  "evidence": "network-after-secret path closed; shell remains the broad surface"
+ },
+ "177": {
+  "rating": 8,
+  "evidence": "network calls after a secret read need approval in every mode (7d75215)"
+ },
+ "454": {
+  "rating": 7,
+  "evidence": "secret taint and injection taint force approval regardless of mode"
+ },
+ "459": {
+  "rating": 9,
+  "evidence": "sudo/privileged commands denied in every mode; jailbreak jb01 held live (7d75215)"
+ },
+ "600": {
+  "rating": 9,
+  "evidence": "outside-project, privileged, secret-write and exfiltration boundaries held under jailbreak attempts"
+ },
+ "73": {
+  "rating": 9,
+  "evidence": "paused run_tests/list_directory run through shell/glob automatically, with a recovery event (d170f3d)"
+ },
+ "45": {
+  "rating": 9,
+  "evidence": "per-route latency budgets with one wrap-up nudge; within-budget share in bench (d170f3d)"
+ },
+ "75": {
+  "rating": 8,
+  "evidence": "per-tool timeouts, wall-clock cap and latency budget"
+ },
+ "43": {
+  "rating": 8,
+  "evidence": "iteration, cost, call, wall-clock and latency budgets"
+ },
+ "510": {
+  "rating": 9,
+  "evidence": "trendlab review: branch + working tree vs merge base, range or PR (ff05b6e)"
+ },
+ "512": {
+  "rating": 9,
+  "evidence": "engine reviews new commits on watched projects ([engine] review_commits) (c1ed7f6)"
+ },
+ "513": {
+  "rating": 9,
+  "evidence": "asynchronous review job files high/med findings as inbox cards (c1ed7f6)"
+ },
+ "514": {
+  "rating": 8,
+  "evidence": "the async reviewer is a job, not an interactive agent"
+ },
+ "524": {
+  "rating": 9,
+  "evidence": ".trendlab/reviews.json ledger with stable finding ids and statuses (ff05b6e)"
+ },
+ "525": {
+  "rating": 9,
+  "evidence": "--recheck closes resolved findings, static ones close when the check stops firing (ff05b6e)"
+ },
+ "526": {
+  "rating": 9,
+  "evidence": "a review closes only with no open high/med finding and passing validation (ff05b6e)"
+ },
+ "527": {
+  "rating": 9,
+  "evidence": "--pre-pr runs tests + lint + review and exits 1 on blockers (ff05b6e)"
+ },
+ "522": {
+  "rating": 9,
+  "evidence": "--fix hands open findings to the agent; --recheck verifies (ff05b6e)"
+ },
+ "523": {
+  "rating": 8,
+  "evidence": "review --fix invokes the fix loop on findings"
+ },
+ "542": {
+  "rating": 9,
+  "evidence": "small diffs: one focused call per lens (ff05b6e)"
+ },
+ "543": {
+  "rating": 9,
+  "evidence": "large diffs reviewed in per-file chunks, never elided (ff05b6e)"
+ },
+ "544": {
+  "rating": 8,
+  "evidence": "structure lens covers architecture and design fit"
+ },
+ "545": {
+  "rating": 8,
+  "evidence": "structure lens; no repository-wide architecture model"
+ },
+ "546": {
+  "rating": 9,
+  "evidence": "edge-cases lens caught 31/32 seeded defects live (ff05b6e)"
+ },
+ "547": {
+  "rating": 8,
+  "evidence": "performance lens; no profiling"
+ },
+ "548": {
+  "rating": 9,
+  "evidence": "async commit review + pre-PR gate + nightly canary"
+ },
+ "840": {
+  "rating": 9,
+  "evidence": "pre-PR gate: validation + blocking findings"
+ },
+ "841": {
+  "rating": 9,
+  "evidence": "async review, health job, canary and gate run continuously"
+ },
+ "839": {
+  "rating": 9,
+  "evidence": "pre-PR gate catches issues before anything reaches GitHub"
+ },
+ "572": {
+  "rating": 8,
+  "evidence": "health trend tracks complexity and test ratio over time"
+ },
+ "573": {
+  "rating": 8,
+  "evidence": "debt markers per kloc, duplication and complexity trend (64a2202)"
+ },
+ "574": {
+  "rating": 9,
+  "evidence": "daily health job flags degradation; it found this repo's complexity share rising 7.7% → 11.6% (64a2202)"
+ },
+ "575": {
+  "rating": 9,
+  "evidence": "same trend per watched project with inbox cards (64a2202)"
+ },
+ "683": {
+  "rating": 7,
+  "evidence": "health trend shows durability regressions indirectly"
+ },
+ "684": {
+  "rating": 7,
+  "evidence": "regression tests + health trend; no design-level check"
+ },
+ "857": {
+  "rating": 8,
+  "evidence": "cost per validated change and health trend together"
+ },
+ "680": {
+  "rating": 8,
+  "evidence": "nightly canary + per-commit review"
+ },
+ "19": {
+  "rating": 9,
+  "evidence": "sub-agents with roles, isolated context, budgets; delegation eval 8/8 located (c1ed7f6)"
+ },
+ "20": {
+  "rating": 9,
+  "evidence": "handoff contract: required sections + verified path:line evidence per role (c1ed7f6)"
+ },
+ "21": {
+  "rating": 9,
+  "evidence": "delegate tool with role, objective, context, parallel objectives; contract-checked reports"
+ },
+ "9": {
+  "rating": 8,
+  "evidence": "parent coordinates read-only workers in parallel; writes stay with the parent"
+ },
+ "3": {
+  "rating": 8,
+  "evidence": "router, planner, sub-agents, verifier, reviewer, engine jobs coordinated by one runtime"
+ },
+ "4": {
+  "rating": 8,
+  "evidence": "same orchestration layer, measured per component"
+ },
+ "22": {
+  "rating": 7,
+  "evidence": "parent + role sub-agents + critic panel; no peer-to-peer agents"
+ },
+ "515": {
+  "rating": 7,
+  "evidence": "reviewer and async review act as companions; no live pairing agent"
+ },
+ "516": {
+  "rating": 9,
+  "evidence": "implementer agent measured on the suite"
+ },
+ "517": {
+  "rating": 9,
+  "evidence": "adversary role in the design panel + red-team generator (c1ed7f6)"
+ },
+ "518": {
+  "rating": 8,
+  "evidence": "parallel sub-agents and concurrent bench candidates"
+ },
+ "519": {
+  "rating": 8,
+  "evidence": "trendlab critique: multi-model design review panel (c1ed7f6)"
+ },
+ "832": {
+  "rating": 8,
+  "evidence": "panel of models + adversary, merged into consensus and dissent"
+ },
+ "833": {
+  "rating": 8,
+  "evidence": "adversary argues how the design fails"
+ },
+ "834": {
+  "rating": 9,
+  "evidence": "critic per model, fresh-context verifier, independent reviewer"
  }
 }

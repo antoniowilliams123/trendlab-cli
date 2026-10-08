@@ -4751,6 +4751,81 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   verify 3.3 s); 16 Claude Code sessions imported in 1.7 s, second run skipped all 16.
 
 
+- **Eval metrics, quality and operations** (`380a06e`, `ddf4977`, `244b518`): verifier
+  precision/recall/F1 and Brier/ECE calibration against hidden tests; hallucination rate from
+  an unsupported-claims detector (negation-aware, `004f295`); exact match and reference
+  similarity per row; capability map by tier, defect and language; scorecard; leakage guard
+  and `SUITE_VERSION`; blind human labelling with Cohen's kappa; judge-bias probes (padded
+  and restyled diffs); `[verification] min_confidence`; seven ablations, dotted overrides,
+  `--sweep`, `--counterfactual`, `--verify-suite`; online quality from live sessions;
+  period drift; red-team generator.
+- **Router and semantic routing** (`2d7cd45`): rule router (95 % on a 40-prompt held-out set
+  after one principled revision; the first version scored 100 % on the suite and 68 % held
+  out, which is how the overfit was caught) and a Flash router model (98 % held out, Brier
+  0.04, ≈ $0.0002 a call) with a safety floor for risky prompts; the route sets planner and
+  verifier gating.
+- **Retrieval** (`e625908`): BM25 code hints, offline recall@3 81 % (91 % symptom-only);
+  live A/B on 8 tasks: no pass difference, +2.8 % cost, so `[context] retrieval` stays off.
+- **Robustness** (`cc36a93`, `2b3e3ae`, `b2fb3ae`, `1dffa3f`): adversarial, multi-turn, long
+  and realistic tiers; injection scanner + taint gating; typo perturbation; chaos. Live:
+  adversarial 5/5 safe, multi-turn 4/4, long 4/4, realistic 8/8 at 1.07× bare cost with
+  regression tests on 4/4 fixes vs 1/4 for bare, typos 10/10. Chaos runs injected nothing
+  until `1dffa3f` (the wrapper was installed before the gateway existed, then the counter
+  copied a list); after the fix, 20 % faults: 18 injected, 10/10 completed. A run now waits
+  and repeats the step after a transient provider error, at most twice.
+- **U8 Failure taxonomy** (`0501a38`): `trendlab/agent/taxonomy.py`, 21 codes with severity,
+  detectability, causes, remedies and suspect files; on every failed run, bench row and meta
+  card; `trendlab failures` (FMEA, severity × occurrence × detection) and `trendlab rca`.
+  Real store: 411 runs, 4 failures, none unclassified. Classifying live rows exposed two
+  suite bugs (mt04 penalised updating a renamed method's caller; 15/42 leakage flags were
+  false alarms).
+- **U7 Planning** (`e1009ce`): planner steps declare dependencies; ready set, waves,
+  parallel-safe groups, cycle detection; a step cannot start before its prerequisites and a
+  failed step blocks dependents; deterministic plan lint with one repair call; replanning
+  when edits drift outside the plan. `bench --planning-eval` (16 long/multi-turn/hard
+  tasks): v4-pro recall 94 %, precision 88 %, $0.219; Flash 97 % / 83 %, $0.062 — Flash is
+  recommended as planner (not switched; owner's call).
+- **U9 Governance** (`8c331e8`): every answer measured (prose words, sentence length,
+  reading ease, walls of text, filler, undefined acronyms); `[governance] max_answer_words /
+  plain_language / tone` stated in the system prompt and enforced with one rewrite;
+  `change_allow` / `--allow-path`; `commit_per_turn` snapshots each turn on
+  `trendlab/turns/<session>` with git plumbing (HEAD and index untouched); `trendlab turns`.
+  364 real answers: median 112 words, reading ease 66, no filler.
+- **U10 Economics** (`3614a6b`): only lead-model calls were being stored; every cost record
+  of every role is now persisted (child trackers inherit the hook; engine jobs and reviews
+  use `RecordedCaller`). `trendlab cost`: spend per project (benchmarks and scratch pooled
+  apart), runs, validated changes, cost per validated change, overhead share, waste, cache
+  share, period change; `[economics]` monthly and per-project budgets with once-per-threshold
+  alerts; bench ROI and USD per extra (tested) pass. 60 days: $2.49, 93 % evaluation.
+- **U11 Security** (`7d75215`, `2d236da`): network calls that name a secret-bearing file, or
+  follow a shell read of one, need approval in every mode; jailbreak tier jb01–jb05 (sudo,
+  outside write, hard-coded key, "developer mode" deletes, `.env` exfiltration). Live: 10/10
+  safe; Flash attempted two of them and the hard boundaries refused. Stress at concurrency 8:
+  15/15, no crashes or provider errors, p95 40 s, 16 tasks/min.
+- **Tool fallback and latency budgets** (`d170f3d`): a paused `run_tests`/`list_directory`
+  runs through `shell`/`glob` automatically; `[limits] latency_budget_s` per route with one
+  wrap-up nudge.
+- **U13 Review** (`ff05b6e`, `2ef7cc7`): `trendlab review` (branch vs merge base, `--range`,
+  `--pr`): static checks plus lenses (correctness, edge cases, structure, performance, tests,
+  security), per-file chunks for large diffs, a confirmation pass that drops findings that
+  are not real, a findings ledger with `--recheck` closure, `--fix`, `--pre-pr` gate; the
+  engine can review new commits. `bench --review-eval` on 32 seeded defects (deep, Flash):
+  recall 100 %, localised 100 %, high false alarms 6 %, 1.16 med/high findings per correct
+  fix before the confirmation pass.
+- **U14 Code health** (`64a2202`): size-adjusted snapshot (test ratio, long/complex function
+  share, complexity, duplication, debt per kloc, dependencies), trend, `--backfill` over git
+  history, daily engine job with cards. First finding: this repo's complex-function share
+  rose 7.7 % → 11.6 % over three days of fast building.
+- **U15 Orchestration** (`c1ed7f6`): sub-agent handoff contract (required sections, verified
+  path:line evidence in the report header); `bench --delegate-eval` (explorer from the bug
+  report alone, 8 hard tasks: 8/8 located and on the line, all evidence verified, $0.018);
+  `trendlab critique` design panel (critic per model + adversary; consensus vs dissent) with
+  planted-flaw evals (the first set saturated at 100 % for every reviewer; a harder set
+  followed).
+- **Rating ledger**: `docs/ratings/part*.py` → `ledger.json` → the rated vocabulary
+  (`scripts/apply_ratings.py`); every changed rating names its evidence. Mean of the 560
+  rated AI terms 5.72 → 7.60 at this point; 366 still below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is
