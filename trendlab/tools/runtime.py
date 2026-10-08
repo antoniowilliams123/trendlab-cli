@@ -107,6 +107,28 @@ class ToolRuntime:
             return "no test command is known for this project; run the tests with shell"
         return None
 
+    def _unresolved_refs(self, files: list[str], result: ToolResult) -> list[str]:
+        """U17: imports and project names added by this edit that resolve nowhere."""
+        from trendlab.agent.symbols import added_lines, unresolved
+
+        root = self.ctx.project_root
+        out: list[str] = []
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            rel = f
+            try:
+                rel = str((root / f).resolve().relative_to(root.resolve()))
+            except ValueError:
+                continue
+            diff = result.data.get("diff") or ""
+            lines = added_lines(diff) if diff else None
+            try:
+                out += unresolved(root, rel, only_lines=lines)
+            except Exception:  # noqa: BLE001 — the check must never break an edit
+                continue
+        return out
+
     def _fallback_call(self, call: ToolCall) -> ToolCall | None:
         """A call that does the same job with another tool, when one exists."""
         if call.name == "run_tests":
@@ -485,6 +507,22 @@ class ToolRuntime:
                 problem = postcondition(self.ctx.project_root / f)
                 if problem:
                     problems.append(problem)
+            refs = self._unresolved_refs(perm.affected_files, result) if not problems else []
+            if refs:
+                result.output = (
+                    f"{result.output}\n\nUNRESOLVED REFERENCE — this edit uses names that do not "
+                    "exist: " + "; ".join(refs[:6]) + ". Use the real name (read the module) or "
+                    "create what is missing."
+                )
+                result.data["unresolved"] = refs
+                self.events.emit(
+                    EventType.TOOL_POSTCONDITION_FAILED,
+                    session_id=self.ctx.session_id,
+                    tool=tool.name,
+                    files=perm.affected_files,
+                    problems=refs,
+                    kind="unresolved_reference",
+                )
             if problems:
                 result.output = (
                     f"{result.output}\n\nPOSTCONDITION FAILED — the file no longer parses: "

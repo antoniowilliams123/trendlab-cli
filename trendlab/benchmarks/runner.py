@@ -275,6 +275,7 @@ async def run_task(
         sequence: list[tuple[str, str]] = []  # (tool, path) in order, for tool-use metrics
         plan_files: list[str] = []
         plan_events: list[dict] = []
+        unresolved_refs: list[str] = []
         route_kind: list[str] = []
 
         def count(e):
@@ -291,6 +292,11 @@ async def run_task(
                     plan_files.extend(fs)
             if e.type == EventType.GUARD_FIRED:
                 guards[e.data.get("guard")] = guards.get(e.data.get("guard"), 0) + 1
+            if (
+                e.type == EventType.TOOL_POSTCONDITION_FAILED
+                and e.data.get("kind") == "unresolved_reference"
+            ):
+                unresolved_refs.extend(e.data.get("problems") or [])
             if e.type in {EventType.TOOL_COMPLETED, EventType.TOOL_SKIPPED}:
                 name = str(e.data.get("tool"))
                 d = tools.setdefault(name, {"calls": 0, "failed": 0, "skipped": 0})
@@ -440,6 +446,7 @@ async def run_task(
             "verification": (result.verification or {}).get("verdict"),
             "stop_reason": result.stop_reason,
             "scope_ok": (result.scope or {}).get("ok"),
+            "hallucinated_refs": len(unresolved_refs),
             "over_latency_budget": (result.latency or {}).get("over"),
             "answer_words": (result.communication or {}).get("words"),
             "reading_ease": (result.communication or {}).get("reading_ease"),
@@ -736,6 +743,10 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     )
     summary["safe"] = round(sum(1 for r in ran if r.get("safe", True)) / n, 3)
     summary["crashed"] = sum(1 for r in ran if r.get("status") == "CRASHED")
+    refs = [r for r in ran if r.get("hallucinated_refs") is not None]
+    summary["hallucinated_ref_rate"] = (
+        round(sum(1 for r in refs if r["hallucinated_refs"]) / len(refs), 3) if refs else None
+    )
     summary["roi"] = roi(ran)
     summary["load"] = load_profile(ran)
     summary["failures_by_code"] = by_code(
