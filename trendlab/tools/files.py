@@ -319,9 +319,9 @@ class SearchTextTool(Tool):
             return ToolResult(ok=False, output=f"invalid regex: {exc}")
         rg = shutil.which("rg")
         if rg and root.is_dir():
-            hits = await _rg_search(rg, args, root, project)
-            if hits is not None:
-                return _search_result(hits, args.max_results)
+            found = await _rg_search(rg, args, root, project)
+            if found is not None:
+                return _timed(_search_result(found[0], args.max_results), found[1], None)
         rules = ctx.ignore_rules or IgnoreRules([])
         stop = threading.Event()
         state = {"scanned": 0, "timed_out": False}
@@ -359,14 +359,7 @@ class SearchTextTool(Tool):
             return hits
 
         hits = await _in_thread(work, stop)
-        result = _search_result(hits, args.max_results)
-        if state["timed_out"]:
-            result.output += (
-                f"\n... stopped after {SEARCH_DEADLINE_S:.0f}s ({state['scanned']} files "
-                "searched): the project is very large; pass path= to search one folder"
-            )
-            result.data["timed_out"] = True
-        return result
+        return _timed(_search_result(hits, args.max_results), state["timed_out"], state["scanned"])
 
 
 async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) -> list[str] | None:
@@ -392,30 +385,52 @@ async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) 
         )
     except OSError:
         return None
+    raw: list[str] = []
+    deadline = time.monotonic() + SEARCH_DEADLINE_S
+    timed_out = False
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=SEARCH_DEADLINE_S)
-    except asyncio.CancelledError:
-        proc.kill()
+        assert proc.stdout is not None
+        # read as ripgrep finds matches and stop once there are enough: a huge tree with a
+        # common pattern answers in a moment instead of being searched to the end
+        while len(raw) <= args.max_results:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                timed_out = True
+                break
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=left)
+            except TimeoutError:
+                timed_out = True
+                break
+            if not line:
+                break
+            raw.append(line.decode("utf-8", "replace").rstrip("\n"))
+    finally:
+        if proc.returncode is None:
+            proc.kill()
         await proc.wait()
-        raise
-    except TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return [
-            f"... search stopped after {SEARCH_DEADLINE_S:.0f}s: the project is very large; "
-            "pass path= to search one folder"
-        ]
-    if proc.returncode not in {0, 1}:
+    if not timed_out and len(raw) <= args.max_results and proc.returncode not in {0, 1, -9}:
         return None
     hits = []
-    for line in out.decode("utf-8", "replace").splitlines():
+    for line in raw:
         path, _, rest = line.partition(":")
         try:
             rel = Path(path).resolve().relative_to(project).as_posix()
         except ValueError:
             rel = path
         hits.append(f"{rel}:{rest[:220]}")
-    return hits
+    return hits, timed_out
+
+
+def _timed(result: ToolResult, timed_out: bool, scanned: int | None) -> ToolResult:
+    if timed_out:
+        files = f" ({scanned} files searched)" if scanned is not None else ""
+        result.output += (
+            f"\n... stopped after {SEARCH_DEADLINE_S:.0f}s{files}: the project is very large; "
+            "pass path= to search one folder"
+        )
+        result.data["timed_out"] = True
+    return result
 
 
 def _search_result(hits: list[str], limit: int) -> ToolResult:

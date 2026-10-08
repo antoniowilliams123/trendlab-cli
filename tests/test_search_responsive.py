@@ -2,6 +2,7 @@
 binary files, stop when the run is cancelled."""
 
 import asyncio
+import shutil
 import time
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import trendlab.tools.files as files_mod
 from trendlab.context.ignore import IgnoreRules
 from trendlab.tools.base import ToolContext
 from trendlab.tools.files import GlobInput, GlobTool, SearchTextInput, SearchTextTool
+
+REAL_WHICH = shutil.which
 
 
 @pytest.fixture(autouse=True)
@@ -116,3 +119,15 @@ def test_home_folder_notice(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert "home folder" in home_notice(tmp_path)
     assert home_notice(tmp_path / "proj") == ""
+
+
+@pytest.mark.skipif(not REAL_WHICH("rg"), reason="ripgrep not installed")
+async def test_ripgrep_stops_once_it_has_enough(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(files_mod.shutil, "which", REAL_WHICH)
+    for i in range(50):
+        (tmp_path / f"f{i}.txt").write_text("hit\n" * 5)
+    res = await SearchTextTool().run(SearchTextInput(pattern="hit", max_results=10), _ctx(tmp_path))
+    assert res.data["count"] == 10 and res.data["truncated"] and not res.data.get("timed_out")
+    monkeypatch.setattr(files_mod, "SEARCH_DEADLINE_S", 0.0)
+    res = await SearchTextTool().run(SearchTextInput(pattern="nomatch"), _ctx(tmp_path))
+    assert res.data["count"] == 0 and res.data["timed_out"]
