@@ -625,3 +625,20 @@
   tools take milliseconds, so per-batch overhead (about 86 ms) exceeds the concurrency gain.
 - Parallel tool calls (term 48) stays at 8: batching is correct and safe but not yet faster.
   Next step would be trimming per-batch overhead or batching only slow tools (fetch, search).
+
+## 2026-10-08 — the user-felt six: invented tests, paper cuts, plain language, design, delegation
+
+- Invented edge cases (agent tests run against the correct code): before the scope rule 4/108
+  runs tested inputs nobody reported (None qty, non-positive chunk size); after it 0/50. Tests
+  that expect the agent's own message wording stayed (10/108 → 6/50); that is a style choice.
+- Paper cuts: 0 new lint findings (pyflakes, bugbear, syntax) in 113 final Python diffs; live
+  post-edit lint fed back 93 times in real sessions; reviewer caught 32/32 small seeded bugs.
+- Plain language, Flash, 12 tasks × 2, off vs on: passes 22/22 both; median words 115 → 84;
+  words/sentence 11.7 → 7.8; readability 68.5 → 80.4; >35-word sentences 5 → 0; undefined
+  acronyms 4 → 0; cost $0.094 → $0.085. Real answers (586): 0 buzzwords, 2 apologies.
+- Design before code: planning eval 16/16 plans carry a design, recall 0.906 (unchanged),
+  cost +9%. Unplanned multi-file runs: checkpoint fired 3/3 (mt04), all passed, no collateral;
+  silent on 9 single-file runs. It roughly doubles cost on the task where it fires.
+- Delegation, all 81 suite tasks: located 81/81, bug line 72/72, handoffs complete 81/81,
+  evidence verified 100%, $0.59 (first run 85% complete: bare file names; now resolved when
+  exactly one project file matches).

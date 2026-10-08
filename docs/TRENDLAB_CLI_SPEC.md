@@ -4911,6 +4911,18 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
 - Load curve: best throughput at concurrency 8 (16.1 tasks/min); 16 degrades; no crashes.
 - 12 terms raised to 9; 154 remain below 9.
 
+#### 2026-10-08 — design before code, invented-test check, plain-language metrics (mean 8.63)
+
+- Plans touching two or more source files state approach, interfaces and reuse first; the
+  planning eval scores design presence and adherence.
+- Unplanned runs: the first edit that spreads to a second code file is held once for a
+  three-line design (`[planner] design_checkpoint`, default on).
+- Bench rows run the agent's tests against the correct code (`reference_fit`,
+  `invented_inputs`); the base policy says to name extra edge cases instead of coding them.
+- Answer metrics add buzzwords, tone, passive voice and longest sentence; plain mode enforces.
+- Handoff evidence resolves a bare file name when exactly one project file matches.
+- 8 terms re-rated (559, 566, 571, 586, 629, 631, 848, 22); 139 below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

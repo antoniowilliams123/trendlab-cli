@@ -832,24 +832,24 @@
   "evidence": "max_answer_words stated in the system prompt, checked, one rewrite (8c331e8)"
  },
  "629": {
-  "rating": 7,
-  "evidence": "tone stated in the system prompt; filler phrases checked, tone itself not scored"
+  "rating": 9,
+  "evidence": "tone scored: hype, apologies, hedges, exclamations; enforced when a tone is set; live A/B: 0 tone issues, same 22/22 passes"
  },
  "630": {
   "rating": 9,
   "evidence": "plain-language rules: sentence length, acronyms, walls of text, checked on every answer (8c331e8)"
  },
  "631": {
-  "rating": 6,
-  "evidence": "sentence-length and acronym rules approximate it; no controlled vocabulary"
+  "rating": 8,
+  "evidence": "plain mode live A/B: 11.7 → 7.8 words per sentence, readability 68 → 80, long sentences 5 → 0, acronyms 4 → 0, passive-voice rule; no STE controlled dictionary"
  },
  "585": {
   "rating": 9,
   "evidence": "filler-phrase detection on every answer; real answers: 0% (8c331e8)"
  },
  "586": {
-  "rating": 7,
-  "evidence": "undefined acronyms flagged; no jargon dictionary"
+  "rating": 9,
+  "evidence": "buzzword dictionary in answer metrics; 0 of 586 real answers and 0 of 44 live runs used one; plain mode flags and rewrites them"
  },
  "587": {
   "rating": 8,
@@ -1140,8 +1140,8 @@
   "evidence": "same orchestration layer, measured per component"
  },
  "22": {
-  "rating": 7,
-  "evidence": "parent + role sub-agents + critic panel; no peer-to-peer agents"
+  "rating": 9,
+  "evidence": "delegation on all 81 suite tasks: located 81/81, bug line 100%, handoffs complete and evidence verified 100%; orchestrator-worker + critic panel"
  },
  "515": {
   "rating": 7,
@@ -1216,12 +1216,12 @@
   "evidence": "hallucinated imports/APIs caught on the lines an edit adds; 0 false alarms on 1,078 real files, 5/5 seeded (18b6be9)"
  },
  "566": {
-  "rating": 7,
-  "evidence": "weak/fabricated tests caught by test strength + mutation"
+  "rating": 9,
+  "evidence": "same check in every bench row (invented_inputs vs own-wording split); 0 invented edge cases in 50 runs since the rule"
  },
  "559": {
-  "rating": 6,
-  "evidence": "edits that reference things that do not exist are flagged; reasoning errors are not"
+  "rating": 9,
+  "evidence": "reference-fit check runs the agent's tests on the correct code; invented inputs 4/108 runs before the scope rule, 0/50 after; 0 out-of-scope source edits in 122 runs"
  },
  "605": {
   "rating": 9,
@@ -1264,8 +1264,8 @@
   "evidence": "spec drift + verifier against the original task"
  },
  "848": {
-  "rating": 7,
-  "evidence": "plan lint + architecture rules before/after; no dedicated architecture step"
+  "rating": 9,
+  "evidence": "plans state approach/interfaces/reuse before steps (16/16 plans); declared interfaces implemented; design checkpoint holds multi-file edits in unplanned runs (fired 3/3, all passed)"
  },
  "850": {
   "rating": 8,
@@ -1780,8 +1780,8 @@
   "evidence": "same"
  },
  "571": {
-  "rating": 6,
-  "evidence": "boundary mutants catch some paper-cut bugs; no broader check"
+  "rating": 9,
+  "evidence": "post-edit lint fed back live (93 real fires); 0 new lint findings in 113 final diffs; reviewer caught and located 32/32 small seeded bugs"
  },
  "47": {
   "rating": 9,
