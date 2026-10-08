@@ -4733,6 +4733,22 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   `verify.second_opinion {agree}`; a second-opinion `fail` downgrades a `pass` to `fix`.
   Bench summaries carry `judge` = verifier precision, false-pass rate and false-flag rate
   against hidden-test truth. Canary ×2 measurement recorded in §93.7 → 9.5.
+- **U6 Observability depth**: `trendlab/telemetry/spans.py` — `EventBus.span(name, **attrs)`
+  opens a timed span (context-variable nesting, so concurrent tool calls get sibling spans);
+  every event emitted inside carries `span_id`/`parent_id`; `span.started`/`span.ended
+  {duration_ms, status}`. Spans wrap the run, each model call, each parallel tool batch, each
+  tool call and the verifier. `trendlab trace <session> [--otel file]` renders the tree with
+  durations and attributes and exports OpenTelemetry-style JSON (resourceSpans → spans).
+  `trendlab search <text>` searches stored messages and events across sessions;
+  `trendlab stats [--days]` reports sessions, projects, spend, tokens, outcomes, failure
+  reasons, guards, skipped tools, verifier verdicts and breaker trips. Retention:
+  `[sessions] retention_days 90 / keep_latest 50`, enforced nightly by the engine's `prune`
+  job; the JSONL audit log rotates at 200 MB (three generations). Cross-harness:
+  `trendlab import <files|dirs> [--since-days]` normalises Claude Code transcripts into the
+  same schema (messages in chat shape, tool events, model calls with source timestamps,
+  priced from `[pricing]`), idempotent by source id and re-imported when the file grows.
+  Live check: a real Flash fix session produced 16 spans under one root (run 12.2 s,
+  verify 3.3 s); 16 Claude Code sessions imported in 1.7 s, second run skipped all 16.
 
 
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)

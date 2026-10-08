@@ -229,6 +229,13 @@ class EngineConfig(BaseModel):
     canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
 
 
+class SessionsConfig(BaseModel):
+    """Retention (U6): how long stored sessions and events are kept."""
+
+    retention_days: int = Field(default=90, ge=1)
+    keep_latest: int = Field(default=50, ge=1)
+
+
 class GovernanceConfig(BaseModel):
     """Scope, bloat and dependency control (uplift U5)."""
 
@@ -397,6 +404,7 @@ class AppConfig(BaseModel):
     prompts: PromptsConfig = PromptsConfig()
     engine: EngineConfig = EngineConfig()
     governance: GovernanceConfig = GovernanceConfig()
+    sessions: SessionsConfig = SessionsConfig()
     attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)

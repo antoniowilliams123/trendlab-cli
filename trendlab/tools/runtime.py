@@ -59,6 +59,10 @@ class ToolRuntime:
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
     async def execute(self, call: ToolCall) -> ToolResult:
+        with self.events.span(f"tool:{call.name}", self.ctx.session_id, tool=call.name):
+            return await self._execute(call)
+
+    async def _execute(self, call: ToolCall) -> ToolResult:
         tool = self.registry.get(call.name)
         self.events.emit(
             EventType.TOOL_REQUESTED,

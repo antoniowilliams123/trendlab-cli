@@ -244,6 +244,10 @@ class AgentRuntime:
 
     # -- main loop -------------------------------------------------------------------------
     async def run(self, prompt: str | list[dict[str, Any]]) -> RunResult:
+        with self.events.span("run", self.session_id, role=self.role, model=self.model_ref):
+            return await self._run(prompt)
+
+    async def _run(self, prompt: str | list[dict[str, Any]]) -> RunResult:
         started = time.monotonic()
         self._cancel.clear()
         if self.state.terminal:
@@ -433,6 +437,10 @@ class AgentRuntime:
         }
 
     async def _model_call(self) -> ModelResponse:
+        with self.events.span("model_call", self.session_id, model=self.model_ref, role=self.role):
+            return await self._model_call_inner()
+
+    async def _model_call_inner(self) -> ModelResponse:
         messages = self.context.build()
         tools = self.tools.registry.schemas()
         if self.hooks is not None:
@@ -530,13 +538,14 @@ class AgentRuntime:
             if len(group) == 1:
                 results = [await self.tools.execute(group[0])]
             else:
-                self.events.emit(
-                    EventType.TOOLS_PARALLEL,
-                    session_id=self.session_id,
-                    count=len(group),
-                    tools=[c.name for c in group],
-                )
-                results = list(await asyncio.gather(*(self.tools.execute(c) for c in group)))
+                with self.events.span("tool_batch", self.session_id, n=len(group)):
+                    self.events.emit(
+                        EventType.TOOLS_PARALLEL,
+                        session_id=self.session_id,
+                        count=len(group),
+                        tools=[c.name for c in group],
+                    )
+                    results = list(await asyncio.gather(*(self.tools.execute(c) for c in group)))
             for call, result in zip(group, results, strict=True):
                 stop = self._observe(call, result)
                 if stop:
@@ -929,7 +938,8 @@ class AgentRuntime:
             EventType.VERIFY_STARTED, session_id=self.session_id, role=self.role, small=small
         )
         try:
-            verdict = await self.verifier(self._task_text, ev, small)
+            with self.events.span("verify", self.session_id, small=small):
+                verdict = await self.verifier(self._task_text, ev, small)
         except Exception as exc:  # noqa: BLE001 — a broken verifier never blocks surfacing
             verdict = None
             self.events.emit(

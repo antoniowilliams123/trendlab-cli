@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -88,6 +90,8 @@ class EventType(StrEnum):
     TOOL_POSTCONDITION_FAILED = "tool.postcondition_failed"  # an edit left a file unparsable
     SCOPE_CHECKED = "scope.checked"  # diff shape vs budget, dependency gate, test strength (U5)
     JUDGE_PAIRWISE = "judge.pairwise"  # pairwise verdict asked both ways (U2)
+    SPAN_STARTED = "span.started"  # timed, nested unit of work (U6)
+    SPAN_ENDED = "span.ended"
     VERIFY_SECOND_OPINION = "verify.second_opinion"  # two verifier models compared (U2)
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
     SKILL_UNLOADED = "skill.unloaded"
@@ -160,6 +164,11 @@ class EventBus:
         session_id: str | None = None,
         **data: Any,
     ) -> Event:
+        from trendlab.telemetry.spans import current_span
+
+        cur = current_span()
+        if cur is not None and "span_id" not in data:
+            data["span_id"], data["parent_id"] = cur[0], cur[1]
         event = Event(type=type_, session_id=session_id, data=data)
         with self._lock:
             subscribers = list(self._subscribers)
@@ -170,6 +179,40 @@ class EventBus:
                 pass
         return event
 
+    @contextmanager
+    def span(self, name: str, session_id: str | None = None, **attrs: Any):
+        """A timed, nested unit of work (uplift U6). Events emitted inside carry its id."""
+        from trendlab.telemetry.spans import current_span, new_span_id, span_scope
+
+        parent = current_span()
+        span_id = new_span_id()
+        started = time.monotonic()
+        self.emit(
+            EventType.SPAN_STARTED,
+            session_id,
+            span_id=span_id,
+            parent_id=parent[0] if parent else None,
+            name=name,
+            **attrs,
+        )
+        status = "ok"
+        with span_scope(span_id, parent[0] if parent else None):
+            try:
+                yield span_id
+            except BaseException:
+                status = "error"
+                raise
+            finally:
+                self.emit(
+                    EventType.SPAN_ENDED,
+                    session_id,
+                    span_id=span_id,
+                    parent_id=parent[0] if parent else None,
+                    name=name,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    status=status,
+                )
+
 
 #: High-frequency progress events that UIs consume live and no sink should store.
 TRANSIENT_EVENTS = {"tool.output", "model.token"}
@@ -178,17 +221,40 @@ TRANSIENT_EVENTS = {"tool.output", "model.token"}
 class JsonlEventSink:
     """Appends every event as one redacted JSON line — the audit log."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, max_bytes: int = 200 * 1024 * 1024, keep: int = 3) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self.max_bytes = max_bytes
+        self.keep = keep
+        self._written = 0
+
+    def _rotate(self) -> None:
+        """Retention (U6): roll the audit log over when it passes ``max_bytes``."""
+        try:
+            if self.path.stat().st_size < self.max_bytes:
+                return
+        except OSError:
+            return
+        for i in range(self.keep - 1, 0, -1):
+            src, dst = (
+                self.path.with_suffix(f".jsonl.{i}"),
+                self.path.with_suffix(f".jsonl.{i + 1}"),
+            )
+            if src.exists():
+                src.replace(dst)
+        self.path.replace(self.path.with_suffix(".jsonl.1"))
 
     def __call__(self, event: Event) -> None:
         if event.type.value in TRANSIENT_EVENTS:
             return
         line = json.dumps(event.to_record(), default=str)
-        with self._lock, self.path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        with self._lock:
+            self._written += 1
+            if self._written % 1000 == 0:
+                self._rotate()
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
 
 
 class EventRecorder:

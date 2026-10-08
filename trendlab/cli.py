@@ -983,6 +983,159 @@ def drift_cmd(last: int = typer.Option(14, "--last", help="Nights to show.")) ->
     console.print(t)
 
 
+@app.command("trace")
+def trace_cmd(
+    session_id: str = typer.Argument(..., help="Session id (see `trendlab sessions`)."),
+    otel: Path | None = typer.Option(
+        None, "--otel", help="Write an OpenTelemetry-style JSON file."
+    ),
+    depth: int = typer.Option(6, "--depth"),
+) -> None:
+    """Trace tree of a session: runs, model calls, tool calls, verify, with durations (U6)."""
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.spans import render_tree, to_otel, trace_tree
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        records = [
+            {"event": e["type"], "ts": e["ts"], "session_id": session_id, **(e.get("data") or {})}
+            for e in store.events(session_id)
+        ]
+    finally:
+        store.close()
+    roots = trace_tree(records)
+    if not roots:
+        console.print(
+            "[dim]no spans recorded for this session (sessions before v0.3.1 have none)[/dim]"
+        )
+        return
+    from rich.markup import escape
+
+    for line in render_tree(roots, max_depth=depth):
+        console.print(escape(line))
+    if otel is not None:
+        otel.write_text(json.dumps(to_otel(session_id, roots), indent=1))
+        console.print(f"[ok]wrote[/ok] {otel}")
+
+
+@app.command("search")
+def search_cmd(
+    text: str = typer.Argument(..., help="Text to find in stored messages and events."),
+    project: Path | None = typer.Option(None, "--project", "-C"),
+    limit: int = typer.Option(30, "--limit"),
+) -> None:
+    """Search past sessions (messages and events) for exact text (U6)."""
+    from trendlab.sessions.store import SessionStore
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        hits = store.search(text, str(project.resolve()) if project else None, limit=limit)
+    finally:
+        store.close()
+    if not hits:
+        console.print("[dim]no matches[/dim]")
+        return
+    t = Table(title=f"Search: {text}")
+    for col in ("when", "session", "project", "kind", "snippet"):
+        t.add_column(col)
+    for h in hits:
+        t.add_row(
+            h["ts"][:16],
+            h["session_id"],
+            Path(h["project"] or "").name,
+            f"{h['kind']}:{h['role']}",
+            h["snippet"][:110],
+        )
+    console.print(t)
+
+
+@app.command("stats")
+def stats_cmd(
+    days: int = typer.Option(7, "--days"),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Session analytics: volume, spend, outcomes, failure reasons, guards (U6)."""
+    from trendlab.sessions.store import SessionStore
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        st = store.stats(days)
+    finally:
+        store.close()
+    if output == "json":
+        typer.echo(json.dumps(st, indent=2))
+        return
+    console.print(
+        f"[neon]Last {days} days[/neon] · {st['sessions']} sessions in {st['projects']} projects · "
+        f"{st['model_calls']} model calls · ${st['cost_usd']:.3f} · "
+        f"{st['input_tokens']:,} in / {st['output_tokens']:,} out"
+    )
+    for label, key in (
+        ("runs", "runs"),
+        ("models", "models"),
+        ("failure reasons", "failure_reasons"),
+        ("guards fired", "guards"),
+        ("skipped tools", "skipped_tools"),
+        ("verifier verdicts", "verifier_verdicts"),
+    ):
+        if st[key]:
+            console.print(f"  {label}: " + ", ".join(f"{k} ×{v}" for k, v in st[key].items()))
+    if st["breakers_opened"]:
+        console.print(f"  tool breakers opened: {st['breakers_opened']}")
+
+
+@app.command("import")
+def import_cmd(
+    paths: list[Path] = typer.Argument(..., help="Claude Code transcript files or directories."),
+    since_days: int | None = typer.Option(
+        None, "--since-days", help="Only files modified recently."
+    ),
+) -> None:
+    """Import another harness's sessions so search, stats, trace and meta span both (U6)."""
+    import time as _time
+
+    from trendlab.config.loader import load_config
+    from trendlab.providers.base import TokenUsage
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.costs import CostTracker
+    from trendlab.telemetry.importers import import_claude_code
+
+    tracker = CostTracker(load_config())
+
+    def price(model, inp, out, cached):
+        return tracker.price(
+            model, TokenUsage(input_tokens=inp, output_tokens=out, cached_input_tokens=cached)
+        )
+
+    files: list[Path] = []
+    for p in paths:
+        p = p.expanduser()
+        files += sorted(p.rglob("*.jsonl")) if p.is_dir() else [p]
+    if since_days is not None:
+        cutoff = _time.time() - since_days * 86400
+        files = [f for f in files if f.stat().st_mtime >= cutoff]
+    store = SessionStore(trendlab_home() / "sessions.db")
+    done = skipped = 0
+    try:
+        for f in files:
+            try:
+                r = import_claude_code(store, f, pricing=price)
+            except Exception as exc:  # noqa: BLE001 — one bad file never stops the batch
+                console.print(f"[warning]{f.name}: {exc}[/warning]")
+                continue
+            if r.get("skipped"):
+                skipped += 1
+            else:
+                done += 1
+                console.print(
+                    f"  {r['file']} → {r['session']} · {r['messages']} msgs · "
+                    f"{r['tool_calls']} tool calls · {r['model_calls']} model calls"
+                )
+    finally:
+        store.close()
+    console.print(f"[ok]imported {done}[/ok], skipped {skipped} (already imported or empty)")
+
+
 @app.command("doctor")
 def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
     """Check config, keys, providers, tools and remote settings; explain anything that is off."""

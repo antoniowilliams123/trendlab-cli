@@ -279,6 +279,170 @@ class SessionStore:
             )
             self._conn.commit()
 
+    def search(
+        self, text: str, project_path: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Exact (substring) search over stored messages and events (U6)."""
+        like = f"%{text}%"
+        out: list[dict[str, Any]] = []
+        for table, col, kind in (("messages", "payload", "message"), ("events", "data", "event")):
+            role_col = "m.role" if table == "messages" else "m.type"
+            q = (
+                f"SELECT m.session_id, m.ts, {role_col} AS role, m.{col} AS body, s.project_path "
+                f"FROM {table} m JOIN sessions s ON s.id = m.session_id WHERE m.{col} LIKE ?"
+            )
+            params: list[Any] = [like]
+            if project_path:
+                q += " AND s.project_path = ?"
+                params.append(project_path)
+            q += " ORDER BY m.id DESC LIMIT ?"
+            params.append(limit)
+            with self._lock:
+                rows = self._conn.execute(q, params).fetchall()
+            for r in rows:
+                body = r["body"] or ""
+                i = max(0, body.lower().find(text.lower()))
+                out.append(
+                    {
+                        "session_id": r["session_id"],
+                        "ts": r["ts"],
+                        "kind": kind,
+                        "role": r["role"],
+                        "project": r["project_path"],
+                        "snippet": body[max(0, i - 80) : i + 120].replace("\n", " "),
+                    }
+                )
+        out.sort(key=lambda r: r["ts"], reverse=True)
+        return out[:limit]
+
+    def prune(self, *, older_than_days: int, keep_latest: int = 50) -> dict[str, int]:
+        """Retention (U6): delete sessions older than the window and their rows, always keeping
+        the ``keep_latest`` most recent sessions."""
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        counts = {"sessions": 0, "messages": 0, "events": 0, "model_calls": 0}
+        with self._lock:
+            keep = {
+                r["id"]
+                for r in self._conn.execute(
+                    "SELECT id FROM sessions ORDER BY updated_at DESC LIMIT ?", (keep_latest,)
+                ).fetchall()
+            }
+            old = [
+                r["id"]
+                for r in self._conn.execute(
+                    "SELECT id FROM sessions WHERE updated_at < ?", (cutoff,)
+                ).fetchall()
+                if r["id"] not in keep
+            ]
+            tables = [
+                r["name"]
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            ]
+            for sid in old:
+                for table in (
+                    "messages",
+                    "events",
+                    "model_calls",
+                    "checkpoints",
+                    "approvals",
+                    "session_state",
+                ):
+                    if table not in tables:
+                        continue
+                    cur = self._conn.execute(f"DELETE FROM {table} WHERE session_id=?", (sid,))
+                    if table in counts:
+                        counts[table] += cur.rowcount
+                self._conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
+                counts["sessions"] += 1
+            self._conn.commit()
+        return counts
+
+    def prune_session(self, session_id: str) -> None:
+        """Delete one session and all its rows (re-import, explicit delete)."""
+        with self._lock:
+            tables = {
+                r["name"]
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            for table in (
+                "messages",
+                "events",
+                "model_calls",
+                "checkpoints",
+                "approvals",
+                "session_state",
+            ):
+                if table in tables:
+                    self._conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+            self._conn.commit()
+
+    def stats(self, days: int = 7) -> dict[str, Any]:
+        """Session analytics (U6): volume, spend, outcomes and failure reasons over a window."""
+        from collections import Counter
+        from datetime import UTC, datetime, timedelta
+
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        with self._lock:
+            sessions = self._conn.execute(
+                "SELECT id, project_path, model FROM sessions WHERE updated_at >= ?", (since,)
+            ).fetchall()
+            usage = self._conn.execute(
+                "SELECT COUNT(*) AS calls, COALESCE(SUM(cost_usd),0) AS cost, "
+                "COALESCE(SUM(input_tokens),0) AS inp, COALESCE(SUM(output_tokens),0) AS outp "
+                "FROM model_calls WHERE ts >= ?",
+                (since,),
+            ).fetchone()
+            events = self._conn.execute(
+                "SELECT type, data FROM events WHERE ts >= ? AND type IN ('run.completed',"
+                "'run.failed','guard.fired','tool.skipped','verify.verdict','tool.circuit_opened')",
+                (since,),
+            ).fetchall()
+        outcomes: Counter[str] = Counter()
+        reasons: Counter[str] = Counter()
+        guards: Counter[str] = Counter()
+        skipped: Counter[str] = Counter()
+        verdicts: Counter[str] = Counter()
+        breakers = 0
+        for e in events:
+            d = json.loads(e["data"]) if e["data"] else {}
+            t = e["type"]
+            if t == "run.completed":
+                outcomes["completed"] += 1
+            elif t == "run.failed":
+                outcomes["failed"] += 1
+                reasons[str(d.get("stop_reason") or "")[:60]] += 1
+            elif t == "guard.fired":
+                guards[str(d.get("guard"))] += 1
+            elif t == "tool.skipped":
+                skipped[str(d.get("reason"))] += 1
+            elif t == "verify.verdict":
+                verdicts[str(d.get("verdict"))] += 1
+            else:
+                breakers += 1
+        return {
+            "days": days,
+            "sessions": len(sessions),
+            "projects": len({s["project_path"] for s in sessions}),
+            "models": dict(Counter(s["model"] for s in sessions)),
+            "model_calls": usage["calls"],
+            "cost_usd": round(usage["cost"], 4),
+            "input_tokens": usage["inp"],
+            "output_tokens": usage["outp"],
+            "runs": dict(outcomes),
+            "failure_reasons": dict(reasons.most_common(8)),
+            "guards": dict(guards.most_common(10)),
+            "skipped_tools": dict(skipped.most_common(8)),
+            "verifier_verdicts": dict(verdicts),
+            "breakers_opened": breakers,
+        }
+
     def messages(self, session_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(

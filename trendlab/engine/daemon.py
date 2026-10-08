@@ -94,6 +94,9 @@ class Engine:
             )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
+        if job == "prune":
+            stamp = now.strftime("%Y-%m-%d")
+            return not warm and now.hour >= 4 and self.state.get("prune_day") != stamp
         if job == "canary":
             if not ecfg.canary:
                 return False
@@ -129,6 +132,18 @@ class Engine:
                 result["meta"] = await meta_scan(self.inbox, self.config)
             elif job == "digest":
                 result["sent"] = await self.send_digest()
+            elif job == "prune":
+                from trendlab.sessions.store import SessionStore
+
+                self.state["prune_day"] = now.strftime("%Y-%m-%d")
+                store = SessionStore(trendlab_home() / "sessions.db")
+                try:
+                    result["pruned"] = store.prune(
+                        older_than_days=self.config.sessions.retention_days,
+                        keep_latest=self.config.sessions.keep_latest,
+                    )
+                finally:
+                    store.close()
             elif job == "canary":
                 from trendlab.engine.jobs import canary_run
 
@@ -181,7 +196,14 @@ class Engine:
                 resp = {
                     "text": digest(self.inbox.list(status="open", limit=3), self.inbox.counts())
                 }
-            elif cmd == "run" and req.get("job") in {"watch", "sleep", "meta", "digest", "canary"}:
+            elif cmd == "run" and req.get("job") in {
+                "watch",
+                "sleep",
+                "meta",
+                "digest",
+                "canary",
+                "prune",
+            }:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
                 resp = {"stopping": True}
@@ -209,7 +231,7 @@ class Engine:
         try:
             while not self._stop.is_set():
                 now = self.now()
-                for job in ("watch", "sleep", "meta", "digest", "canary"):
+                for job in ("watch", "sleep", "meta", "digest", "canary", "prune"):
                     if self.due(job, now):
                         await self.run_job(job)
                 try:
