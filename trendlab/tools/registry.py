@@ -57,6 +57,7 @@ def default_registry() -> ToolRegistry:
     from trendlab.tools.git import GitDiffTool, GitLogTool, GitStatusTool
     from trendlab.tools.shell import ShellTool
     from trendlab.tools.tests import RunTestsTool
+    from trendlab.tools.views.inspect import InspectOutputTool
     from trendlab.tools.web import WebFetchTool, WebSearchTool
 
     reg = ToolRegistry()
@@ -77,6 +78,7 @@ def default_registry() -> ToolRegistry:
         WebFetchTool(),
         WebSearchTool(),
         BackgroundProcessTool(),
+        InspectOutputTool(),
     ):
         reg.register(tool)
     return reg

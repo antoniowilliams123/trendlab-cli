@@ -60,6 +60,25 @@ class ContextConfig(BaseModel):
     min_compaction_tokens: int = 1500
     repo_map_budget_tokens: int = 3_000
     recent_messages_budget_tokens: int = 60_000
+    # Tiered tool output (cheap-model spec §2): per-tool token budgets for what the lead model
+    # sees. Output above the budget is parsed into facts (Tier 1) + targeted detail (Tier 2);
+    # the full text goes to .trendlab/traces/<call_id>.log for ``inspect_output``.
+    tool_budgets: dict[str, int] = Field(
+        default_factory=lambda: {
+            "shell": 1500,
+            "run_tests": 1200,
+            "search_text": 1000,
+            "list_directory": 600,
+            "read_file": 2500,
+            "web_fetch": 1500,
+            "git_diff": 1500,
+            "git_log": 800,
+            "git_status": 600,
+            "glob": 600,
+        }
+    )
+    # Unparsed output larger than this (tokens) is handed to the screener model for tiering.
+    screener_threshold_tokens: int = 3000
 
 
 class GitConfig(BaseModel):

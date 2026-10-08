@@ -74,6 +74,8 @@ async def run_fixture(
             await tl.stop()
         after = suite_passes(root)
         changed = set(result.changed_files)
+        lead = [r for r in (tl.costs.records if tl.costs else []) if r.role == "main"]
+        tokens_lead = sum(r.input_tokens + r.output_tokens for r in lead)
         return {
             "fixture": name,
             "model": model,
@@ -85,6 +87,7 @@ async def run_fixture(
             "tool_calls": tool_calls,
             "iterations": result.iterations,
             "cost_usd": round(result.cost_usd, 4),
+            "tokens_lead": tokens_lead,
             "elapsed_s": round(time.monotonic() - started, 1),
             "files_changed": len(changed),
             "unnecessary_changes": sorted(changed - EXPECTED_CHANGED[name]),

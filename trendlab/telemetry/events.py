@@ -73,6 +73,7 @@ class EventType(StrEnum):
     TOOL_COMPLETED = "tool.completed"
     TOOL_SKIPPED = "tool.skipped"  # denied / invalid / unknown / blocked: never ran
     TOOL_OUTPUT = "tool.output"  # live tail of a running command (transient: not persisted)
+    TOOL_OUTPUT_TIERED = "tool.output_tiered"  # large result reduced to facts + detail
     FILE_CHANGED = "file.changed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"

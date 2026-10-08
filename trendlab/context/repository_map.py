@@ -89,7 +89,8 @@ class RepositoryMap:
     def build(self, *, use_cache: bool = True) -> RepositoryMap:
         paths = self.rules.walk(self.root, max_files=self.max_files + 1)
         self.truncated = len(paths) > self.max_files
-        paths = paths[: self.max_files]
+        # When over the limit keep the shallow files (sources at the root beat a deep data dump).
+        paths = sorted(paths, key=lambda p: (len(p.parts), p.as_posix()))[: self.max_files]
         stamps = {p.relative_to(self.root).as_posix(): p.stat().st_mtime_ns for p in paths}
         cached = self._load_cache() if use_cache else None
         self.files = sorted(stamps)
@@ -150,7 +151,8 @@ class RepositoryMap:
                 f"Tests: {len(self.test_files)} files (e.g. {', '.join(self.test_files[:3])})"
             )
         lines.append("Files:")
-        tree = _tree(self.files)
+        keep = set(self.symbols) | set(self.config_files) | set(self.entry_points)
+        tree = _tree(self.files, keep=keep)
         for line in tree:
             lines.append(line)
             rel = line.strip()
@@ -170,11 +172,50 @@ class RepositoryMap:
         return text
 
 
-def _tree(files: list[str]) -> list[str]:
+FOLD_AT = 12  # a directory with more files than this is folded to a few names + counts
+
+
+def _fold(files: list[str], keep: set[str], fold_at: int = FOLD_AT) -> list[str | tuple[str, str]]:
+    """Crowded directories (data dumps, fixtures, assets) become a one-line summary instead of
+    hundreds of names; source files with symbols, config and entry points are always listed."""
+    by_dir: dict[str, list[str]] = {}
+    for rel in files:
+        by_dir.setdefault(rel.rsplit("/", 1)[0] if "/" in rel else "", []).append(rel)
+    out: list[str | tuple[str, str]] = []
+    for d, members in by_dir.items():
+        if len(members) <= fold_at:
+            out.extend(members)
+            continue
+        shown = [m for m in members if m in keep]
+        rest = [m for m in members if m not in keep]
+        shown.extend(rest[: max(0, 4 - len(shown))])
+        hidden = [m for m in members if m not in shown]
+        out.extend(shown)
+        if hidden:
+            exts: dict[str, int] = {}
+            for m in hidden:
+                name = m.rsplit("/", 1)[-1]
+                exts["." + name.rsplit(".", 1)[-1] if "." in name else "(no ext)"] = (
+                    exts.get("." + name.rsplit(".", 1)[-1] if "." in name else "(no ext)", 0) + 1
+                )
+            summary = ", ".join(
+                f"{e} ×{n}" for e, n in sorted(exts.items(), key=lambda kv: -kv[1])[:4]
+            )
+            out.append((d, f"… +{len(hidden)} more files ({summary}); use glob/list_directory"))
+    return out
+
+
+def _tree(files: list[str], keep: set[str] | None = None) -> list[str]:
     """Render paths as an indented tree; each file line's stripped text is its relative path."""
     out: list[str] = []
     seen_dirs: set[str] = set()
-    for rel in files:
+    for item in _fold(files, keep or set()):
+        if isinstance(item, tuple):
+            d, summary = item
+            depth = d.count("/") + 1 if d else 0
+            out.append("  " * depth + summary)
+            continue
+        rel = item
         parts = rel.split("/")
         for depth in range(len(parts) - 1):
             d = "/".join(parts[: depth + 1])

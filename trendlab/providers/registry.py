@@ -7,7 +7,16 @@ from trendlab.providers.base import ModelProvider, ProviderError
 from trendlab.providers.openai_compatible import OpenAICompatibleProvider
 from trendlab.providers.structured import StructuredToolProvider
 
-ROLES = ("default", "planning", "explorer", "debugger", "tester", "reviewer", "summarizer")
+ROLES = (
+    "default",
+    "planning",
+    "explorer",
+    "debugger",
+    "tester",
+    "reviewer",
+    "summarizer",
+    "screener",
+)
 
 
 def parse_model_ref(ref: str) -> tuple[str, str]:

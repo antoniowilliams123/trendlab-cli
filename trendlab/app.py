@@ -233,6 +233,12 @@ class TrendLabApp:
         registry.register(TaskTool(self.plan, self.events))
         registry.register(AskUserTool(self.approvals))
         self.tools = ToolRuntime(registry, self.engine, self.approvals, self.events, ctx)
+        self.tools.tool_budgets = dict(self.config.context.tool_budgets)
+        self.tools.screener_threshold_tokens = self.config.context.screener_threshold_tokens
+        self.tools.screener = self._screen_output
+        from trendlab.tools.views.tiering import Baselines
+
+        self.tools.baselines = Baselines(self.project_root)
         self.tools.on_before_mutation = self._before_mutation
         self.plan_gate = PlanGate(
             self.config.plan_gate, self.approvals, self.plan, self.events, self.project_root
@@ -574,6 +580,28 @@ class TrendLabApp:
             )
         else:
             self.checkpoints.extend(self._run_checkpoint["id"], files)
+
+    async def _screen_output(self, text: str, meta: dict[str, Any]):
+        """Screener (cheap-model spec §3.1): a cheap model turns an unparsed, oversized tool
+        result into Tier 1 facts + Tier 2 detail. Returns None when unavailable."""
+        if self.gateway is None or self.costs is None:
+            return None
+        from trendlab.tools.views.screener import screen
+
+        ref = resolve_role(self.config, "screener", self.model_ref)
+
+        async def call(messages):
+            response, used = await self.gateway.complete(ref, messages, None)
+            self.costs.record(
+                used,
+                response.usage,
+                0,
+                role="screener",
+                local=self.gateway.provider(used).capabilities().local,
+            )
+            return response.text
+
+        return await screen(call, text, meta)
 
     async def _summarize(self, messages: list[dict[str, Any]]) -> str:
         assert self.gateway and self.costs
@@ -983,3 +1011,4 @@ class TrendLabApp:
             "plan_gate": self.plan_gate.status() if self.plan_gate else None,
             "pending": len(self.approvals.pending()) if self.approvals else 0,
         }
+

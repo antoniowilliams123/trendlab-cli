@@ -46,6 +46,11 @@ class ToolRuntime:
         self.validation_runs: list[dict[str, Any]] = []
         self.hooks: Any = None  # trendlab.hooks.HookRunner, attached by the app
         self.diagnostics: Any = None  # trendlab.tools.diagnostics.Diagnostics, attached by the app
+        # Tiered output (cheap-model spec §2): budgets + optional screener, attached by the app.
+        self.tool_budgets: dict[str, int] = {}
+        self.screener: Any = None  # async (text, meta) -> ToolOutput | None
+        self.screener_threshold_tokens: int = 3000
+        self.baselines: Any = None  # trendlab.tools.views.tiering.Baselines
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -139,7 +144,7 @@ class ToolRuntime:
                     f"BLOCKED by hook: {blocked}",
                     detail=_detail(tool.name, call.arguments, perm),
                 )
-        result = await self._run(tool, args, perm)
+        result = await self._run(tool, args, perm, call_id=call.id)
         if self.hooks is not None:
             await self.hooks.after_tool(tool.name, perm, result)
         return result
@@ -213,7 +218,9 @@ class ToolRuntime:
             self.engine.add_project_rule(perm, Decision.ALLOW)
         return None
 
-    async def _run(self, tool: Tool, args: BaseModel, perm: PermissionRequest) -> ToolResult:
+    async def _run(
+        self, tool: Tool, args: BaseModel, perm: PermissionRequest, call_id: str = ""
+    ) -> ToolResult:
         self._set_state("RUNNING_TOOL")
         started = time.monotonic()
         self.events.emit(
@@ -285,6 +292,7 @@ class ToolRuntime:
             result = ToolResult(ok=False, output=f"tool error: {exc.__class__.__name__}: {exc}")
         finally:
             self.ctx.progress = None
+        tiered = await self._tier(tool.name, args, result, call_id or f"{tool.name}-{int(started)}")
         out_lines = [ln for ln in (result.output or "").splitlines() if ln.strip()]
         self.events.emit(
             EventType.TOOL_COMPLETED,
@@ -299,6 +307,19 @@ class ToolRuntime:
             error=(out_lines[0] if out_lines else "")[:300] if not result.ok else "",
             **{k: v for k, v in result.data.items() if k in {"exit_code", "sha256"}},
         )
+        if tiered is not None:
+            self.events.emit(
+                EventType.TOOL_OUTPUT_TIERED,
+                session_id=self.ctx.session_id,
+                tool=tool.name,
+                call_id=call_id,
+                parser=tiered.parser,
+                kind=tiered.kind,
+                raw_chars=result.data.get("raw_chars", 0),
+                shown_chars=len(result.output or ""),
+                tier3_ref=tiered.tier3_ref,
+                anomaly=tiered.stats.get("anomaly"),
+            )
         if result.ok and tool.name in MUTATING_TOOLS:
             self.events.emit(
                 EventType.FILE_CHANGED,
@@ -320,7 +341,7 @@ class ToolRuntime:
                 except Exception:  # noqa: BLE001 — diagnostics never break an edit
                     report = ""
                 if report:
-                    result.output = f"{result.output}\n\n{report}"
+                    result.output = f"{result.output}\n\n{self._lint_view(report)}"
                     result.data["diagnostics"] = report
                     self.events.emit(
                         EventType.DIAGNOSTICS,
@@ -342,6 +363,35 @@ class ToolRuntime:
                 }
             )
         return result
+
+    async def _tier(self, tool: str, args: BaseModel, result: ToolResult, call_id: str):
+        if not self.tool_budgets:
+            return None
+        from trendlab.tools.views.tiering import tier_result
+
+        try:
+            return await tier_result(
+                tool=tool,
+                args=args.model_dump(),
+                result=result,
+                call_id=call_id,
+                project_root=self.ctx.project_root,
+                budgets=self.tool_budgets,
+                screener=self.screener,
+                screener_threshold_tokens=self.screener_threshold_tokens,
+                baselines=self.baselines,
+            )
+        except Exception:  # noqa: BLE001 — tiering never breaks a tool result
+            return None
+
+    def _lint_view(self, report: str) -> str:
+        """Diagnostics after an edit, shown as a lint view (counts by code, grouped by file)."""
+        limit = (self.tool_budgets.get("diagnostics") or 400) * 4
+        if len(report) <= limit:
+            return report
+        from trendlab.tools.views import tier_output
+
+        return tier_output(report, {"hint": "lint"}).render(limit)
 
     def describe(self) -> dict[str, Any]:
         return {"tools": self.registry.names(), "mode": self.engine.mode.value}

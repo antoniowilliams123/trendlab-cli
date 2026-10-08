@@ -73,6 +73,12 @@ def format_event(event: Event) -> str | None:
             + (f" [{GREY}]{_short(what)}[/]" if what else "")
             + (f"\n    [{GREY}]{_short(message, 160)}[/]" if message else "")
         )
+    if t == EventType.TOOL_OUTPUT_TIERED:
+        return (
+            f"  [{GREY}]⊟ {d.get('tool')} output {d.get('raw_chars')} → {d.get('shown_chars')} "
+            f"chars ({d.get('parser')}); full text kept for inspect_output[/]"
+            + (f"\n    [{AMBER}]{escape(str(d.get('anomaly')))}[/]" if d.get("anomaly") else "")
+        )
     if t == EventType.DIAGNOSTICS:
         report = str(d.get("report") or "")
         body = [ln for ln in report.splitlines()[1:] if ln.strip()][:3]

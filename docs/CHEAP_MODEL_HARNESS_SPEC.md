@@ -133,8 +133,10 @@ One question with a fixed schema:
 ```
 `fix` returns findings to the lead for one round (configurable `verification.max_rounds = 1`);
 `fail` stops the run with the findings in the footer. Model: `routing.verifier`, defaulting to the
-escalation model; the owner's default is DeepSeek V4 Pro. Config `verification.mode = required |
-advisory | off`; ambient runs (§7) may not set `off`.
+escalation model; the owner's default is DeepSeek V4 Pro. Config `verification.verifier = required |
+advisory | off` (built as `verifier`, not `mode`, because `workspace` lives in the same table);
+with neither `routing.verifier` nor `routing.escalation` configured the review is off (a
+same-model self-review in the same session is not independent). Ambient runs (§7) may not set `off`.
 
 ### 3.3 Planner call
 When the task is non-trivial (heuristic: prompt > 200 chars, or mentions ≥ 2 files, or the lead's
@@ -332,6 +334,61 @@ the owner's sessions without crashes.
 Each phase: its own commits with tests, spec section updated the same night, Telegram report,
 no change to locked rules (auto default, hard boundaries, irreversible prompt, audit, checkpoint,
 jet-black/neon UI).
+
+### 9.1 Status
+
+| Phase | State | Landed |
+|---|---|---|
+| P1 Tiering | **done 2026-10-07** | `trendlab/tools/views/` (ToolOutput, 8 parsers, generic fallback, `render(budget)`), `tiering.py` (budgets, baselines, screener hand-off, traces), `inspect.py` (`inspect_output` tool), `screener.py` (≤300-token prompt, strict JSON), `[context] tool_budgets` + `screener_threshold_tokens`, `screener` routing role, `tool.output_tiered` event, diagnostics rendered as a lint view, `tokens_lead` in the benchmark report. 12 tests (`tests/test_tiered_output.py`). Measurement in §9.2. |
+| P2 Verify | next | — |
+| P3 Steps | queued | — |
+| P4 Cocktail | queued | — |
+| P5 Suite | queued | — |
+| P6 Daemon | queued | — |
+
+Decisions taken while building P1:
+
+- `read_file` is **never** tiered. The model edits against what it read, so a file view must be
+  exact; its budget is the existing 400-line default range. The `read_file` budget entry is kept
+  for completeness only.
+- Tiering only triggers when the raw output exceeds the tool's budget. Small results are passed
+  verbatim, so the fixtures A–E (tiny repos, short test runs) are almost unaffected; the win
+  shows on noisy commands (full suites, big listings, broad searches). See §9.2.
+- Parsers are keyed by content, with a `hint` from the tool name (`list_directory`→listing,
+  `search_text`→search, `web_fetch`→http, `git_*`→diff/status/log) tried first. A parser that
+  raises is skipped, never fatal.
+- Tier 3 lives in `.trendlab/traces/<call_id>.log` (last 200 kept). `inspect_output` validates
+  the id (`[A-Za-z0-9_.:-]`), so a model cannot read outside the trace folder.
+- Baselines: `.trendlab/baselines.json` remembers the last test total/duration; Tier 1 gets a
+  `⚠ anomaly` line when the run shrank by >20 % or slowed 3×.
+- The screener is consulted only for *unparsed* output above the threshold, through the normal
+  gateway (retry/fallback/cost record under role `screener`); any failure falls back to the
+  generic head+tail summary.
+
+### 9.2 P1 measurement (Flash, fixtures A–E, tiering off vs on)
+
+Lead-role tokens (input + output of the `main` role, all calls of a run), DeepSeek Flash,
+`TRENDLAB_SANDBOX=off`, one run per cell unless noted.
+
+| Repo | Tiering off | Tiering on | Δ |
+|---|---|---|---|
+| Fixtures A–E (tiny repos) | 17.8k / 17.2k / 22.5k / 28.7k / 39.2k | 22.2k / 22.5k / 32.9k / 39.3k / 16.7k | noise only: **no tool output exceeded a budget**, so nothing was tiered; the spread is Flash's own run-to-run variance (4–11 tool calls) |
+| Noisy repo (1 500-file `data/`, 200-test suite, 1 failing), before the repo-map fold | 104.9k / 82.3k / 80.1k / 98.3k (avg 91.4k) | 85.6k / 74.8k / 95.0k / 83.4k (avg 84.7k) | −7 % |
+| Noisy repo, after the repo-map fold (commit of P1) | 73.0k / 78.5k (avg 75.8k) | 60.8k / 54.3k (avg 57.6k) | **−24 %** vs off, **−37 %** vs the pre-P1 baseline |
+
+What the diagnostic run showed (per-call token breakdown on the noisy repo):
+
+- the first call already costs ~7.4k tokens before any tool runs: ~3k of tool schemas, ~3k of
+  repository map, the rest system prompt. The map listed 400 `data/sample_NNNN.csv` names on
+  every call and, worse, **truncation dropped `test_calc.py`** (sorted after the data dump).
+  Fix shipped with P1: crowded directories fold to four names + extension counts, and
+  truncation keeps shallow files first.
+- the 1 500-entry listing (8.0k chars) became a 409-char view; Flash itself pipes test runs
+  through `| tail -35`, so run outputs were already small.
+- the remaining cost is per-call baseline × number of calls. The P1 exit criterion (−40 %)
+  is met only against the pre-P1 baseline on noisy repos; on A–E there is nothing to tier.
+  Next levers are in P4 (Flash prompt layer: shorter tool descriptions, fewer calls) and P3
+  (step-scoped context).
 
 ---
 

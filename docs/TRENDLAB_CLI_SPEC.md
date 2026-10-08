@@ -3969,6 +3969,13 @@ decisions taken after the original specification. Newest last.
 
 ------------------------------------------------------------------------
 
+### 2026-10-07 — Cheap-model programme, Phase 1 (tiered tool output)
+-   `trendlab/tools/views/` package: `ToolOutput`, eight parsers + generic fallback,
+    `tiering.py` (budgets, baselines, screener hand-off, traces), `inspect.py`
+    (`inspect_output` tool), `screener.py`. Runtime hook in `ToolRuntime._tier`,
+    `[context] tool_budgets` / `screener_threshold_tokens`, `screener` role,
+    `tool.output_tiered` event, `tokens_lead` benchmark metric. See §93.1.
+
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 
 Everything in this section is implemented and tested. Config keys are in
@@ -4482,4 +4489,34 @@ escalation (92.2), streaming tool output (92.3), live failure drills
 re-scored: the three "lowest" measures from the assessment (learning
 from failure 6→8, wrong model for the job 7→9, mileage on fallback and
 restart paths) moved; overall 8.5 → 9.
+
+## 93. Cheap-Model-First Programme (in progress, started 2026-10-07)
+
+The programme defined in `docs/CHEAP_MODEL_HARNESS_SPEC.md` (six phases) is being
+delivered phase by phase; this section is its record in the main spec and will absorb
+the programme spec in full when the last phase lands. Locked rules are unchanged.
+
+### 93.1 Phase 1 — Tiered tool output (2026-10-07)
+
+- **Views package** `trendlab/tools/views/`: `ToolOutput(tier1, tier2, tier3_ref, stats,
+  kind, parser)` with `render(budget_chars)`; parsers `tests_py` (pytest/unittest),
+  `tests_js` (jest/vitest/mocha), `tests_rs_go` (cargo/go), `lint` (ruff/mypy/pyright/
+  eslint/tsc/go vet), `listing`, `search`, `gitview` (diff/status/log), `http`
+  (web_fetch); `generic` fallback (counts, first error-like line, head+tail).
+- **Runtime**: `ToolRuntime._tier` runs after every tool call; when a tiered tool's raw
+  output exceeds `[context] tool_budgets[tool]` (tokens, ×4 chars) the output is replaced
+  by Tier 1 + as much Tier 2 as fits + a pointer, the full text goes to
+  `.trendlab/traces/<call_id>.log`, `result.data["tiers"]` keeps the structured view and a
+  `tool.output_tiered` event is emitted (parser, kind, raw/shown chars, anomaly).
+  `read_file` is never tiered. Diagnostics after edits render as a lint view.
+- **`inspect_output(call_id, query|lines, max_chars)`**: read-only, parallel-safe; regex
+  query returns matching lines with two lines of context; `lines="a-b"` returns a range.
+- **Screener** (`views/screener.py`): for unparsed output above
+  `screener_threshold_tokens` (3000) the app asks the `screener` role (routing, defaults to
+  the session model) for `{"tier1","tier2"}` JSON with a ≤300-token instruction; cost is
+  recorded under role `screener`; any failure → generic summary.
+- **Baselines** (`.trendlab/baselines.json`): last test total/duration; Tier 1 flags a run
+  that shrank >20 % or slowed 3×.
+- **Benchmark**: `tokens_lead` (input+output tokens of the lead role) added to the report.
+- Tests: `tests/test_tiered_output.py` (12). Suite 316.
 
