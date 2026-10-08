@@ -18,3 +18,28 @@ def test_calibration_converges_to_the_observed_ratio():
 def test_message_tokens_uses_the_ratio():
     m = {"role": "user", "content": "a" * 3000}
     assert message_tokens(m) == 754 and message_tokens(m, 3.0) == 1004
+
+
+def test_compaction_cap_applies_even_with_a_huge_window():
+    from trendlab.config.schema import ContextConfig
+    from trendlab.context.manager import ContextManager
+    from trendlab.telemetry.events import EventBus
+
+    cm = ContextManager(
+        ContextConfig(compact_above_tokens=5000),
+        EventBus(),
+        "s",
+        system_prompt="sys",
+        context_window=1_000_000,
+    )
+    cm.messages = [{"role": "user", "content": "x" * 4000} for _ in range(6)]  # ~6k tokens
+    assert cm.needs_compaction()  # 75% of 1M would never trigger
+    off = ContextManager(
+        ContextConfig(compact_above_tokens=0),
+        EventBus(),
+        "s",
+        system_prompt="sys",
+        context_window=1_000_000,
+    )
+    off.messages = list(cm.messages)
+    assert not off.needs_compaction()

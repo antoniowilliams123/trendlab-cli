@@ -114,7 +114,14 @@ class ContextManager:
         if not self.config.auto_compact:
             return False
         threshold = self.context_window * self.config.compact_threshold
-        min_history = max(self.config.min_compaction_tokens, int(self.context_window * 0.1))
+        cap = getattr(self.config, "compact_above_tokens", 0) or 0
+        if cap:
+            # cost cap (U31): a 1M-token window would otherwise let a long session grow to
+            # hundreds of thousands of tokens per call before compacting
+            threshold = min(threshold, cap)
+        min_history = max(
+            self.config.min_compaction_tokens, int(min(threshold, self.context_window) * 0.1)
+        )
         return self.estimate_full() >= threshold and self.history_tokens() >= min_history
 
     # -- compaction -------------------------------------------------------------------------------

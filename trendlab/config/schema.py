@@ -62,6 +62,9 @@ class ContextConfig(BaseModel):
     auto_compact: bool = True
     # Compact when the estimated prompt exceeds this fraction of the model's context window.
     compact_threshold: float = Field(default=0.75, ge=0.1, le=0.95)
+    # Compact above this many tokens whatever the window (0 = off). Set high on purpose: long
+    # sessions mostly hit the provider's prompt cache, which compaction resets.
+    compact_above_tokens: int = Field(default=64_000, ge=0)
     default_context_window: int = 128_000
     repo_map_max_files: int = 400
     # Never compact a conversation smaller than this (tokens); prevents compaction churn.
