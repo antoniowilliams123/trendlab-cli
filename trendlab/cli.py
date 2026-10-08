@@ -1825,6 +1825,44 @@ def arch_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("mutate")
+def mutate_cmd(
+    files: list[Path] = typer.Argument(..., help="Source files to mutate."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    function: list[str] = typer.Option([], "--function", "-f", help="Only these functions."),
+    limit: int = typer.Option(20, "--limit", help="Mutants per file."),
+    test_command: str | None = typer.Option(None, "--test", help="Default: the project's."),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Mutation testing (U25): small code changes the tests should catch; survivors are behaviour
+    no test pins down (missed edge cases). Files are always restored."""
+    from trendlab.agent.mutation import run
+    from trendlab.context.validation import detect_validation_commands
+    from trendlab.engine.watch import project_env
+
+    root = project.resolve()
+    cmd = test_command or detect_validation_commands(root).get("test")
+    if not cmd:
+        raise typer.BadParameter("no test command found; pass --test")
+    results = []
+    for f in files:
+        rel = str(f.resolve().relative_to(root)) if f.is_absolute() else str(f)
+        results.append(
+            run(root, rel, cmd, functions=set(function) or None, limit=limit, env=project_env(root))
+        )
+    if output == "json":
+        typer.echo(json.dumps(results, indent=2))
+        return
+    for r in results:
+        score = f"{r['score']:.0%}" if r["score"] is not None else "n/a"
+        console.print(
+            f"[neon]{r['file']}[/neon]: {r['killed']}/{r['mutants']} mutants killed ({score}) "
+            f"in {r['seconds']}s"
+        )
+        for sv in r["survivors"]:
+            console.print(f"  survived line {sv['line']}: {sv['kind']} {sv['change']}")
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
