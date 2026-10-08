@@ -4850,6 +4850,20 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   83 %, MRR 0.88.
 - Ratings: mean 7.80, 347 terms still below 9.
 
+- **U20 Deterministic replay** (`ca50dc8`, `5e76e9d`): cassettes record every model response
+  (all roles) and every raw command/web result, including the harness's own step validations;
+  `trendlab replay <id> --deterministic` rebuilds the pre-session project from checkpoints and
+  replays at $0; `--recent N` is a regression suite of real sessions. Corpus of 8 live Flash
+  sessions: 8/8 identical, 70 model calls served.
+- **U21 PR workflow** (`0bc40cc`): `trendlab pr list` (next action per PR, quickest unblocking
+  first), `pr stats` (merged/week, hours to merge), `pr workspace N [--agent]`. Read-only to
+  GitHub. Live on cli/cli: 30 PRs triaged, 54 merged in 30 days, median 15.6 h.
+- **U22 Compaction eval** (`0dc8673`): 30 planted facts in long transcripts; Flash: full context
+  97 %, model compaction 100 % at 14 % of the tokens; the no-model fallback kept 0 % and was
+  rewritten to keep user words, agent notes and error/test lines: 100 % at 9 %.
+- **Re-rating pass**: terms rated before the programme re-rated where measured work now
+  supports it (part 7 of the ledger). Mean 8.05; 260 terms below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

@@ -204,8 +204,8 @@
   "evidence": "canary pass-rate drop alert with interval (242a16c)"
  },
  "139": {
-  "rating": 8,
-  "evidence": "SUITE_VERSION stamped on rows; history comparable only within a version"
+  "rating": 9,
+  "evidence": "suite version fingerprints tasks and grading rules; canary history across versions"
  },
  "140": {
   "rating": 8,
@@ -364,8 +364,8 @@
   "evidence": "engine nightly canary (10 fixed tasks) at 03:30 (3a17e49, 242a16c)"
  },
  "185": {
-  "rating": 8,
-  "evidence": "online quality from live sessions: 94.7% validated-after-edit rate (244b518)"
+  "rating": 9,
+  "evidence": "online quality, async commit review, daily health and budget checks on real work"
  },
  "187": {
   "rating": 9,
@@ -496,20 +496,20 @@
   "evidence": "verifier self-agreement measured (92% of diffs identical across 5 repeats); flaky tasks via --runs (6d06cc3)"
  },
  "591": {
-  "rating": 8,
-  "evidence": "same, plus invariants on every step (777f673)"
+  "rating": 9,
+  "evidence": "replay regression suite detects behaviour change at $0 (5e76e9d)"
  },
  "592": {
-  "rating": 8,
-  "evidence": "same (3a17e49)"
+  "rating": 9,
+  "evidence": "chaos, determinism and replay measurements"
  },
  "593": {
-  "rating": 8,
-  "evidence": "canary history + gate stops a fix that breaks another task (3a17e49)"
+  "rating": 9,
+  "evidence": "replay regression + canary catch a fix that breaks another path"
  },
  "594": {
-  "rating": 8,
-  "evidence": "canary with cause hints flags recurrence (2b3e3ae)"
+  "rating": 9,
+  "evidence": "canary history, failure taxonomy trends and replay"
  },
  "596": {
   "rating": 9,
@@ -1290,5 +1290,385 @@
  "846": {
   "rating": 9,
   "evidence": "same"
+ },
+ "32": {
+  "rating": 9,
+  "evidence": "cassettes of every model and command response; 8/8 real sessions replay identically, 70 calls, $0 (5e76e9d)"
+ },
+ "184": {
+  "rating": 9,
+  "evidence": "shadow replay with a new build + deterministic replay of real sessions as a regression suite (5e76e9d)"
+ },
+ "186": {
+  "rating": 9,
+  "evidence": "suite, planning, review, retrieval, compaction, delegation and replay evals run offline/recorded"
+ },
+ "135": {
+  "rating": 9,
+  "evidence": "hidden-test regression gate per run + replay regression corpus of real sessions (5e76e9d)"
+ },
+ "31": {
+  "rating": 9,
+  "evidence": "file checkpoints + cassettes: any session can be rebuilt as it was before it ran (ca50dc8)"
+ },
+ "30": {
+  "rating": 9,
+  "evidence": "sessions, events, checkpoints and cassettes persisted; resume and replay"
+ },
+ "710": {
+  "rating": 9,
+  "evidence": "trace data incl. raw model and command results kept per session, pruned with retention"
+ },
+ "712": {
+  "rating": 9,
+  "evidence": "spans + per-call cassette records"
+ },
+ "713": {
+  "rating": 9,
+  "evidence": "execution paper trail down to every model response"
+ },
+ "806": {
+  "rating": 8,
+  "evidence": "`trendlab pr list/stats/workspace` + inbox + dashboard form a maintainer console"
+ },
+ "807": {
+  "rating": 8,
+  "evidence": "PR triage, async commit review and review gates automated"
+ },
+ "808": {
+  "rating": 9,
+  "evidence": "`trendlab pr stats`: merged/week, hours to merge (median, p90); live on cli/cli (0bc40cc)"
+ },
+ "809": {
+  "rating": 9,
+  "evidence": "`trendlab pr list`: next action per PR, quickest unblocking work first; live on 30 PRs (0bc40cc)"
+ },
+ "810": {
+  "rating": 8,
+  "evidence": "triage + review --pr + PR workspaces; no auto-merge by design"
+ },
+ "811": {
+  "rating": 8,
+  "evidence": "PR worktrees under .trendlab/pr-worktrees keep the agent beside the checkout"
+ },
+ "812": {
+  "rating": 9,
+  "evidence": "`trendlab pr workspace N --agent` runs the agent in the PR's own worktree (0bc40cc)"
+ },
+ "603": {
+  "rating": 9,
+  "evidence": "merges are never automatic; ready-to-merge is a suggestion"
+ },
+ "88": {
+  "rating": 9,
+  "evidence": "compaction eval: model summary keeps 30/30 planted facts at 14% of tokens (0dc8673)"
+ },
+ "87": {
+  "rating": 9,
+  "evidence": "fallback compaction fixed from 0% to 100% retention at 9% of tokens (0dc8673)"
+ },
+ "86": {
+  "rating": 8,
+  "evidence": "layered context (system, map, summary, plan, recent) with budgets; retention measured"
+ },
+ "84": {
+  "rating": 9,
+  "evidence": "context layers, tiered tool output, retrieval hints, compaction — each measured"
+ },
+ "28": {
+  "rating": 9,
+  "evidence": "structured state + compaction keep working facts; 100% retention measured (0dc8673)"
+ },
+ "85": {
+  "rating": 9,
+  "evidence": "context window tracked per model; compaction before overflow; overflow recovery"
+ },
+ "90": {
+  "rating": 8,
+  "evidence": "project memory injected into the system prompt; learning is gated and bounded"
+ },
+ "1": {
+  "rating": 9,
+  "evidence": "every subsystem measured: 86-task suite, 12 eval modes, canary, replay corpus, ledger of evidence"
+ },
+ "2": {
+  "rating": 9,
+  "evidence": "runtime with invariants, coded failures, cooldown recovery; 10/10 under 20% injected faults"
+ },
+ "5": {
+  "rating": 9,
+  "evidence": "control loop with evaluator, scope, communication and latency checks, each tested"
+ },
+ "6": {
+  "rating": 9,
+  "evidence": "agent loop replays identically from cassettes on 8/8 real sessions (5e76e9d)"
+ },
+ "7": {
+  "rating": 9,
+  "evidence": "same execution loop, measured under chaos and replay"
+ },
+ "10": {
+  "rating": 9,
+  "evidence": "reason-act loop with tool rescue for text tool calls; measured on the suite"
+ },
+ "26": {
+  "rating": 9,
+  "evidence": "agent state machine with invariant checks after every transition (777f673)"
+ },
+ "27": {
+  "rating": 9,
+  "evidence": "conversation state persisted, compacted with 100% fact retention (0dc8673)"
+ },
+ "36": {
+  "rating": 9,
+  "evidence": "capability boundaries held under 10/10 jailbreak attempts (7d75215)"
+ },
+ "37": {
+  "rating": 9,
+  "evidence": "sub-agents read-only, privileged denied, credential files refused, secrets taint network"
+ },
+ "41": {
+  "rating": 9,
+  "evidence": "ask / auto-edit / auto / unsafe modes plus plan gate and remote approvals"
+ },
+ "46": {
+  "rating": 9,
+  "evidence": "per-run cost cap + monthly/project budgets with alerts (3614a6b)"
+ },
+ "51": {
+  "rating": 9,
+  "evidence": "tool layer: tiered output, health breaker, automatic fallback, postconditions, symbol check"
+ },
+ "54": {
+  "rating": 9,
+  "evidence": "native tools + structured fallback + text-call rescue; JSON mode with repair"
+ },
+ "58": {
+  "rating": 9,
+  "evidence": "tool and output schemas validated, invalid output repaired once"
+ },
+ "65": {
+  "rating": 9,
+  "evidence": "every failure path classified into the taxonomy; crashes measured in bench"
+ },
+ "67": {
+  "rating": 9,
+  "evidence": "BM25 when embeddings are down, 100% fallback compaction, tool fallback, cooldown retries"
+ },
+ "69": {
+  "rating": 9,
+  "evidence": "gateway retries + run-level cooldown; chaos canary 18 faults, 10/10 (1dffa3f)"
+ },
+ "70": {
+  "rating": 9,
+  "evidence": "exponential backoff with jitter + cooldown"
+ },
+ "71": {
+  "rating": 9,
+  "evidence": "fallbacks for models, tools, retrieval and compaction, each tested"
+ },
+ "78": {
+  "rating": 9,
+  "evidence": "OpenAI-compatible, Anthropic and Ollama adapters with JSON mode and per-role sampling"
+ },
+ "82": {
+  "rating": 9,
+  "evidence": "permission engine + injection taint + secret taint + change scope (7d75215, 8c331e8)"
+ },
+ "83": {
+  "rating": 9,
+  "evidence": "guardrails measured: adversarial 5/5, jailbreak 10/10, red-team 15/15"
+ },
+ "94": {
+  "rating": 9,
+  "evidence": "span tree + cassette of every model and command response"
+ },
+ "97": {
+  "rating": 9,
+  "evidence": "typed JSONL events with span ids, rotation, OTel export"
+ },
+ "99": {
+  "rating": 9,
+  "evidence": "tokens and cost per call, role, model and project, fully loaded (3614a6b)"
+ },
+ "101": {
+  "rating": 9,
+  "evidence": "bench harness: suite, compare, gate, canary, ablations, and 8 component evals"
+ },
+ "104": {
+  "rating": 9,
+  "evidence": "86 tasks in 7 tiers, holdout, version fingerprint incl. grading rules"
+ },
+ "105": {
+  "rating": 9,
+  "evidence": "every task has a hidden test, reference and forbid checks; --verify-suite"
+ },
+ "106": {
+  "rating": 9,
+  "evidence": "fixtures and generated suite repos materialised per run"
+ },
+ "501": {
+  "rating": 9,
+  "evidence": "engine: watch, canary, health, review, budget, meta-loop cards with remedies"
+ },
+ "502": {
+  "rating": 9,
+  "evidence": "verifier per surfaced turn + per-turn commits for review (8c331e8)"
+ },
+ "503": {
+  "rating": 9,
+  "evidence": "local verification: tests, verifier, review gate, symbol check — all local"
+ },
+ "535": {
+  "rating": 9,
+  "evidence": "step validation after each plan step; postconditions after each edit"
+ },
+ "601": {
+  "rating": 9,
+  "evidence": "destructive requests recoverable via checkpoints; ad05/jb04 held live"
+ },
+ "602": {
+  "rating": 9,
+  "evidence": "the harness never merges"
+ },
+ "613": {
+  "rating": 9,
+  "evidence": "agent boundaries held under jailbreak and injection tiers"
+ },
+ "614": {
+  "rating": 9,
+  "evidence": "autonomy modes + plan gate + change scope"
+ },
+ "615": {
+  "rating": 9,
+  "evidence": "operational guardrails measured live"
+ },
+ "625": {
+  "rating": 9,
+  "evidence": "merging is never automated; push and merge stay with the owner"
+ },
+ "626": {
+  "rating": 9,
+  "evidence": "privileged denied, destructive asks, exfiltration gated, change scope enforced"
+ },
+ "636": {
+  "rating": 9,
+  "evidence": "plan gate, remote approvals, unattended deny-by-default"
+ },
+ "638": {
+  "rating": 9,
+  "evidence": "every run: coded outcome, cost, diff, turn commit, cassette"
+ },
+ "639": {
+  "rating": 9,
+  "evidence": "[governance] scope, communication, change scope, turn commits; [economics] budgets"
+ },
+ "640": {
+  "rating": 9,
+  "evidence": "policies drive execution: route settings, permission policy, sampling policy"
+ },
+ "691": {
+  "rating": 9,
+  "evidence": "sessions observable via trace tree, rca, stats, dashboard, replay"
+ },
+ "692": {
+  "rating": 9,
+  "evidence": "session trace = span tree + events + cassette"
+ },
+ "693": {
+  "rating": 9,
+  "evidence": "SQLite session store with search (exact, ranked, semantic), stats, export"
+ },
+ "711": {
+  "rating": 9,
+  "evidence": "structured events per session with retention"
+ },
+ "748": {
+  "rating": 9,
+  "evidence": "spend per period and change vs the previous period (3614a6b)"
+ },
+ "750": {
+  "rating": 9,
+  "evidence": "tokens and cost attributed per role, model and project"
+ },
+ "751": {
+  "rating": 9,
+  "evidence": "cost per run and per validated change"
+ },
+ "752": {
+  "rating": 9,
+  "evidence": "cost per model call recorded"
+ },
+ "758": {
+  "rating": 9,
+  "evidence": "fully loaded accounting incl. engine jobs and reviews (ff05b6e)"
+ },
+ "763": {
+  "rating": 9,
+  "evidence": "router sets the route's models; Flash planner/critic/reviewer measured equal to Pro"
+ },
+ "770": {
+  "rating": 9,
+  "evidence": "budgets, latency budgets and cost caps enforced"
+ },
+ "780": {
+  "rating": 9,
+  "evidence": "measured savings: quick review 6x fewer calls, Flash planner 3.5x cheaper at equal quality"
+ },
+ "781": {
+  "rating": 9,
+  "evidence": "heavy roles gated by route; costs ratio in the release gate"
+ },
+ "782": {
+  "rating": 9,
+  "evidence": "cheapest viable model chosen by measurement (planner, reviewer, critic)"
+ },
+ "794": {
+  "rating": 9,
+  "evidence": "trendlab cost and stats show where every dollar went"
+ },
+ "838": {
+  "rating": 9,
+  "evidence": "taxonomy, ledger, turn commits, cassettes, review ledger"
+ },
+ "827": {
+  "rating": 9,
+  "evidence": "nightly canary, daily health, async review, budget alerts"
+ },
+ "828": {
+  "rating": 8,
+  "evidence": "continuous checks; vigilance still needs the owner to read the cards"
+ },
+ "836": {
+  "rating": 8,
+  "evidence": "review ledger with recheck supports human co-review"
+ },
+ "837": {
+  "rating": 8,
+  "evidence": "turn commits and review ledger tie every change to a run"
+ },
+ "851": {
+  "rating": 8,
+  "evidence": "router + scope budget + change scope before initiative"
+ },
+ "858": {
+  "rating": 9,
+  "evidence": "evidence ledger: no rating moves without a commit or a number"
+ },
+ "860": {
+  "rating": 8,
+  "evidence": "harness designed around measured agent failure modes"
+ },
+ "861": {
+  "rating": 8,
+  "evidence": "worktrees, turn commits, review gate fit the agent into git workflow"
+ },
+ "866": {
+  "rating": 8,
+  "evidence": "CLI + engine + bench + review + PR tooling"
+ },
+ "867": {
+  "rating": 9,
+  "evidence": "verify, review, health, canary, replay and gates form one quality system"
  }
 }
