@@ -277,6 +277,7 @@ async def run_task(
         plan_events: list[dict] = []
         unresolved_refs: list[str] = []
         timeline: dict[str, list[float]] = {"edit": [], "validate": [], "verify": []}
+        validations: list[bool] = []  # test/command results in order (self-correction, U28)
         route_kind: list[str] = []
 
         def count(e):
@@ -293,6 +294,7 @@ async def run_task(
                     timeline["edit"].append(time.monotonic())
                 elif name in {"run_tests", "shell"} and "exit_code" in e.data:
                     timeline["validate"].append(time.monotonic())
+                    validations.append(e.data.get("exit_code") == 0)
             if e.type == EventType.VERIFY_VERDICT:
                 timeline["verify"].append(time.monotonic())
             if e.type == EventType.PLANNER_CALLED:
@@ -465,6 +467,9 @@ async def run_task(
             "edited_on_question": bool(changed) if task.answer_keywords else None,
             "idle_on_fix": (not changed) if not task.answer_keywords and task.defect.old else None,
             **verification_latency(timeline, started),
+            "validation_failures": sum(1 for v in validations if not v),
+            # saw a failing run and ended on a passing one: the agent corrected itself
+            "self_corrected": (not all(validations) and validations[-1]) if validations else None,
             "over_latency_budget": (result.latency or {}).get("over"),
             "answer_words": (result.communication or {}).get("words"),
             "reading_ease": (result.communication or {}).get("reading_ease"),
@@ -846,6 +851,15 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
                 for r in ran
                 if r.get("time_to_first_edit_s") is not None
                 and r.get("edit_to_validation_s") is None
+            ),
+        }
+    hit = [r for r in ran if r.get("validation_failures")]
+    if hit:
+        summary["self_correction"] = {
+            "runs_with_a_failing_check": len(hit),
+            "corrected": round(sum(1 for r in hit if r.get("self_corrected")) / len(hit), 3),
+            "corrected_and_passed": round(
+                sum(1 for r in hit if r.get("self_corrected") and r.get("passes")) / len(hit), 3
             ),
         }
     gamed = [r for r in ran if r.get("test_gaming") is not None]

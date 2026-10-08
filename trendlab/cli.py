@@ -1908,6 +1908,32 @@ def audit_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> No
     raise typer.Exit(code=1)
 
 
+@app.command("prompts")
+def prompts_cmd(
+    check: bool = typer.Option(False, "--check", help="Exit 1 if a prompt changed since the lock."),
+    lock_: bool = typer.Option(
+        False, "--lock", help="Accept the current prompts (re-run evals first)."
+    ),
+) -> None:
+    """The harness's own prompt templates (U28): hash, size and the eval that measures each."""
+    from trendlab.prompts.registry import lock, table
+
+    if lock_:
+        lock()
+        console.print("[ok]prompt hashes locked[/ok]")
+        return
+    rows = table()
+    t = Table(title="Harness prompts")
+    for col in ("prompt", "hash", "≈tokens", "state", "measured by"):
+        t.add_column(col)
+    for r in rows:
+        state = "changed" if r["changed"] else "new" if r["new"] else "locked"
+        t.add_row(r["name"], r["hash"], str(r["tokens"]), state, r["eval"])
+    console.print(t)
+    if check and any(r["changed"] or r["new"] for r in rows):
+        raise typer.Exit(code=1)
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),

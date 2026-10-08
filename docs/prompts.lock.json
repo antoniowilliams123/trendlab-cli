@@ -1,0 +1,19 @@
+{
+ "adversary": "9c9406c5add9",
+ "critic": "90dcb80638a5",
+ "drafter": "ce2846774dc7",
+ "judge_pairwise": "2e8a23802d53",
+ "memory_learn": "25177a00ad77",
+ "planner": "aa1e8c560561",
+ "redteam": "90632cbc4cb5",
+ "review_confirm": "89afd73d5f8b",
+ "review_lens": "9600dfe8f71b",
+ "review_quick": "bca4704f0373",
+ "review_recheck": "ba982434cb14",
+ "router": "0586b9e7cc09",
+ "screener": "b9db2b1d9d54",
+ "sleeptime": "1f8767860f92",
+ "spec_check": "820640e1b3c0",
+ "spec_extract": "c421d11fcf9d",
+ "verifier": "d0d278877ca2"
+}
