@@ -97,6 +97,12 @@ class Engine:
         if job == "prune":
             stamp = now.strftime("%Y-%m-%d")
             return not warm and now.hour >= 4 and self.state.get("prune_day") != stamp
+        if job == "review":
+            if not ecfg.review_commits:
+                return False
+            return not warm and (
+                not last or (now.timestamp() - float(last)) >= ecfg.review_minutes * 60
+            )
         if job == "health":
             stamp = now.strftime("%Y-%m-%d")
             return not warm and now.hour >= 5 and self.state.get("health_day") != stamp
@@ -152,6 +158,12 @@ class Engine:
                     )
                 finally:
                     store.close()
+            elif job == "review":
+                from trendlab.engine.jobs import review_commits
+
+                result["review"] = await review_commits(
+                    self.inbox, self.config, self.state, self.projects
+                )
             elif job == "health":
                 from trendlab.engine.health import health_projects
 
@@ -222,6 +234,7 @@ class Engine:
                 "prune",
                 "budget",
                 "health",
+                "review",
             }:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
@@ -259,6 +272,7 @@ class Engine:
                     "prune",
                     "budget",
                     "health",
+                    "review",
                 ):
                     if self.due(job, now):
                         await self.run_job(job)

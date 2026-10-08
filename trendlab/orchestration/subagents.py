@@ -72,6 +72,7 @@ class SubAgentReport(BaseModel):
     cost_usd: float
     elapsed_s: float
     tool_calls: int
+    handoff: dict = Field(default_factory=dict)  # contract check (U15)
 
 
 class SubAgentRunner:
@@ -174,7 +175,12 @@ class SubAgentRunner:
         # Roll sub-agent spend into the session total.
         for rec in costs.records:
             self.costs.records.append(rec)
+        from trendlab.orchestration.handoff import check as handoff_check
+
+        findings_text = result.text or (result.stop_reason or "")
+        handoff = handoff_check(role, findings_text, self.parent_ctx.project_root)
         report = SubAgentReport(
+            handoff=handoff,
             role=role,
             objective=task.objective,
             status=result.status,
@@ -193,6 +199,7 @@ class SubAgentRunner:
             model_calls=costs.model_calls,
             cost_usd=round(costs.total_usd, 4),
             elapsed_s=round(report.elapsed_s, 1),
+            handoff=handoff,
         )
         return report
 
@@ -202,10 +209,14 @@ class SubAgentRunner:
 
 
 def render_report(report: SubAgentReport) -> str:
+    from trendlab.orchestration.handoff import header
+
     head = (
         f"[{report.role} · {report.model} · {report.status} · {report.model_calls} calls · "
         f"${report.cost_usd:.3f} · {report.elapsed_s:.0f}s]"
     )
+    if report.handoff:
+        head += f"\n[handoff: {header(report.handoff)}]"
     return f"{head}\n{report.findings}"
 
 

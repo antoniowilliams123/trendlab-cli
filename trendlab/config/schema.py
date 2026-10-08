@@ -235,6 +235,8 @@ class EngineConfig(BaseModel):
     canary: bool = False  # nightly 10-task canary against the default model (U1/U3)
     canary_at: str = "03:30"
     canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
+    review_commits: bool = False  # review new commits on watched projects (U13, async review)
+    review_minutes: int = Field(default=120, ge=15)
 
 
 class EconomicsConfig(BaseModel):

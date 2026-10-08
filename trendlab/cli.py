@@ -485,6 +485,11 @@ def bench_cmd(
         help="Reviewer only: seeded-defect and correct-fix diffs per task; recall, false alarms.",
     ),
     review_mode: str = typer.Option("auto", "--review-mode", help="auto | quick | deep"),
+    delegate_eval: bool = typer.Option(
+        False,
+        "--delegate-eval",
+        help="Explorer sub-agent only: locate each task's defect from the bug report.",
+    ),
 ) -> None:
     """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
@@ -498,6 +503,36 @@ def bench_cmd(
         verify_suite_tasks,
     )
 
+    if delegate_eval:
+        from trendlab.benchmarks.runner import (
+            delegate_eval_task,
+            select_tasks,
+            summarize_delegate_eval,
+        )
+
+        chosen = [t for t in select_tasks(tasks, lang, tier, holdout=holdout) if t.defect.old]
+
+        async def _delegate_all():
+            out = []
+            for t in chosen:
+                row = await delegate_eval_task(t, model)
+                out.append(row)
+                if output != "json":
+                    console.print(
+                        f"  {t.id}: located={row['located']} line={row['line_hit']} "
+                        f"handoff={row['handoff_complete']} ${row['cost']:.4f}"
+                    )
+            return out
+
+        rows = asyncio.run(_delegate_all())
+        summary = summarize_delegate_eval(rows)
+        if save_rows is not None:
+            save_rows.write_text(json.dumps(rows, indent=1, default=str))
+        if output == "json":
+            typer.echo(json.dumps({"summary": summary, "rows": rows}, indent=2, default=str))
+        else:
+            console.print(f"[neon]delegate eval[/neon] {model}: " + json.dumps(summary))
+        return
     if review_eval:
         from trendlab.benchmarks.runner import (
             review_eval_task,
@@ -507,7 +542,13 @@ def bench_cmd(
         from trendlab.config.loader import load_config
         from trendlab.telemetry.recorded import RecordedCaller
 
-        chosen = [t for t in select_tasks(tasks, lang, tier, holdout=holdout) if t.defect.old]
+        # a contract defect's reference state removes the half-built feature instead of
+        # completing it, so its "good" diff is not a fix; those tasks cannot score false alarms
+        chosen = [
+            t
+            for t in select_tasks(tasks, lang, tier, holdout=holdout)
+            if t.defect.old and t.defect.kind != "multi_file_contract"
+        ]
 
         async def _review_all():
             call = RecordedCaller(load_config(), "reviewer", "(benchmarks)", model=model)
@@ -1434,6 +1475,73 @@ def health_cmd(
         console.print(
             f"  vs baseline: {verdict}"
             + (f" · better: {', '.join(t['better'])}" if t["better"] else "")
+        )
+
+
+@app.command("critique")
+def critique_cmd(
+    doc: Path | None = typer.Argument(None, help="Design or plan document to critique."),
+    models: str = typer.Option(
+        "", "--models", help="Comma-separated reviewer models (default: the verifier role)."
+    ),
+    adversary: str | None = typer.Option(
+        None, "--adversary", help="Model that argues the design will fail (default: first)."
+    ),
+    no_adversary: bool = typer.Option(False, "--no-adversary"),
+    eval_: bool = typer.Option(
+        False, "--eval", help="Score the panel on built-in designs with planted flaws."
+    ),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Multi-model design review (U15): critics per model plus an adversary; agreed points are
+    consensus, single-reviewer points are dissent."""
+    from rich.markup import escape
+
+    from trendlab.agent.critique import critique
+    from trendlab.config.loader import load_config
+    from trendlab.telemetry.recorded import RecordedCaller
+
+    config = load_config()
+    names = [m.strip() for m in models.split(",") if m.strip()] or [
+        config.routing.get("verifier", config.defaults.model)
+    ]
+    where = str(doc.resolve().parent) if doc else "(benchmarks)"
+    callers = {n: RecordedCaller(config, "critic", where, model=n) for n in names}
+    adv = None
+    if not no_adversary:
+        adv = RecordedCaller(config, "adversary", where, model=adversary or names[0])
+
+    async def go():
+        try:
+            if eval_:
+                from trendlab.benchmarks.runner import critique_eval
+
+                return await critique_eval(callers, adversary=adv)
+            if doc is None:
+                raise typer.BadParameter("give a document, or --eval")
+            return await critique(doc.read_text(), callers, adversary=adv)
+        finally:
+            for c in [*callers.values(), *([adv] if adv else [])]:
+                await c.close()
+
+    res = asyncio.run(go())
+    cost = sum(c.cost for c in callers.values()) + (adv.cost if adv else 0.0)
+    res["cost"] = round(cost, 4)
+    if output == "json":
+        res.pop("raw", None)
+        typer.echo(json.dumps(res, indent=2, default=str))
+        return
+    if eval_:
+        console.print(
+            f"[neon]critique eval[/neon] · {res['flaws']} planted flaws in {res['designs']} "
+            f"designs · recall {json.dumps(res['recall'])} · ${cost:.4f}"
+        )
+        return
+    console.print(f"[neon]design review[/neon] · {', '.join(res['reviewers'])} · ${cost:.4f}")
+    for p in res["points"]:
+        tag = "consensus" if p["consensus"] else "dissent"
+        console.print(
+            f"  [{p['severity']}] {tag} ({', '.join(p['reviewers'])}): {escape(p['claim'])}"
         )
 
 

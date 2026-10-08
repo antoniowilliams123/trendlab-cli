@@ -175,6 +175,78 @@ async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, A
     return report
 
 
+async def review_commits(
+    inbox: Inbox, config, state: dict[str, Any], projects: list[Path], *, max_lines: int = 3000
+) -> list[dict[str, Any]]:
+    """U13 asynchronous review: new commits on each watched project since the last reviewed
+    sha get one quick review; high and medium findings become inbox cards. The first pass only
+    records HEAD (no review of the whole history)."""
+    import subprocess as sp
+
+    from trendlab.agent.review import review_diff, save_review
+    from trendlab.telemetry.recorded import RecordedCaller
+
+    seen = state.setdefault("reviewed_heads", {})
+    out = []
+    for root in projects:
+        key = str(root)
+        try:
+            head = sp.run(
+                ["git", "-C", key, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+        except (sp.CalledProcessError, FileNotFoundError):
+            continue
+        last = seen.get(key)
+        seen[key] = head
+        if not last or last == head:
+            out.append({"project": key, "reviewed": False, "head": head[:10]})
+            continue
+        diff = sp.run(
+            ["git", "-C", key, "diff", f"{last}..{head}"], capture_output=True, text=True
+        ).stdout
+        log = sp.run(
+            ["git", "-C", key, "log", "--format=%s", f"{last}..{head}"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        lines = sum(1 for ln in diff.splitlines() if ln[:1] in "+-")
+        if not diff.strip() or lines > max_lines:
+            out.append({"project": key, "reviewed": False, "lines": lines})
+            continue
+        call = RecordedCaller(config, "reviewer", key)
+        try:
+            res = await review_diff(call, diff, intent=log, mode="quick")
+        finally:
+            await call.close()
+        review = save_review(root, {"source": f"{last[:10]}..{head[:10]}", "async": True, **res})
+        cards = []
+        for f in res["findings"]:
+            if f["severity"] in {"high", "med"} and not f.get("static"):
+                card = inbox.record(
+                    project=key,
+                    title=f"review: {f['issue'][:150]}",
+                    signature=f"review|{f['file']}|{f['issue'][:80]}",
+                    source="review",
+                    evidence=[
+                        f"{f['file']}:{f.get('line', 0)}",
+                        f"commits {last[:10]}..{head[:10]}",
+                    ],
+                    impacted_files=[f["file"]] if f["file"] else [],
+                    severity="high" if f["severity"] == "high" else "med",
+                )
+                cards.append(card["id"])
+        out.append(
+            {
+                "project": key,
+                "reviewed": True,
+                "review": review["id"],
+                "findings": len(res["findings"]),
+                "cards": cards,
+            }
+        )
+    return out
+
+
 async def budget_check(inbox: Inbox, config, state: dict[str, Any], *, now=None) -> dict[str, Any]:
     """U10: month-to-date spend vs [economics] budgets; each crossed threshold alerts once."""
     from datetime import datetime

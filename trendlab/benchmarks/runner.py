@@ -868,23 +868,33 @@ def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 
 
 def seeded_diffs(task) -> tuple[str, str]:
-    """(bad, good) unified diffs for a suite task: introducing its defect, and fixing it."""
+    """(bad, good) unified diffs for a suite task: introducing its defect, and fixing it. A
+    defect that spans several files (a broken contract) is seeded in all of them, so the
+    'good' diff really is the whole fix."""
     import difflib as _difflib
 
     from trendlab.benchmarks import suite as suite_mod
 
-    rel = task.defect.file
-    ref = suite_mod.BASES[task.lang][rel]
-    buggy = ref.replace(task.defect.old, task.defect.new, 1)
+    base = suite_mod.BASES[task.lang]
+    pairs = []
+    ref = base[task.defect.file]
+    pairs.append((task.defect.file, ref, ref.replace(task.defect.old, task.defect.new, 1)))
+    for rel, (old, new) in task.defect.extra.items():
+        before = base.get(rel, "")
+        after = before.replace(old, new, 1) if old else new
+        if after != before:
+            pairs.append((rel, before, after))
 
-    def udiff(a, b):
+    def udiff(a, b, rel):
         return f"diff --git a/{rel} b/{rel}\n" + "".join(
             _difflib.unified_diff(
                 a.splitlines(True), b.splitlines(True), f"a/{rel}", f"b/{rel}", n=8
             )
         )
 
-    return udiff(ref, buggy), udiff(buggy, ref)
+    bad = "".join(udiff(ref_, buggy, rel) for rel, ref_, buggy in pairs)
+    good = "".join(udiff(buggy, ref_, rel) for rel, ref_, buggy in pairs)
+    return bad, good
 
 
 async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
@@ -901,10 +911,14 @@ async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
     def model(fs):
         return [f for f in fs if not f.get("static")]
 
+    # caught = a bug-finding lens names the problem in the right file (a "no test" note from the
+    # tests lens is true of any change and does not count)
     hits = [
         f
         for f in model(r_bad["findings"])
-        if f["severity"] in {"high", "med"} and f["file"].endswith(rel)
+        if f["severity"] in {"high", "med"}
+        and f["file"].endswith(rel)
+        and f["lens"] in {"correctness", "edge_cases", "security", "structure"}
     ]
     near = [f for f in hits if f.get("line") and abs(f["line"] - task.answer_line) <= 3]
     false_alarm = [f for f in model(r_good["findings"]) if f["severity"] == "high"]
@@ -917,8 +931,105 @@ async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
         "false_alarm": bool(false_alarm),
         "findings_bad": len(model(r_bad["findings"])),
         "findings_good": len(model(r_good["findings"])),
+        "noise_good": sum(1 for f in model(r_good["findings"]) if f["severity"] in {"high", "med"}),
         "calls": r_bad["calls"] + r_good["calls"],
         "lenses_catching": sorted({f["lens"] for f in hits}),
+    }
+
+
+async def delegate_eval_task(
+    task, model: str, *, config: AppConfig | None = None, provider=None, home: Path | None = None
+) -> dict[str, Any]:
+    """U15 delegation eval: a read-only explorer sub-agent gets only the bug report and must
+    hand back the defect's location with verifiable evidence."""
+    import re as _re
+
+    from trendlab.app import TrendLabApp
+    from trendlab.benchmarks import suite as suite_mod
+    from trendlab.orchestration.subagents import SubAgentTask
+
+    config = load_config() if config is None else config
+    with tempfile.TemporaryDirectory(prefix=f"trendlab-suite-deleg-{task.id}-") as tmp:
+        root = Path(tmp) / "repo"
+        suite_mod.materialize(task, root)
+        tl = TrendLabApp(
+            root,
+            config,
+            model_ref=model,
+            provider=provider,
+            console=Console(quiet=True),
+            data_dir=home,
+        )
+        await tl.start(interactive=False)
+        try:
+            report = await tl.subagents.run(
+                SubAgentTask(
+                    role="explorer",
+                    objective="Bug report: " + task.defect.symptom + " Find the code that causes "
+                    "it. Do not fix it. Cite the exact path:line of the cause in EVIDENCE.",
+                )
+            )
+        finally:
+            await tl.stop()
+    text = report.findings or ""
+    rel = task.defect.file
+    refs = [(p, int(n)) for p, n in _re.findall(r"([\w./-]+\.\w+):(\d+)", text)]
+    located = any(p.endswith(rel) for p, _ in refs) or rel in text
+    line_hit = any(p.endswith(rel) and abs(n - task.answer_line) <= 3 for p, n in refs)
+    return {
+        "task": task.id,
+        "kind": task.defect.kind,
+        "status": report.status,
+        "located": located,
+        "line_hit": line_hit,
+        "handoff_complete": report.handoff.get("complete"),
+        "evidence_cited": report.handoff.get("evidence_cited"),
+        "evidence_verified": report.handoff.get("evidence_verified"),
+        "cost": round(report.cost_usd, 4),
+        "tool_calls": report.tool_calls,
+        "elapsed_s": round(report.elapsed_s, 1),
+    }
+
+
+def summarize_delegate_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(rows)
+    if not n:
+        return {"tasks": 0}
+    cited = sum(r.get("evidence_cited") or 0 for r in rows)
+    verified = sum(r.get("evidence_verified") or 0 for r in rows)
+    return {
+        "tasks": n,
+        "located": round(sum(1 for r in rows if r["located"]) / n, 3),
+        "line_hit": round(sum(1 for r in rows if r["line_hit"]) / n, 3),
+        "handoff_complete": round(sum(1 for r in rows if r["handoff_complete"]) / n, 3),
+        "evidence_verified_share": round(verified / cited, 3) if cited else None,
+        "cost": round(sum(r["cost"] for r in rows), 4),
+        "mean_tool_calls": round(sum(r["tool_calls"] for r in rows) / n, 1),
+    }
+
+
+async def critique_eval(reviewers: dict[str, Any], *, adversary=None) -> dict[str, Any]:
+    """U15 panel eval: recall of planted design flaws for each reviewer alone and for the panel
+    (union), plus the false-consensus check: how many consensus points match no planted flaw."""
+    from trendlab.agent.critique import critique
+    from trendlab.benchmarks.designs import DESIGNS, found
+
+    rows = []
+    for d in DESIGNS:
+        res = await critique(d["doc"], reviewers, adversary=adversary)
+        row = {"design": d["id"], "points": len(res["points"]), "consensus": res["consensus"]}
+        for name, pts in res["raw"].items():
+            row[f"found_{name}"] = sum(1 for pat in d["flaws"].values() if found(pts, pat))
+        row["found_panel"] = sum(1 for pat in d["flaws"].values() if found(res["points"], pat))
+        row["flaws"] = len(d["flaws"])
+        rows.append(row)
+    total = sum(r["flaws"] for r in rows)
+    names = [k[6:] for k in rows[0] if k.startswith("found_")]
+    return {
+        "designs": len(rows),
+        "flaws": total,
+        "recall": {n: round(sum(r[f"found_{n}"] for r in rows) / total, 3) for n in names},
+        "rows": rows,
     }
 
 
@@ -942,6 +1053,7 @@ def summarize_review_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "false_alarm_rate": round(fa / n, 3),
         "false_alarm_ci95": wilson_interval(fa, n),
         "calls": sum(r["calls"] for r in rows),
+        "noise_per_correct_fix": round(sum(r.get("noise_good", 0) for r in rows) / n, 2),
         "lens_catches": dict(sorted(lens_counts.items(), key=lambda kv: -kv[1])),
     }
 
