@@ -1970,6 +1970,82 @@ def tail_cmd(
         store.close()
 
 
+@app.command("feedback")
+def feedback_cmd(
+    rating: str = typer.Argument(..., help="good | bad"),
+    note: str = typer.Argument("", help="What was right or wrong (optional)."),
+    session: str = typer.Option("latest", "--session", help="Session id (default: latest here)."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+) -> None:
+    """Prompt-level feedback (U31): rate the last run; stats show satisfaction per route/model."""
+    from datetime import UTC, datetime
+
+    from trendlab.sessions.store import SessionStore
+
+    if rating not in {"good", "bad"}:
+        raise typer.BadParameter("rating must be good or bad")
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        if session == "latest":
+            latest = store.latest_session(str(project.resolve()))
+            if latest is None:
+                raise typer.BadParameter("no session for this project")
+            session = latest["id"]
+        store.append_event(
+            session,
+            "feedback.given",
+            {"rating": rating, "note": note[:1000]},
+            datetime.now(UTC).isoformat(),
+        )
+    finally:
+        store.close()
+    console.print(f"[ok]recorded[/ok] {rating} for {session}")
+
+
+@app.command("sql")
+def sql_cmd(
+    query: str = typer.Argument(..., help="A read-only SELECT over the session store."),
+    limit: int = typer.Option(50, "--limit"),
+) -> None:
+    """Ad-hoc trace analytics (U31): read-only SQL over sessions, events, model_calls,
+    messages, checkpoints. The database is opened read-only."""
+    import sqlite3
+
+    q = query.strip().rstrip(";")
+    if not q.lower().startswith(("select", "with")):
+        raise typer.BadParameter("only SELECT / WITH queries")
+    db = trendlab_home() / "sessions.db"
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        cur = conn.execute(q)
+        cols = [d[0] for d in cur.description or []]
+        rows = cur.fetchmany(limit)
+    finally:
+        conn.close()
+    t = Table()
+    for c in cols:
+        t.add_column(c)
+    for r in rows:
+        t.add_row(*[str(v)[:80] for v in r])
+    console.print(t)
+
+
+@app.command("selftest")
+def selftest_cmd() -> None:
+    """Offline end-to-end check of the harness ($0, temporary home): agent run, replay, review,
+    architecture, health, mutation and the guards (U31)."""
+    from trendlab.benchmarks.selftest import run
+
+    results = asyncio.run(run())
+    for r in results:
+        mark = "[ok]✓[/ok]" if r["ok"] else "[danger]✗[/danger]"
+        console.print(f"  {mark} {r['stage']:<22} {r['seconds']:>5}s  {r['detail']}")
+    failed = [r for r in results if not r["ok"]]
+    console.print(f"{len(results) - len(failed)}/{len(results)} stages passed")
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),

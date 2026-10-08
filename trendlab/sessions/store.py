@@ -477,7 +477,7 @@ class SessionStore:
                 "SELECT type, data FROM events WHERE ts >= ? AND type IN ('run.completed',"
                 "'run.failed','guard.fired','tool.skipped','verify.verdict','tool.circuit_opened',"
                 "'claim.unsupported','scope.checked','security.injection_suspected',"
-                "'invariant.violated','route.decided','communication.checked')",
+                "'invariant.violated','route.decided','communication.checked','feedback.given')",
                 (since,),
             ).fetchall()
         outcomes: Counter[str] = Counter()
@@ -510,6 +510,9 @@ class SessionStore:
                 continue
             if t == "communication.checked":
                 answers.append(d)
+                continue
+            if t == "feedback.given":
+                q["feedback_good" if d.get("rating") == "good" else "feedback_bad"] += 1
                 continue
             if t == "route.decided":
                 routes[str(d.get("kind"))] += 1
@@ -561,6 +564,13 @@ class SessionStore:
                 else None,
                 "injection_suspected": q["injection_suspected"],
                 "invariant_violations": q["invariant_violations"],
+                # prompt-level feedback from the person (U31)
+                "feedback": {"good": q["feedback_good"], "bad": q["feedback_bad"]},
+                "satisfaction": round(
+                    q["feedback_good"] / (q["feedback_good"] + q["feedback_bad"]), 3
+                )
+                if q["feedback_good"] + q["feedback_bad"]
+                else None,
             },
         }
 
