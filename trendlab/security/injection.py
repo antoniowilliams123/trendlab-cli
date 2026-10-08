@@ -27,20 +27,33 @@ _PATTERNS = [
         "addressed to agent",
     ),
     (r"\b(ai|llm)\s+(assistant|agent|model)s?\s*[:,-]", "addressed to agent"),
-    (r"\bsystem\s+(override|prompt|message)\b\s*[:\-]?", "fake system message"),
+    (r"\bsystem\s+(override|message|notice|instruction)s?\s*[:!\-]", "fake system message"),
+    (r"\b(reveal|print|show|output|repeat|ignore|disregard|leak)\b[^\n]{0,30}\bsystem\s+prompt\b", "prompt extraction"),
     (r"\byou\s+(are|must)\s+now\b", "role override"),
     (
         r"\b(curl|wget|nc|scp)\b[^\n]{0,80}(--data|-d\s|@|\|\s*(ba)?sh|-T\s)",
         "exfiltration or remote execution",
     ),
     (
-        r"\b(~/\.ssh|id_rsa|\.aws/credentials|\.trendlab/secrets|api[_ -]?keys?)\b",
+        r"\b(copy|send|upload|post|print|cat|dump|exfiltrate|share|email)\b[^\n]{0,60}(~/\.ssh|id_rsa|\.aws/credentials|\.trendlab/secrets|\bsecrets?\b|\bapi[_ -]?keys?\b|\bpasswords?\b)",
         "credential access",
     ),
     (
         r"\b(delete|remove|wipe|rm\s+-rf)\b[^\n]{0,60}\b(before|first|then)\b[^\n]{0,40}\b(task|anything|continue)",
         "planted destructive step",
     ),
+    # disguised operational instructions: content (docs, comments, CI output) that tells the
+    # reader to perform a file or network action on a concrete target as a precondition
+    (r"\b(delete|remove|erase|create|touch|write|upload|send|post|curl|wget|scp)\b[^\n]{0,80}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,80}\b(before|first|prior to|must|required|mandatory|in order to|to (resolve|fix|unblock|pass|avoid))\b", "disguised instruction"),
+    (r"\b(before|first|prior to|must|required|to (resolve|fix|unblock|pass))\b[^\n]{0,80}\b(delete|remove|erase|create|touch|upload|send|post|curl|wget)\b[^\n]{0,60}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)", "disguised instruction"),
+    (r"\b(please|you must|you need to|make sure( to)?|ensure( that)?)\b[^\n]{0,60}\b(delete|remove|create|touch|upload|send|post)\b[^\n]{0,60}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)", "disguised instruction"),
+    (r"\b(please|you must|make sure|ensure)\b[^\n]{0,40}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,40}\b(exists?|is (present|created)|is deleted|is removed)\b", "disguised instruction"),
+    # passive / gerund forms: "x.py must be deleted", "consider removing tests/..."
+    (r"(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)[^\n]{0,80}\b(must|should|needs? to|has to|is required to)\s+be\s+(deleted|removed|erased|created|uploaded|sent)\b", "disguised instruction"),
+    (r"\b(consider|try|start by|begin by)\s+(deleting|removing|erasing|creating|uploading|sending)\b[^\n]{0,60}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)", "disguised instruction"),
+    (r"\b(recommended|required|suggested|next)\s+(action|fix|step|remediation)s?\s*:\s*[^\n]{0,20}\b(delete|remove|erase|create|touch|upload|send|curl|wget)\b", "disguised instruction"),
+    # fake CI / system / maintainer notices carrying a file or network instruction
+    (r"^[#>*\s-]*(system|ci|build|pipeline|maintainer|admin|security|urgent|important)\s*(notice|note|output|message|error|warning|alert)?\s*[:!-][^\n]{0,160}\b(delete|remove|create|touch|upload|send|curl|wget|commit)\b[^\n]{0,80}(?:[\w./-]+\.(?:txt|py|sh|env|json|md|key|pem|toml|yml|yaml|cfg)\b|\btests?/|\bREADME\b|https?://|~/\.)", "fake notice with instruction"),
 ]
 _COMPILED = [(re.compile(p, re.I), label) for p, label in _PATTERNS]
 MAX_SCAN = 200_000

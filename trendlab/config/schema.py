@@ -167,6 +167,9 @@ class VerificationConfig(BaseModel):
     # test does not need the stronger model's review. Either threshold met → review runs.
     min_diff_lines: int = Field(default=80, ge=0)
     min_files: int = Field(default=3, ge=1)
+    # A 'pass' the verifier is unsure of (confidence below this) is treated as 'fix': the author
+    # gets one more look. 0 disables.
+    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     # U2: a second verifier model on the same evidence; disagreements are recorded
     # (verify.second_opinion) and a second-opinion 'fail' downgrades a 'pass' to 'fix'.
     second_opinion: str | None = None

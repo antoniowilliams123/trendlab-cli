@@ -434,7 +434,9 @@ class SessionStore:
             ).fetchone()
             events = self._conn.execute(
                 "SELECT type, data FROM events WHERE ts >= ? AND type IN ('run.completed',"
-                "'run.failed','guard.fired','tool.skipped','verify.verdict','tool.circuit_opened')",
+                "'run.failed','guard.fired','tool.skipped','verify.verdict','tool.circuit_opened',"
+                "'claim.unsupported','scope.checked','security.injection_suspected',"
+                "'invariant.violated','route.decided')",
                 (since,),
             ).fetchall()
         outcomes: Counter[str] = Counter()
@@ -443,11 +445,31 @@ class SessionStore:
         skipped: Counter[str] = Counter()
         verdicts: Counter[str] = Counter()
         breakers = 0
+        q: Counter[str] = Counter()
+        routes: Counter[str] = Counter()
         for e in events:
             d = json.loads(e["data"]) if e["data"] else {}
             t = e["type"]
+            if t == "claim.unsupported":
+                q["unsupported_claims"] += 1
+                continue
+            if t == "scope.checked":
+                q["scope_checked"] += 1
+                q["scope_problems"] += 0 if d.get("ok") else 1
+                continue
+            if t == "security.injection_suspected":
+                q["injection_suspected"] += 1
+                continue
+            if t == "invariant.violated":
+                q["invariant_violations"] += 1
+                continue
+            if t == "route.decided":
+                routes[str(d.get("kind"))] += 1
+                continue
             if t == "run.completed":
                 outcomes["completed"] += 1
+                q["completed_with_changes"] += 1 if d.get("changed_files") else 0
+                q["validated"] += 1 if d.get("changed_files") and d.get("validated") else 0
             elif t == "run.failed":
                 outcomes["failed"] += 1
                 reasons[str(d.get("stop_reason") or "")[:60]] += 1
@@ -474,6 +496,21 @@ class SessionStore:
             "skipped_tools": dict(skipped.most_common(8)),
             "verifier_verdicts": dict(verdicts),
             "breakers_opened": breakers,
+            "routes": dict(routes),
+            "online_quality": {
+                # live runs scored from their own evidence (online evaluation)
+                "validated_rate": round(q["validated"] / q["completed_with_changes"], 3)
+                if q["completed_with_changes"]
+                else None,
+                "unsupported_claim_rate": round(
+                    q["unsupported_claims"] / max(1, outcomes["completed"]), 3
+                ),
+                "scope_problem_rate": round(q["scope_problems"] / q["scope_checked"], 3)
+                if q["scope_checked"]
+                else None,
+                "injection_suspected": q["injection_suspected"],
+                "invariant_violations": q["invariant_violations"],
+            },
         }
 
     def messages(self, session_id: str) -> list[dict[str, Any]]:

@@ -291,6 +291,7 @@ class TrendLabApp:
         self.agent.verification_mode = vcfg.verifier if has_verifier_model else "off"
         self.agent.verify_min_diff_lines = vcfg.min_diff_lines
         self.agent.verify_min_files = vcfg.min_files
+        self.agent.verify_min_confidence = vcfg.min_confidence
         self.agent.scope_config = self.config.governance
         if self.config.routing.get("router"):
             self.agent.router = self._route_request

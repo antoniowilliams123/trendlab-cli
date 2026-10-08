@@ -65,15 +65,21 @@ def tv_distance(a: Counter, b: Counter) -> float:
     return round(0.5 * sum(abs(pa.get(k, 0.0) - pb.get(k, 0.0)) for k in keys), 3)
 
 
-def profile_sessions(store, days: int = 30, limit: int = 2000) -> dict[str, Counter]:
+def profile_sessions(
+    store, days: int = 30, limit: int = 2000, *, offset_days: int = 0
+) -> dict[str, Counter]:
+    """Profile real sessions in the window [now - offset - days, now - offset)."""
     from datetime import UTC, datetime, timedelta
 
-    since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    end = datetime.now(UTC) - timedelta(days=offset_days)
+    since = (end - timedelta(days=days)).isoformat()
+    until = end.isoformat()
     langs: Counter = Counter()
     kinds: Counter = Counter()
     lengths: Counter = Counter()
     for s in store.sessions(limit=limit):
-        if s.get("updated_at", "") < since or "/trendlab-suite-" in (s.get("project_path") or ""):
+        upd = s.get("updated_at", "")
+        if upd < since or upd >= until or "/trendlab-suite-" in (s.get("project_path") or ""):
             continue
         first = None
         for m in store.messages(s["id"]):
@@ -100,6 +106,21 @@ def profile_suite() -> dict[str, Counter]:
     kinds: Counter = Counter(task_kind(t.prompt) for t in TASKS)
     lengths: Counter = Counter(length_bucket(t.prompt) for t in TASKS)
     return {"lang": langs, "kind": kinds, "length": lengths}
+
+
+def period_report(store, days: int = 14) -> dict[str, Any]:
+    """Data drift: the last ``days`` of real work against the ``days`` before."""
+    recent = profile_sessions(store, days)
+    before = profile_sessions(store, days, offset_days=days)
+    rep = shift_report(recent, before)
+    rep["periods"] = {
+        "recent_sessions": sum(recent["kind"].values()),
+        "previous_sessions": sum(before["kind"].values()),
+    }
+    rep["verdict"] = (
+        rep["verdict"].replace("suite", "previous period").replace("real work", "recent work")
+    )
+    return rep
 
 
 def shift_report(real: dict[str, Counter], suite: dict[str, Counter]) -> dict[str, Any]:

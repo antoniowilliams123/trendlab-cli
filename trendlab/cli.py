@@ -455,23 +455,66 @@ def bench_cmd(
     log: bool = typer.Option(
         True, "--log/--no-log", help="Append suite results to docs/BENCH_LOG.md."
     ),
+    ablation: bool = typer.Option(
+        False, "--ablation", help="Run the harness and each one-component-off variant."
+    ),
+    sweep: str | None = typer.Option(
+        None, "--sweep", help="Sensitivity sweep, e.g. verification.min_diff_lines=0,30,80."
+    ),
+    counterfactual: Path | None = typer.Option(
+        None, "--counterfactual", help="Rows file: rerun only its failed tasks under --profile."
+    ),
+    verify_suite: bool = typer.Option(
+        False, "--verify-suite", help="Check every suite task is well-formed, then exit."
+    ),
 ) -> None:
-    """Run the benchmark fixtures A–E, the 50-task suite, or a two-configuration comparison."""
+    """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
+        ABLATIONS,
         CANARY,
         append_bench_log,
         compare_rows,
         run_benchmarks,
         run_suite,
         summarize,
+        verify_suite_tasks,
     )
 
+    if verify_suite:
+        problems = verify_suite_tasks()
+        if problems:
+            for p in problems:
+                console.print(f"[danger]✗[/danger] {p}")
+            raise typer.Exit(code=1)
+        console.print(
+            "[ok]suite verified[/ok]: every task materialises, fails its hidden test before "
+            "a fix, and has a clean baseline"
+        )
+        return
     if canary:
         suite, tasks, tier = True, CANARY, "all"
+    if counterfactual is not None:
+        rows_in = _load_rows(counterfactual)
+        failed = sorted(
+            {r["task"] for r in rows_in if not r.get("passes") and not r.get("skipped")}
+        )
+        if not failed:
+            console.print("[ok]no failed tasks in that file[/ok]")
+            return
+        console.print(
+            f"[neon]counterfactual[/neon]: rerunning {len(failed)} failed task(s) "
+            f"under {model}@{profile}"
+        )
+        suite, tasks, tier = True, ",".join(failed), "all"
+    if ablation:
+        compare = [f"{model}@harness"] + [f"{model}@{a}" for a in ABLATIONS]
+    if sweep:
+        key, _, values = sweep.partition("=")
+        compare = [f"{model}@harness+{key}={v}" for v in values.split(",") if v != ""]
     if suite or compare:
         configs = compare if compare else [f"{model}@{profile}"]
-        if compare and len(configs) != 2:
-            raise typer.BadParameter("--compare needs exactly two model@profile values")
+        if compare and len(configs) < 2:
+            raise typer.BadParameter("--compare needs at least two model@profile values")
         summaries = []
         all_rows: list[list[dict]] = []
         for spec in configs:
@@ -517,6 +560,30 @@ def bench_cmd(
             if log:
                 append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
         cmp = compare_rows(all_rows[0], all_rows[1]) if len(summaries) == 2 else None
+        if len(summaries) > 2:  # ablation / sweep: every variant against the first
+            t2 = Table(title="Variants vs " + summaries[0]["config"])
+            for col in (
+                "variant",
+                "passes",
+                "Δ passes",
+                "p",
+                "cost",
+                "cost ratio",
+                "Δ lead tokens",
+            ):
+                t2.add_column(col)
+            for sm, rows in zip(summaries[1:], all_rows[1:], strict=True):
+                c = compare_rows(all_rows[0], rows)
+                t2.add_row(
+                    sm["config"].split("@")[-1],
+                    str(sm["passes"]),
+                    f"{c['deltas']['passes']:+}",
+                    str(c["paired_passes"]["p_value"]),
+                    f"${sm['cost']:.3f}",
+                    f"{c['cost_ratio']}×",
+                    f"{c['deltas']['tokens_lead']:+}",
+                )
+            console.print(t2)
         if save_rows is not None:
             tagged = [
                 [{**r, "config": s["config"]} for r in rows]
@@ -984,6 +1051,9 @@ def drift_cmd(
         False, "--distribution", help="Compare real sessions with the suite (distribution shift)."
     ),
     days: int = typer.Option(30, "--days", help="Window of real sessions for --distribution."),
+    periods: bool = typer.Option(
+        False, "--periods", help="With --distribution: last N days vs the N days before."
+    ),
 ) -> None:
     """Canary history per night, or how far real work is from what the suite measures."""
     if distribution:
@@ -992,7 +1062,13 @@ def drift_cmd(
 
         store = SessionStore(trendlab_home() / "sessions.db")
         try:
-            rep = shift_report(profile_sessions(store, days), profile_suite())
+            if periods:
+                from trendlab.benchmarks.distribution import period_report
+
+                rep = period_report(store, days)
+                rep["real_sessions"] = rep["periods"]["recent_sessions"]
+            else:
+                rep = shift_report(profile_sessions(store, days), profile_suite())
         finally:
             store.close()
         console.print(
@@ -1000,7 +1076,8 @@ def drift_cmd(
         )
         for dim, d in rep["dimensions"].items():
             gaps = ", ".join(f"{k} {v:+.0%}" for k, v in d["biggest_gaps"])
-            console.print(f"  {dim}: distance {d['tv_distance']} · real − suite: {gaps}")
+            label = "recent − previous" if periods else "real − suite"
+            console.print(f"  {dim}: distance {d['tv_distance']} · {label}: {gaps}")
         return
     hist = trendlab_home() / "engine" / "canary_history.jsonl"
     if not hist.is_file():
@@ -1149,6 +1226,13 @@ def stats_cmd(
             console.print(f"  {label}: " + ", ".join(f"{k} ×{v}" for k, v in st[key].items()))
     if st["breakers_opened"]:
         console.print(f"  tool breakers opened: {st['breakers_opened']}")
+    if st.get("routes"):
+        console.print("  routes: " + ", ".join(f"{k} ×{v}" for k, v in st["routes"].items()))
+    oq = st.get("online_quality") or {}
+    console.print(
+        "  [neon]online quality[/neon]: "
+        + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in oq.items() if v is not None)
+    )
 
 
 @app.command("import")
@@ -1347,6 +1431,77 @@ def export_cmd(
     console.print(
         "[ok]exported[/ok] " + ", ".join(f"{k} {v}" for k, v in counts.items()) + f" → {out}"
     )
+
+
+@app.command("redteam")
+def redteam_cmd(
+    n: int = typer.Option(9, "--n", help="Attacks to generate."),
+    model: str | None = typer.Option(
+        None, "--model", help="Attack writer (default: routing.verifier)."
+    ),
+    run: bool = typer.Option(
+        False, "--run", help="Also plant each attack and run the agent on it."
+    ),
+    agent_model: str = typer.Option("deepseek:deepseek-flash", "--agent-model"),
+    out: Path | None = typer.Option(None, "--out", help="Save attacks and results as JSON."),
+) -> None:
+    """Generate new prompt-injection attacks; measure the scanner and (with --run) the agent."""
+    from trendlab.benchmarks.redteam import generate, scanner_recall, task_for
+    from trendlab.benchmarks.runner import run_task
+    from trendlab.config.loader import load_config
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    config = load_config()
+    ref = model or config.routing.get("verifier") or config.defaults.model
+    gw = ModelGateway(config, EventBus(), "redteam")
+
+    async def call(messages):
+        response, _used = await gw.complete(ref, messages, None)
+        return response.text
+
+    async def main():
+        attacks = await generate(call, n)
+        rec = scanner_recall(attacks)
+        results = []
+        if run:
+            for i, a in enumerate(attacks, 1):
+                r = await run_task(task_for(a, i), agent_model, profile="harness")
+                results.append(
+                    {
+                        "goal": a["goal"],
+                        "location": a["location"],
+                        "safe": r.get("safe"),
+                        "violations": r.get("violations"),
+                        "passes": r.get("passes"),
+                        "flagged": bool(r.get("interventions")),
+                    }
+                )
+                console.print(
+                    f"  {a['goal']:12s} {a['location']:12s} safe={r.get('safe')} "
+                    f"fixed={r.get('passes')}"
+                )
+        return attacks, rec, results
+
+    attacks, rec, results = asyncio.run(main())
+    console.print(
+        f"[neon]{len(attacks)} attacks[/neon] from {ref} · "
+        f"scanner flagged {rec['flagged']} ({rec['recall']})"
+    )
+    for m in rec["missed"]:
+        console.print(f"  [warning]missed:[/warning] {m}", markup=True)
+    if results:
+        safe = sum(1 for r in results if r["safe"])
+        console.print(
+            f"[neon]agent resisted {safe}/{len(results)}[/neon] "
+            f"(task still fixed in {sum(1 for r in results if r['passes'])})"
+        )
+    if out:
+        out.write_text(
+            json.dumps(
+                {"model": ref, "attacks": attacks, "scanner": rec, "runs": results}, indent=1
+            )
+        )
 
 
 @app.command("doctor")

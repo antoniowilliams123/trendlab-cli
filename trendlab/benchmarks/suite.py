@@ -1026,7 +1026,7 @@ def build_tasks() -> list[Task]:
                 tier="hard",
             )
         )
-    return base + hard + _special_tasks() + _realistic_tasks()
+    return base + hard + _special_tasks() + _realistic_tasks() + _more_tasks()
 
 
 INJECT_README = (
@@ -1320,6 +1320,141 @@ def _realistic_tasks() -> list[Task]:
             "rt04-clamp",
             next(d for d in py if d.kind == "swapped_args" and d.file == "shop/util.py"),
             "clamp broken",
+        ),
+    ]
+
+
+HIDDEN_CENTS = """import pytest
+
+from shop.pricing import to_cents
+
+
+def test_to_cents():
+    assert to_cents(12.34) == 1234 and to_cents(0.1 + 0.2) == 30 and to_cents(5) == 500
+    with pytest.raises(ValueError):
+        to_cents(-1)
+"""
+
+HIDDEN_BELOW = """from shop.stock import Stock
+
+
+def test_below_threshold_and_alias():
+    s = Stock({'A': 5, 'B': 4, 'C': 9})
+    assert s.below_threshold(5) == ['A', 'B']
+    assert s.below_threshold(5, inclusive=False) == ['B']
+    assert s.low() == ['A', 'B']  # old name still works
+"""
+
+HIDDEN_PERSIST = """import json
+
+from shop.util import load_orders, save_orders
+
+
+def test_round_trip(tmp_path):
+    orders = [[{'sku': 'A', 'qty': 1, 'price': 2.5}], []]
+    p = tmp_path / 'orders.json'
+    save_orders(p, orders)
+    assert load_orders(p) == orders
+    assert json.loads(p.read_text())['orders'] == orders
+"""
+
+HIDDEN_ORDER_CODE = """import pytest
+
+from shop.orders import order_total, summary
+
+
+def test_code_applies_before_tax():
+    assert order_total([{'price': 50, 'qty': 1}], tax=False, code='SAVE10') == 45.0
+    assert order_total([{'price': 50, 'qty': 1}], code='SAVE10') == 48.6
+    assert order_total([{'price': 50, 'qty': 1}]) == 54.0
+
+
+def test_unknown_code_and_summary():
+    with pytest.raises(ValueError):
+        order_total([{'price': 1, 'qty': 1}], code='NOPE')
+    assert 'SAVE10' in summary([{'sku': 'A', 'qty': 1, 'price': 50}], code='SAVE10')
+"""
+
+
+def _more_tasks() -> list[Task]:
+    def feat(kind, file, anchor, hidden_file, hidden):
+        return Defect(kind, file, anchor, anchor, "", hidden_file, hidden, False)
+
+    def task(tid, tier, d, prompt, *, followups=(), expected=None):
+        return Task(
+            id=tid,
+            lang="python",
+            defect=d,
+            prompt=prompt,
+            expected_changed=frozenset(expected or {d.file}),
+            answer_file=d.file,
+            answer_line=_line_of(PY_BASE, d.file, d.old),
+            test_command=TEST_COMMANDS["python"],
+            tier=tier,
+            followups=tuple(followups),
+        )
+
+    return [
+        task(
+            "mt03-to_cents",
+            "multiturn",
+            feat(
+                "feature_to_cents",
+                "shop/pricing.py",
+                "TAX_RATE = 0.08",
+                "tests/test_hidden_cents.py",
+                HIDDEN_CENTS,
+            ),
+            "Add to_cents(amount) to shop/pricing.py that converts a float amount to integer cents, "
+            "rounding correctly (0.1 + 0.2 must give 30). Add tests.",
+            followups=("Negative amounts should raise ValueError. Update the tests too.",),
+        ),
+        task(
+            "mt04-below_threshold",
+            "multiturn",
+            feat(
+                "feature_below_threshold",
+                "shop/stock.py",
+                "class Stock:",
+                "tests/test_hidden_below.py",
+                HIDDEN_BELOW,
+            ),
+            "Rename Stock.low to Stock.below_threshold(threshold=5), keeping low() working as an "
+            "alias so existing callers do not break.",
+            followups=(
+                "Now give below_threshold an inclusive flag (default True); with inclusive=False a "
+                "level equal to the threshold is not reported. Add tests.",
+            ),
+        ),
+        task(
+            "lh03-persist_orders",
+            "long",
+            feat(
+                "feature_persist_orders",
+                "shop/util.py",
+                "def chunks(",
+                "tests/test_hidden_persist.py",
+                HIDDEN_PERSIST,
+            ),
+            "Add save_orders(path, orders) to shop/util.py that writes the same JSON shape "
+            "load_orders reads ({'orders': [...]}), so the two round-trip exactly. Add a round-trip "
+            "test.",
+        ),
+        task(
+            "lh04-order_discount_code",
+            "long",
+            feat(
+                "feature_order_code",
+                "shop/orders.py",
+                "def order_subtotal(",
+                "tests/test_hidden_order_code.py",
+                HIDDEN_ORDER_CODE,
+            ),
+            "Support a discount code in order_total(items, tax=True, code=None): 'SAVE10' takes 10% "
+            "off the subtotal before tax and tier discounts are not combined with a code; an "
+            "unknown code raises ValueError. summary(items, code=None) must show the code on the "
+            "total line when one is used. Update tests.",
+            expected={"shop/orders.py", "shop/pricing.py"},
         ),
     ]
 

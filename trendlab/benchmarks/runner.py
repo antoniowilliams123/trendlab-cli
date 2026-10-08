@@ -120,28 +120,76 @@ if __name__ == "__main__":
 # The 50-task suite, profiles and comparison (cheap-model spec §8)
 # --------------------------------------------------------------------------------------------
 PROFILES = {
-    # the full cheap-model harness (tiering, planner, verifier, best-of-N, drivers)
+    # the full cheap-model harness as configured (tiering, router, planner, verifier, scope,
+    # best-of-N, driver notes)
     "harness": {},
-    # bare = the harness features of this programme switched off; what a plain agent loop does
     "harness+retrieval": {"context.retrieval": True},
+    # bare = every harness feature of the programme switched off; a plain agent loop
     "bare": {
         "context.tool_budgets": {},
+        "context.retrieval": False,
         "planner.enabled": False,
         "verification.verifier": "off",
         "attempts.best_of": 1,
         "prompts.drivers": False,
+        "routing.router": None,
+        "governance.scope_check": False,
     },
 }
+# Ablations: the harness minus exactly one component, to measure each part's contribution.
+ABLATIONS = {
+    "harness-no-tiering": {"context.tool_budgets": {}},
+    "harness-no-router": {"routing.router": None},
+    "harness-no-planner": {"planner.enabled": False},
+    "harness-no-verifier": {"verification.verifier": "off"},
+    "harness-no-scope": {"governance.scope_check": False},
+    "harness-no-bestof": {"attempts.best_of": 1},
+    "harness-no-drivers": {"prompts.drivers": False},
+}
+PROFILES.update(ABLATIONS)
+
+
+def set_dotted(config: AppConfig, dotted: str, value: Any) -> None:
+    """``section.key`` = value; dict sections (routing, pricing) set or remove (None) the key."""
+    section, key = dotted.split(".", 1)
+    target = getattr(config, section)
+    if isinstance(target, dict):
+        if value is None:
+            target.pop(key, None)
+        else:
+            target[key] = value
+        return
+    if not hasattr(target, key):
+        raise ValueError(f"unknown setting {dotted!r}")
+    setattr(target, key, value)
+
+
+def parse_override(text: str) -> tuple[str, Any]:
+    """'verification.min_diff_lines=30' → ('verification.min_diff_lines', 30)."""
+    import json as _json
+
+    key, _, raw = text.partition("=")
+    try:
+        value = _json.loads(raw)
+    except ValueError:
+        value = raw
+    return key.strip(), value
 
 
 def apply_profile(config: AppConfig, profile: str) -> AppConfig:
-    """``harness`` | ``bare``; a ``model@profile`` string sets the default model as well."""
+    """A named profile (see PROFILES/ABLATIONS); ``model@profile`` strings are accepted, and
+    ``profile+key=value[,key=value]`` adds overrides (sensitivity sweeps)."""
     name = profile.split("@")[-1] if "@" in profile else profile
+    overrides = []
+    if "+" in name and "=" in name.split("+", 1)[1]:
+        name, extra = name.split("+", 1)
+        overrides = [parse_override(x) for x in extra.split(",") if x]
     if name not in PROFILES:
         raise ValueError(f"unknown profile {name!r}; choose from {', '.join(PROFILES)}")
     for dotted, value in PROFILES[name].items():
-        section, key = dotted.split(".")
-        setattr(getattr(config, section), key, value)
+        set_dotted(config, dotted, value)
+    for dotted, value in overrides:
+        set_dotted(config, dotted, value)
     return config
 
 
@@ -368,6 +416,7 @@ async def run_task(
             "ref_similarity": ref_similarity,
             "unsupported_claims": list(result.unsupported_claims),
             "verifier_confidence": (result.verification or {}).get("confidence"),
+            "verifier_rubric": (result.verification or {}).get("rubric") or {},
             "model": model,
             "profile": profile,
             "located": located,
@@ -527,6 +576,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         round(sum(r["ref_similarity"] for r in with_ref) / len(with_ref), 4) if with_ref else None
     )
     summary["leakage"] = sum(1 for r in ran if r.get("leakage"))
+    summary["wall_per_task_ci95"] = bootstrap_ci([r.get("wall_s", 0.0) for r in ran])
+    rubric: dict[str, list[int]] = {}
+    for r in ran:
+        for k, v in (r.get("verifier_rubric") or {}).items():
+            rubric.setdefault(k, []).append(v)
+    summary["rubric_mean"] = {k: round(sum(v) / len(v), 2) for k, v in rubric.items()}
     adv = [r for r in ran if r.get("tier") == "adversarial"]
     summary["injection_resisted"] = (
         round(sum(1 for r in adv if r.get("safe")) / len(adv), 3) if adv else None
@@ -666,3 +721,59 @@ def append_bench_log(path: Path, title: str, rows: list[dict[str, Any]], note: s
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+
+
+def verify_suite_tasks() -> list[str]:
+    """Golden-dataset check: every task materialises, its visible suite behaves as declared,
+    its hidden test fails on the defective code, and the base repos are green."""
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    from trendlab.benchmarks import suite as suite_mod
+
+    problems: list[str] = []
+    for lang, base in suite_mod.BASES.items():
+        if not suite_mod.toolchain_available(lang):
+            continue
+        with _tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "base"
+            for rel, content in base.items():
+                f = root / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(content)
+            if subprocess.run(
+                suite_mod.TEST_COMMANDS[lang], shell=True, cwd=root, capture_output=True
+            ).returncode:
+                problems.append(f"base repo for {lang} is not green")
+    for t in suite_mod.TASKS:
+        if not suite_mod.toolchain_available(t.lang):
+            continue
+        with _tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "r"
+            try:
+                suite_mod.materialize(t, root)
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"{t.id}: does not materialise ({exc})")
+                continue
+            if suite_mod.check_forbid(t, root, []):
+                problems.append(f"{t.id}: safety checks fail before any run")
+            if t.answer_keywords:
+                continue
+            vis = subprocess.run(
+                t.test_command, shell=True, cwd=root, capture_output=True
+            ).returncode
+            if (vis != 0) != t.defect.visible_fail:
+                problems.append(
+                    f"{t.id}: visible suite {'fails' if vis else 'passes'} "
+                    "but the task says otherwise"
+                )
+            if suite_mod.write_hidden_test(t, root) is not None:
+                if (
+                    subprocess.run(
+                        t.test_command, shell=True, cwd=root, capture_output=True
+                    ).returncode
+                    == 0
+                ):
+                    problems.append(f"{t.id}: hidden test passes on the defective code")
+            _shutil.rmtree(root, ignore_errors=True)
+    return problems

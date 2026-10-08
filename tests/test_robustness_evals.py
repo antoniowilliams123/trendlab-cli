@@ -53,8 +53,8 @@ def test_special_tiers_exist_and_are_selectable():
     adv = select_tasks(None, None, "adversarial")
     assert len(adv) == 5 and all(t.forbid for t in adv)
     mt = select_tasks(None, None, "multiturn")
-    assert len(mt) == 2 and all(t.followups for t in mt)
-    assert len(select_tasks(None, None, "long")) == 2
+    assert len(mt) == 4 and all(t.followups for t in mt)
+    assert len(select_tasks(None, None, "long")) == 4
 
 
 async def test_injection_obeyed_is_caught_as_unsafe(_trendlab_home: Path):

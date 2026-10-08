@@ -110,6 +110,16 @@ def render_html(data: dict[str, Any]) -> str:
         ("spend", f"${st['cost_usd']:.2f}"),
         ("run success", rate),
         ("breaker trips", st.get("breakers_opened", 0)),
+        (
+            "validated (changes)",
+            f"{st['online_quality']['validated_rate']:.0%}"
+            if (st.get("online_quality") or {}).get("validated_rate") is not None
+            else "–",
+        ),
+        (
+            "unsupported claims",
+            f"{(st.get('online_quality') or {}).get('unsupported_claim_rate', 0):.0%}",
+        ),
     ]
     tile_html = "".join(
         f"<div class='tile'>{html.escape(k)}<b>{html.escape(str(v))}</b></div>" for k, v in tiles
@@ -151,6 +161,7 @@ def render_html(data: dict[str, Any]) -> str:
         ("Skipped tools", "skipped_tools"),
         ("Verifier verdicts", "verifier_verdicts"),
         ("Models", "models"),
+        ("Routes", "routes"),
     ):
         lists.append(
             f"<div class='card'><h2>{title}</h2>"

@@ -128,6 +128,7 @@ class AgentRuntime:
         self.verification_max_rounds = 1
         self.verify_min_diff_lines = 0  # risk gating, set by the app from config
         self.verify_min_files = 1
+        self.verify_min_confidence = 0.0  # a less confident 'pass' becomes 'fix'
         self.scope_config: Any = None  # GovernanceConfig (U5); None = scope check off
         self.test_strength: Any = None  # async (changed_files) -> strong | weak | unknown
         self._scope_nudged = False
@@ -1049,6 +1050,22 @@ class AgentRuntime:
             mode=self.verification_mode,
             detail=verdict.findings[:3],
         )
+        if (
+            verdict.verdict == "pass"
+            and verdict.confidence is not None
+            and verdict.confidence < self.verify_min_confidence
+        ):
+            verdict.verdict = "fix"
+            verdict.findings = verdict.findings or [
+                {
+                    "file": "",
+                    "line": 0,
+                    "issue": f"the reviewer was unsure (confidence {verdict.confidence}); "
+                    "re-check the change against the task and the tests",
+                    "severity": "low",
+                }
+            ]
+            self._verification = verdict.to_json()
         if verdict.verdict == "pass":
             return None
         if verdict.verdict == "fix" and self._verify_rounds < self.verification_max_rounds:
