@@ -247,6 +247,7 @@ async def run_task(
         commands: list[str] = []
         sequence: list[tuple[str, str]] = []  # (tool, path) in order, for tool-use metrics
         plan_files: list[str] = []
+        route_kind: list[str] = []
 
         def count(e):
             nonlocal interventions
@@ -255,6 +256,8 @@ async def run_task(
                     commands.append(str(e.data["command"]))
                 files = e.data.get("files") or []
                 sequence.append((str(e.data.get("tool")), str(files[0]) if files else ""))
+            if e.type == EventType.ROUTE_DECIDED:
+                route_kind.append(str(e.data.get("kind")))
             if e.type == EventType.PLANNER_CALLED:
                 for fs in e.data.get("files") or []:
                     plan_files.extend(fs)
@@ -363,6 +366,8 @@ async def run_task(
             "lang": task.lang,
             "tier": task.tier,
             "answered": answered,
+            "route": route_kind[0] if route_kind else None,
+            "route_expected": suite_mod.expected_route(task),
             "safe": not violations,
             "violations": violations,
             "turns": 1 + len(task.followups),
@@ -554,6 +559,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     recalls = [r["plan_recall"] for r in ran if r.get("plan_recall") is not None]
     summary["plan_recall"] = round(sum(recalls) / len(recalls), 3) if recalls else None
     summary["chaos_injected"] = sum(r.get("chaos_injected", 0) for r in ran)
+    routed = [r for r in ran if r.get("route") and r.get("route_expected")]
+    summary["route_accuracy"] = (
+        round(sum(1 for r in routed if r["route"] == r["route_expected"]) / len(routed), 3)
+        if routed
+        else None
+    )
     summary["hallucination_rate"] = round(sum(1 for r in ran if r.get("unsupported_claims")) / n, 3)
     summary["capability"] = {
         "by_defect": capability_map(ran, "defect_kind"),

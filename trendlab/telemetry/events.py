@@ -94,6 +94,7 @@ class EventType(StrEnum):
     CLAIM_UNSUPPORTED = "claim.unsupported"  # final answer claims what the evidence contradicts
     INJECTION_SUSPECTED = "security.injection_suspected"  # tool output addressed the agent
     INVARIANT_VIOLATED = "invariant.violated"  # a runtime assertion failed (harness bug)
+    ROUTE_DECIDED = "route.decided"  # request classified; run settings chosen (router)
     SPAN_ENDED = "span.ended"
     VERIFY_SECOND_OPINION = "verify.second_opinion"  # two verifier models compared (U2)
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context

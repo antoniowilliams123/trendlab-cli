@@ -292,6 +292,8 @@ class TrendLabApp:
         self.agent.verify_min_diff_lines = vcfg.min_diff_lines
         self.agent.verify_min_files = vcfg.min_files
         self.agent.scope_config = self.config.governance
+        if self.config.routing.get("router"):
+            self.agent.router = self._route_request
         self.agent.test_strength = self._test_strength
         if self.config.planner.enabled:
             self.agent.planner = self._plan_steps
@@ -565,6 +567,26 @@ class TrendLabApp:
 
         steps, _ = await ask_json(call, messages, parse_steps)
         return steps
+
+    async def _route_request(self, prompt: str):
+        """Semantic routing: a cheap model classifies the request before the run."""
+        from trendlab.agent.router import model_route
+
+        assert self.gateway is not None and self.costs is not None
+        ref = self.config.routing["router"]
+
+        async def call(messages):
+            response, used = await self.gateway.complete(ref, messages, None)
+            self.costs.record(
+                used,
+                response.usage,
+                0,
+                role="router",
+                local=self.gateway.provider(used).capabilities().local,
+            )
+            return response.text
+
+        return await model_route(call, prompt)
 
     def _best_of_for(self, model_ref: str) -> int:
         cfg = self.config.attempts

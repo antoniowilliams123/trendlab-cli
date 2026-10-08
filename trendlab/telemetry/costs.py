@@ -13,6 +13,7 @@ ROLE_PHASE = {
     "planning": "plan",
     "verifier": "verify",
     "judge": "verify",
+    "router": "plan",
     "reviewer": "verify",
     "summarizer": "summarise",
     "screener": "summarise",

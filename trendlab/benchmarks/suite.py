@@ -1435,6 +1435,17 @@ def leakage(task: Task, context_text: str) -> list[str]:
     return leaked
 
 
+def expected_route(task: Task) -> str:
+    """Ground-truth route for a task (router accuracy eval)."""
+    if task.answer_keywords:
+        return "question"
+    if task.tier == "long" or task.defect.kind.startswith("feature"):
+        return "feature"  # a multi-turn task is routed by its first prompt"
+    if task.id.startswith("ad05"):
+        return "risky"
+    return "small_fix"
+
+
 def reference_content(task: Task, rel: str) -> str | None:
     """Reference answer (exact/fuzzy match grading): the file as it is without the defect."""
     return BASES[task.lang].get(rel)

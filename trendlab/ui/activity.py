@@ -104,6 +104,11 @@ def format_event(event: Event) -> str | None:
             f"  [{GREY}]⑂ candidate {d.get('n')}:[/] {mark} [{GREY}]{d.get('diff_lines')} diff lines"
             f" · ${d.get('cost_usd', 0):.3f} · {d.get('elapsed_s', 0):.0f}s[/]"
         )
+    if t == EventType.ROUTE_DECIDED:
+        return (
+            f"[{GREY}]↦ routed as {escape(str(d.get('kind')))} "
+            f"({d.get('by')}, {float(d.get('confidence') or 0):.0%})[/]"
+        )
     if t == EventType.INJECTION_SUSPECTED:
         first = (d.get("hits") or [{}])[0]
         return (

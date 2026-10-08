@@ -137,6 +137,8 @@ class AgentRuntime:
         self._verification: dict[str, Any] | None = None
         self._task_text = ""
         # Step-scoped execution (cheap-model spec §3.3, §4): attached by the app.
+        self.router: Any = None  # async (prompt) -> Route; None = rule router (semantic routing)
+        self._route: Any = None
         self.planner: Any = None  # async (task_text, note) -> list[step dict] | None
         self.planner_max_calls = 3
         self.planner_min_chars = 400
@@ -268,6 +270,39 @@ class AgentRuntime:
         self._phase = "plan"
         self._skills_loaded = set()
         await self._trigger_skills(task_text=self._task_text)
+        saved = await self._apply_route()
+        try:
+            return await self._run_loop(started)
+        finally:
+            for k, v in saved.items():
+                setattr(self, k, v)
+
+    async def _apply_route(self) -> dict[str, Any]:
+        from trendlab.agent.router import rule_route, settings_for
+
+        try:
+            route = (
+                await self.router(self._task_text) if self.router else rule_route(self._task_text)
+            )
+        except Exception:  # noqa: BLE001 — routing is best effort
+            route = rule_route(self._task_text)
+        self._route = route
+        settings = settings_for(route)
+        saved = {k: getattr(self, k) for k in settings if hasattr(self, k)}
+        for k, v in settings.items():
+            setattr(self, k, v)
+        self.events.emit(
+            EventType.ROUTE_DECIDED,
+            session_id=self.session_id,
+            kind=route.kind,
+            confidence=route.confidence,
+            reason=route.reason,
+            by=route.by,
+            settings=settings,
+        )
+        return saved
+
+    async def _run_loop(self, started: float) -> RunResult:
         await self._maybe_plan()
         compaction_attempted = False
         stop_reason: str | None = None
