@@ -147,13 +147,9 @@ async def replay_session(
     with tempfile.TemporaryDirectory(prefix="trendlab-replay-") as tmp:
         root = Path(tmp) / "repo"
         if src is not None and src.is_dir():
-            shutil.copytree(
-                src,
-                root,
-                ignore=shutil.ignore_patterns(
-                    ".git", ".venv", "node_modules", "__pycache__", ".trendlab"
-                ),
-            )
+            problem = copy_project(src, root)
+            if problem:
+                return {"session": session_id, "project": str(src), "error": problem}
         else:
             root.mkdir()
         config.defaults.permission_mode = PermissionMode.UNSAFE
@@ -204,6 +200,65 @@ async def replay_session(
             "cost_after": round(tl.costs.total_usd if tl.costs else 0.0, 4),
             "wall_s": round(time.monotonic() - started, 1),
         }
+
+
+MAX_FILES = 20_000
+MAX_BYTES = 500 * 1024 * 1024
+_SKIP = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".trendlab",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+
+
+def copy_project(src: Path, dest: Path) -> str | None:
+    """Scratch copy for a replay: tracked files only when ``src`` is a git repo, otherwise a
+    bounded walk. Returns a reason instead of copying a home directory or a data dump."""
+    import subprocess
+
+    src = src.resolve()
+    if src in {Path.home().resolve(), Path("/")}:
+        return "refusing to replay a session whose project is the home directory"
+    if (src / ".git").exists():
+        proc = subprocess.run(
+            ["git", "-C", str(src), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            rels = [r for r in proc.stdout.decode("utf-8", "replace").split("\0") if r]
+            if len(rels) > MAX_FILES:
+                return f"project has {len(rels)} files; replay caps at {MAX_FILES}"
+            total = 0
+            for rel in rels:
+                p = src / rel
+                if not p.is_file():
+                    continue
+                total += p.stat().st_size
+                if total > MAX_BYTES:
+                    return f"project exceeds {MAX_BYTES // 1_048_576} MB; replay refused"
+                d = dest / rel
+                d.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(p, d)
+            return None
+    count = total = 0
+    for p in src.rglob("*"):
+        if any(part in _SKIP for part in p.relative_to(src).parts):
+            continue
+        if p.is_file():
+            count += 1
+            total += p.stat().st_size
+            if count > MAX_FILES or total > MAX_BYTES:
+                return "project too large for a replay copy (cap 20k files / 500 MB)"
+            d = dest / p.relative_to(src)
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, d)
+    return None
 
 
 def _counts(names: list[str]) -> dict[str, int]:
