@@ -21,6 +21,7 @@ async def test_step_checkpoints_and_undo_by_step(project: Path, _trendlab_home: 
     cfg = load_config(project)
     cfg.remote_approval = RemoteApprovalConfig(enabled=False)
     cfg.sessions.record_cassettes = False
+    cfg.planner.design_checkpoint = False  # this test is about undo, not design
     provider = ScriptedProvider(
         [
             _call(1, "write_file", path="src/app.py", content="TIMEOUT = 60\n"),

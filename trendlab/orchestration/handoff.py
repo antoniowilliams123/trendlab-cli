@@ -25,12 +25,29 @@ def missing_sections(role: str, text: str) -> list[str]:
     return [s for s in REQUIRED.get(role, ()) if s not in up]
 
 
+_SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".trendlab"}
+
+
+def _resolve(path: str, root: Path) -> Path:
+    """The cited file; a bare name ("report.py") resolves only when exactly one project file
+    has that name, so an ambiguous or wrong citation stays unverified."""
+    f = (root / path).resolve()
+    if f.is_file() or "/" in path:
+        return f
+    hits = [
+        h
+        for h in root.rglob(path)
+        if h.is_file() and not _SKIP.intersection(h.relative_to(root).parts)
+    ][:2]
+    return hits[0].resolve() if len(hits) == 1 else f
+
+
 def evidence(text: str, root: Path) -> dict[str, Any]:
     """Cited ``path:line`` references and how many point at a real line of a real file."""
     refs = sorted({(p, int(n)) for p, n in _REF.findall(text or "")})
     ok = []
     for path, line in refs:
-        f = (root / path).resolve()
+        f = _resolve(path, root)
         try:
             inside = root.resolve() in f.parents or f == root.resolve()
             n_lines = (

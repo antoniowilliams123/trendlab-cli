@@ -315,6 +315,7 @@ class TrendLabApp:
             self.agent.planner = self._plan_steps
             self.agent.planner_max_calls = self.config.planner.max_calls
             self.agent.planner_min_chars = self.config.planner.min_prompt_chars
+        self.agent.design_checkpoint = self.config.planner.design_checkpoint
         self.agent.step_iterations = self.config.limits.step_iterations
         self.agent.best_of = self._best_of_for(self.model_ref)
         self.agent.candidates = self._run_candidates

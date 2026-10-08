@@ -157,6 +157,7 @@ async def test_auto_checkpoint_and_undo_via_app(project: Path, _trendlab_home: P
     from trendlab.config.schema import PermissionMode
 
     cfg.defaults.permission_mode = PermissionMode.AUTO_EDIT
+    cfg.planner.design_checkpoint = False  # this test is about checkpoints, not design
     provider = ScriptedProvider(
         [
             ModelResponse(

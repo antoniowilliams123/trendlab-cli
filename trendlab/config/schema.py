@@ -214,6 +214,9 @@ class PlannerConfig(BaseModel):
     max_calls: int = Field(default=3, ge=1, le=6)  # initial plan + re-plans per run
     # M1 finding: planning every medium prompt cost more than it saved; plan long briefs only.
     min_prompt_chars: int = 400
+    # no plan yet and the agent is about to edit a second source file: hold that edit once and
+    # ask for a three-line design (approach, interfaces, reuse) first
+    design_checkpoint: bool = True
 
 
 class AttemptsConfig(BaseModel):

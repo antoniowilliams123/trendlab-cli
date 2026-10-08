@@ -101,10 +101,16 @@ def test_reference_fit_flags_tests_for_behaviour_nobody_asked_for():
         "+def test_chunks_rejects_negative():\n+    with pytest.raises(ValueError):\n"
         "+        chunks([1], -1)\n+\n+\n"
     )
-    assert reference_fit(task, keeps) == {"reference_fit": True, "fabricated_tests": []}
+    assert reference_fit(task, keeps)["reference_fit"] is True
     bad = reference_fit(task, invented)
     assert bad["reference_fit"] is False
     assert bad["fabricated_tests"] == ["tests/test_util.py::test_chunks_rejects_negative"]
+    assert bad["invented_inputs"] == bad["fabricated_tests"]  # DID NOT RAISE on correct code
+    wording = keeps.replace("[[1, 2], [3]]", "[[1, 2], [3], []]")
+    other = reference_fit(task, wording)
+    assert other["reference_fit"] is False and other["invented_inputs"] == []
+    deleted = "--- a/tests/test_util.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x\n"
+    assert reference_fit(task, deleted).get("reference_fit") in (None, True)
     assert reference_fit(task, "") == {}
     src_only = "--- a/shop/util.py\n+++ b/shop/util.py\n@@ -1 +1 @@\n-x\n+y\n"
     assert _test_sections(src_only + keeps).startswith("--- a/tests/test_util.py")
@@ -112,3 +118,68 @@ def test_reference_fit_flags_tests_for_behaviour_nobody_asked_for():
 
 def test_policy_tells_the_agent_not_to_invent_edge_cases():
     assert "Fix what was asked" in _POLICY and "unless the user asked" in _POLICY
+
+
+def test_handoff_resolves_a_bare_file_name_only_when_unambiguous(tmp_path):
+    from trendlab.orchestration.handoff import evidence
+
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "report.py").write_text("a\nb\nc\n")
+    ev = evidence("cause at report.py:2 and shopping/report.py:2", tmp_path)
+    assert ev["verified"] == 1 and ev["unverified"] == ["shopping/report.py:2"]
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "report.py").write_text("x\ny\n")
+    ev = evidence("cause at report.py:2", tmp_path)  # two files called report.py
+    assert ev["verified"] == 0 and ev["unverified"] == ["report.py:2"]
+    assert evidence("report.py:9", tmp_path)["verified"] == 0
+
+
+async def test_design_checkpoint_holds_the_second_source_file_once(project, _trendlab_home):
+    from rich.console import Console
+
+    from trendlab.app import TrendLabApp
+    from trendlab.config.loader import load_config
+    from trendlab.config.schema import PermissionMode, RemoteApprovalConfig
+    from trendlab.providers.base import ModelResponse, ToolCall
+    from trendlab.providers.scripted import ScriptedProvider
+
+    cfg = load_config(project)
+    cfg.remote_approval = RemoteApprovalConfig(enabled=False)
+    cfg.sessions.record_cassettes = False
+
+    def write(i, path):
+        return ModelResponse(
+            tool_calls=[
+                ToolCall(id=f"w{i}", name="write_file", arguments={"path": path, "content": "x\n"})
+            ]
+        )
+
+    provider = ScriptedProvider(
+        [
+            write(1, "src/app.py"),
+            write(2, "src/extra.py"),  # second source file: held
+            ModelResponse(text="approach: split; interfaces: extra(); reuse: app"),
+            write(3, "src/extra.py"),  # repeated after the design: runs
+            write(4, "tests/test_extra.py"),  # tests never trigger it
+            ModelResponse(text="done (regression test: not applicable: demo)"),
+        ]
+    )
+    tl = TrendLabApp(
+        project,
+        cfg,
+        provider=provider,
+        model_ref="scripted:m",
+        permission_mode=PermissionMode.UNSAFE,
+        console=Console(quiet=True),
+    )
+    fired = []
+    await tl.start(interactive=False)
+    tl.events.subscribe(lambda e: fired.append(e.data) if e.data.get("guard") else None)
+    try:
+        await tl.run_prompt("add extra")
+    finally:
+        await tl.stop()
+    held = [m for m in tl.agent.messages if "NOT EXECUTED YET" in str(m.get("content"))]
+    assert len(held) == 1 and "src/extra.py" in held[0]["content"]
+    assert [f["guard"] for f in fired if f["guard"] == "design_checkpoint"] == ["design_checkpoint"]
+    assert (project / "src" / "extra.py").read_text() == "x\n"

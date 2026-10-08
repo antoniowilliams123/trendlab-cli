@@ -654,11 +654,38 @@ def reference_fit(task, run_diff: str) -> dict[str, Any]:
         (root / "agent_tests.diff").unlink()
         if applied.returncode != 0:
             return {"reference_fit": None}
+        import os as _os
+
         res = subprocess.run(
-            task.test_command, shell=True, cwd=root, capture_output=True, text=True, timeout=120
+            task.test_command,
+            shell=True,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**_os.environ, "COLUMNS": "400"},  # untruncated failure reasons
         )
-        failed = sorted(set(re.findall(r"FAILED (\S+)", res.stdout + res.stderr)))
-        return {"reference_fit": res.returncode == 0, "fabricated_tests": failed}
+        out = res.stdout + res.stderr
+        failed = sorted(
+            set(re.findall(r"FAILED (\S+)", out))  # pytest
+            | set(re.findall(r"(?m)^\s*not ok \d+ - (.+?)\s*$", out))  # node --test
+            | set(re.findall(r"--- FAIL: (\S+)", out))  # go test
+        )
+        if res.returncode == 0:
+            return {"reference_fit": True, "fabricated_tests": [], "invented_inputs": []}
+        if not failed:
+            return {"reference_fit": None}  # nothing collected or a crash: inconclusive
+        # invented input: the correct code crashes on it, or the test wants an error the correct
+        # code never raises. Otherwise the test only expects a different result (own wording).
+        reasons = dict(re.findall(r"FAILED (\S+) - (.+)", out))
+        invented = [
+            name
+            for name in failed
+            if name in reasons
+            and not re.match(r"(assert\b|AssertionError)", reasons[name])
+            or "DID NOT RAISE" in reasons.get(name, "")
+        ]
+        return {"reference_fit": False, "fabricated_tests": failed, "invented_inputs": invented}
 
 
 def install_chaos(gateway, rate: float, *, seed: str) -> list[Any]:
@@ -699,14 +726,20 @@ def design_metrics(design: dict[str, Any] | None, run_diff: str = "") -> dict[st
         return {"design_given": False}
     names = {m for sig in design.get("interfaces") or [] for m in _IDENT.findall(sig)[:1]}
     added: list[str] = []
+    removed: list[str] = []
     path = ""
     for ln in (run_diff or "").splitlines():
         if ln.startswith("+++ "):
             path = ln[4:].removeprefix("b/")
+        elif ln.startswith("--- "):
+            continue
         elif ln.startswith("+") and not _is_test(path):
             added.append(ln)
+        elif ln.startswith("-") and not _is_test(path):
+            removed.append("+" + ln[1:])
     text = "\n".join(added)
-    new_defs = set(_NEW_DEF.findall(text))
+    # rewritten functions are not new code: only names that did not exist before count
+    new_defs = set(_NEW_DEF.findall(text)) - set(_NEW_DEF.findall("\n".join(removed)))
     return {
         "design_given": True,
         "design_interfaces": len(names),
@@ -942,6 +975,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         summary["reference_fit"] = {
             "runs_with_tests": len(fit),
             "fabricated_rate": round(sum(1 for x in fit if not x) / len(fit), 3),
+            "invented_input_rate": round(
+                sum(1 for r in ran if r.get("invented_inputs")) / len(fit), 3
+            ),
         }
     lat = [r["edit_to_validation_s"] for r in ran if r.get("edit_to_validation_s") is not None]
     if lat:
@@ -1220,7 +1256,15 @@ async def delegate_eval_task(
     rel = task.defect.file
     refs = [(p, int(n)) for p, n in _re.findall(r"([\w./-]+\.\w+):(\d+)", text)]
     located = any(p.endswith(rel) for p, _ in refs) or rel in text
-    line_hit = any(p.endswith(rel) and abs(n - task.answer_line) <= 3 for p, n in refs)
+    # a line exists only for a real defect; questions and features have no "line of the bug"
+    bug = (
+        not task.answer_keywords
+        and not task.defect.kind.startswith("feature")
+        and not (task.followups)
+    )
+    line_hit = (
+        any(p.endswith(rel) and abs(n - task.answer_line) <= 3 for p, n in refs) if bug else None
+    )
     return {
         "task": task.id,
         "kind": task.defect.kind,
@@ -1230,6 +1274,7 @@ async def delegate_eval_task(
         "handoff_complete": report.handoff.get("complete"),
         "evidence_cited": report.handoff.get("evidence_cited"),
         "evidence_verified": report.handoff.get("evidence_verified"),
+        "unverified": report.handoff.get("unverified") or [],
         "cost": round(report.cost_usd, 4),
         "tool_calls": report.tool_calls,
         "elapsed_s": round(report.elapsed_s, 1),
@@ -1245,7 +1290,11 @@ def summarize_delegate_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "tasks": n,
         "located": round(sum(1 for r in rows if r["located"]) / n, 3),
-        "line_hit": round(sum(1 for r in rows if r["line_hit"]) / n, 3),
+        "line_hit": round(
+            sum(1 for r in rows if r["line_hit"])
+            / max(1, sum(1 for r in rows if r["line_hit"] is not None)),
+            3,
+        ),
         "handoff_complete": round(sum(1 for r in rows if r["handoff_complete"]) / n, 3),
         "evidence_verified_share": round(verified / cited, 3) if cited else None,
         "cost": round(sum(r["cost"] for r in rows), 4),

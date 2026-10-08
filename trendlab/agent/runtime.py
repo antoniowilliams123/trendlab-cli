@@ -166,6 +166,9 @@ class AgentRuntime:
         self.plan_review: dict[str, Any] | None = None  # set by the app's planner call (U7)
         self.plan_gate_reset: Any = None  # app hook: re-arm the plan gate (co-design, U30)
         self._replanned_divergence = False
+        self.design_checkpoint = False  # the app turns it on from [planner]
+        self._design_gated = False
+        self._design_pending = False
         self.step_iterations = 12
         self.candidates: Any = None  # async (task, failure_tail, n) -> outcome dict
         self.best_of = 1
@@ -285,6 +288,8 @@ class AgentRuntime:
         self._verification = None
         self._planner_calls = 0
         self._replanned_divergence = False
+        self._design_gated = False
+        self._design_pending = False
         self.plan_review = None
         if hasattr(self.tools, "tainted"):
             self.tools.tainted = []
@@ -456,6 +461,7 @@ class AgentRuntime:
                             }
                         )
                 if response.tool_calls:
+                    self._design_pending = False
                     self._append(_assistant_message(response))
                     if response.text and self.on_token is None:
                         pass
@@ -481,6 +487,19 @@ class AgentRuntime:
                             for c in response.tool_calls
                             if c.arguments.get("path")
                         ],
+                    )
+                    continue
+
+                if self._design_pending:
+                    # the reply to a held edit is the design, not the end of the task
+                    self._design_pending = False
+                    self._append({"role": "assistant", "content": response.text})
+                    self._append(
+                        {
+                            "role": "user",
+                            "content": "Design noted. Continue: make the held edit (or the "
+                            "one the design calls for) and finish the task.",
+                        }
                     )
                     continue
 
@@ -701,6 +720,12 @@ class AgentRuntime:
                 for c in calls[i:]:
                     self._append(_tool_message(c, "NOT EXECUTED: run canceled by user"))
                 return "canceled by user", AgentState.CANCELED
+            held = self._design_gate(calls[i])
+            if held:
+                self._append(_tool_message(calls[i], held))
+                for c in calls[i + 1 :]:
+                    self._append(_tool_message(c, "NOT EXECUTED: state the design first (above)"))
+                return None
             self.state.transition(AgentState.RUNNING_TOOL)
             group = [calls[i]]
             if self._is_read_only(calls[i]):
@@ -727,6 +752,37 @@ class AgentRuntime:
                     return stop
             i += len(group)
         return None
+
+    def _design_gate(self, call) -> str:
+        """Architecture before implementation for runs without a plan: the first edit that
+        makes the change span a second source file is held once, and the agent states a short
+        design before it continues. Returns the tool message ('' = run the call)."""
+        if (
+            not self.design_checkpoint
+            or self._design_gated
+            or self._planner_calls
+            or call.name not in _EDIT_TOOLS
+        ):
+            return ""
+        done = {f.strip("./") for f in self.tools.changed_files if _is_code(f)}
+        new = {p for p in _edit_paths(call) if _is_code(p)} - done
+        if not done or not new:
+            return ""
+        self._design_gated = True
+        self._design_pending = True
+        self.events.emit(
+            EventType.GUARD_FIRED,
+            session_id=self.session_id,
+            guard="design_checkpoint",
+            files=sorted(done | new)[:6],
+        )
+        return (
+            f"NOT EXECUTED YET: this edit makes the change span another source file "
+            f"({', '.join(sorted(new)[:3])}). Before editing more files, state the design in "
+            "three short lines: approach (how the change fits the existing code); interfaces "
+            "(each function or class signature you add or change); reuse (existing code you "
+            "build on). Then repeat this edit, or a better one that fits the design."
+        )
 
     def _is_read_only(self, call) -> bool:
         return call.name in READ_ONLY_TOOLS
@@ -1465,6 +1521,24 @@ _EXPLORE_TOOLS = {
     "delegate",
 }
 _EDIT_TOOLS = {"write_file", "patch_file", "apply_patch", "delete_file"}
+
+
+_CODE_EXT = re.compile(r"\.(py|js|jsx|ts|tsx|mjs|go|rs|java|kt|rb|php|cs|swift|c|cc|cpp|h|hpp)$")
+
+
+def _is_code(path: str) -> bool:
+    """Source code, not tests, docs or data: the files a design is about."""
+    return bool(_CODE_EXT.search(path)) and not _is_test_path(path)
+
+
+def _edit_paths(call) -> list[str]:
+    args = call.arguments or {}
+    if args.get("path"):
+        return [str(args["path"]).strip("./")]
+    patch = str(args.get("patch") or args.get("diff") or "")
+    return [p.strip("./") for p in re.findall(r"(?m)^\+\+\+ (?:b/)?(\S+)", patch)]
+
+
 _VALIDATE_TOOLS = {"run_tests", "shell", "background"}
 
 
