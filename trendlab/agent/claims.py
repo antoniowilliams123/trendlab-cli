@@ -18,7 +18,10 @@ _TESTS_PASS = re.compile(
     re.I,
 )
 _ADDED_TEST = re.compile(
-    r"\b(added|wrote|created|new)\b[^.\n]{0,40}\b(regression\s+)?tests?\b", re.I
+    r"\b(added|wrote|created|adding|writing)\b[^.\n]{0,40}\b(regression\s+)?tests?\b", re.I
+)
+_NEGATION = re.compile(
+    r"\b(no|not|never|didn'?t|did not|without|instead of|nor|wasn'?t|isn'?t|no need)\b", re.I
 )
 _FILE = re.compile(r"`?([\w./-]+\.(?:py|js|ts|tsx|mjs|go|rs|java|rb|toml|json|md))`?")
 _CHANGED_VERB = re.compile(r"\b(changed|modified|edited|updated|fixed|patched)\b", re.I)
@@ -35,10 +38,11 @@ def unsupported_claims(text: str, evidence: dict[str, Any]) -> list[str]:
             claims.append("claims tests pass but no validation ran")
         elif not runs[-1].get("ok"):
             claims.append("claims tests pass but the last validation failed")
-    if _ADDED_TEST.search(body) and not any(
-        "test" in f.lower() or "spec" in f.lower() for f in changed
-    ):
-        claims.append("claims a test was added but no test file changed")
+    test_changed = any("test" in f.lower() or "spec" in f.lower() for f in changed)
+    for sentence in re.split(r"(?<=[.!?\n])\s+", body):
+        if _ADDED_TEST.search(sentence) and not _NEGATION.search(sentence) and not test_changed:
+            claims.append("claims a test was added but no test file changed")
+            break
     for sentence in re.split(r"(?<=[.!?\n])\s+", body):
         if not _CHANGED_VERB.search(sentence):
             continue

@@ -80,6 +80,11 @@ def test_unsupported_claims():
         )
         == []
     )
+    # negated statements are not claims (a false alarm found in a live run)
+    assert (
+        unsupported_claims("The existing test covers it, so no new test was needed.", no_test) == []
+    )
+    assert unsupported_claims("I did not add a test; the existing one pins it.", no_test) == []
 
 
 async def test_run_result_carries_unsupported_claims(
