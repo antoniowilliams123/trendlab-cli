@@ -301,6 +301,7 @@ class TrendLabApp:
         self.agent.verify_min_files = vcfg.min_files
         self.agent.verify_min_confidence = vcfg.min_confidence
         self.agent.scope_config = self.config.governance
+        self.agent.pre_run_sources = self._pre_run_sources
         if self.config.routing.get("router"):
             self.agent.router = self._route_request
         if self.config.context.retrieval:
@@ -723,6 +724,18 @@ class TrendLabApp:
         return await pairwise(call, task=brief, a=patch_a, b=patch_b)
 
     # -- generated-test strength (uplift U5) ------------------------------------------------------
+    def _pre_run_sources(self) -> dict[str, str | None] | None:
+        """Files as they were before this run, from the run checkpoint (None = did not exist)."""
+        if self._run_checkpoint is None or self.checkpoints is None:
+            return None
+        snap = self.checkpoints.dir / self._run_checkpoint["id"]
+        out: dict[str, str | None] = {}
+        # every mutated file is snapshotted before its first edit; no snapshot = it was created
+        for rel in self.tools.changed_files if self.tools else {}:
+            pre = snap / rel
+            out[rel] = pre.read_text(errors="replace") if pre.is_file() else None
+        return out
+
     async def _test_strength(self, changed: dict[str, list[str]]) -> str:
         """Does the new test fail without the fix? Source files are restored from this run's
         checkpoint snapshot, the test command runs, then the current files are put back."""

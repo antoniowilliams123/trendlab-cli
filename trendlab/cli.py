@@ -1788,6 +1788,43 @@ def spec_cmd(
         console.print(f"  [danger]drift[/danger] {d['id']}: {d['was']} → {d['now']}")
 
 
+@app.command("arch")
+def arch_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    rule: list[str] = typer.Option(
+        [], "--rule", help="Forbidden import edge 'pkg.low -> pkg.high' (adds to config)."
+    ),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Architecture check (U24): import graph, cycles, rule violations, big modules."""
+    from trendlab.agent.arch import report
+    from trendlab.config.loader import load_config
+
+    root = project.resolve()
+    rules = list(load_config(root).governance.forbid_imports) + list(rule)
+    r = report(root, rules)
+    if output == "json":
+        typer.echo(json.dumps(r, indent=2))
+        return
+    console.print(
+        f"[neon]architecture[/neon] {root.name}: {r['modules']} modules, {r['edges']} import "
+        f"edges · {len(r['cycles'])} cycles · {len(r['violations'])} rule violations"
+    )
+    for c in r["cycles"][:5]:
+        console.print("  cycle: " + " -> ".join(c[:8]) + (" …" if len(c) > 8 else ""))
+    for v in r["violations"][:10]:
+        console.print(f"  [danger]✗[/danger] {v}")
+    if r["big_modules"]:
+        console.print(
+            "  biggest: " + ", ".join(f"{m} ({n} lines)" for m, n in r["big_modules"][:5])
+        )
+    console.print(
+        "  most depended on: " + ", ".join(f"{m} ({n})" for m, n in r["most_depended_on"])
+    )
+    if r["cycles"] or r["violations"]:
+        raise typer.Exit(code=1)
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),

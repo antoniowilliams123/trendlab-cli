@@ -297,6 +297,8 @@ class GovernanceConfig(BaseModel):
     # prompt-level commits: each completed turn with changes becomes a commit on the side
     # branch trendlab/turns/<session>; the working branch, index and HEAD are never touched
     commit_per_turn: bool = False
+    # architecture rules (U24): "pkg.low -> pkg.high" import edges a change may not add
+    forbid_imports: list[str] = Field(default_factory=list)
 
 
 class PlanGateConfig(BaseModel):

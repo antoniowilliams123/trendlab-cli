@@ -1031,6 +1031,27 @@ class AgentRuntime:
         )
         return True
 
+    def _arch_problems(self, changed: dict[str, list[str]], rules: list[str]) -> list[str]:
+        """U24: import edges this run added that break a rule or close a new cycle."""
+        from trendlab.agent.arch import new_violations
+
+        root = self.tools.ctx.project_root
+        sources = {}
+        for rel in changed:
+            if rel.endswith(".py") and (root / rel).is_file():
+                sources[rel] = (root / rel).read_text(errors="replace")
+        if not sources:
+            return []
+        try:
+            # judge against the tree as it was: restore originals for the "before" graph
+            return new_violations(root, sources, rules, before_sources=self._pre_run_sources())
+        except Exception:  # noqa: BLE001 — an analysis failure must not block a run
+            return []
+
+    def _pre_run_sources(self) -> dict[str, str] | None:
+        getter = getattr(self, "pre_run_sources", None)
+        return getter() if callable(getter) else None
+
     def _communication_check(self, final_text: str) -> str | None:
         """U9: measure every final answer; when the user set communication rules and the answer
         breaks them, ask once for a rewrite of the answer only."""
@@ -1091,6 +1112,9 @@ class AgentRuntime:
                 rep.problems.append(
                     "the test you added passes even without your fix — it does not catch the bug"
                 )
+        arch = self._arch_problems(changed, getattr(cfg, "forbid_imports", []) or [])
+        if arch:
+            rep.problems.extend(arch)
         self._scope = rep.to_json()
         self.events.emit(
             EventType.SCOPE_CHECKED,
