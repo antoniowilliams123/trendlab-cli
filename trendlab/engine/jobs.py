@@ -123,6 +123,16 @@ async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, A
             hints.append(f"model version changed {prev_meta['model_served']} → {served}")
         if prev_meta.get("prompt_hash") and prev_meta["prompt_hash"] != phash:
             hints.append("system prompt changed")
+        prev_wall = (state.get("canary_summary") or {}).get("wall_s")
+        if prev_wall and summary.get("wall_s") and summary["wall_s"] > 1.5 * prev_wall:
+            hints.append(
+                f"performance regression: wall time {summary['wall_s']:.0f}s vs {prev_wall:.0f}s"
+            )
+            report["performance_regression"] = True
+        prev_cost = (state.get("canary_summary") or {}).get("cost")
+        if prev_cost and summary.get("cost") and summary["cost"] > 1.5 * prev_cost:
+            hints.append(f"cost regression: ${summary['cost']:.3f} vs ${prev_cost:.3f}")
+            report["cost_regression"] = True
         if not hints:
             hints.append("same model id and prompt: provider behaviour or flakiness")
         report["cause_hints"] = hints

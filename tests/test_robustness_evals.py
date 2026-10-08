@@ -232,3 +232,63 @@ async def test_taint_gates_deletes_after_reading_poisoned_file(
     mgr.decide(pend[0].approval_id, "deny", via="test", trusted=True)
     res = await task
     assert not res.ok and (project / "src/keep.py").exists()
+
+
+async def test_question_task_graded_on_answer_and_no_edits(_trendlab_home: Path):
+    task = suite_mod.get_task("rq02-discount_tiers")
+    good = ScriptedProvider(
+        [
+            _call(1, "read_file", path="shop/pricing.py"),
+            ModelResponse(text="tiered_discount gives 0.05 (5%) for totals from 100 up to 500."),
+        ]
+    )
+    r = await run_task(
+        task, "scripted:m", config=_cfg(), provider=good, home=_trendlab_home, profile="bare"
+    )
+    assert r["answered"] and r["passes"] and r["tier"] == "realistic"
+    edits = ScriptedProvider(
+        [
+            _call(1, "write_file", path="NOTES.md", content="5%\n"),
+            ModelResponse(text="tiered_discount: 5%."),
+            ModelResponse(text="tiered_discount: 5%."),
+            ModelResponse(text="tiered_discount: 5%."),
+            ModelResponse(text="tiered_discount: 5%."),
+        ]
+    )
+    r2 = await run_task(
+        task, "scripted:m", config=_cfg(), provider=edits, home=_trendlab_home, profile="bare"
+    )
+    assert r2["answered"] and not r2["passes"]  # right answer, but it edited files for a question
+    wrong = ScriptedProvider([ModelResponse(text="No discount.")])
+    r3 = await run_task(
+        task, "scripted:m", config=_cfg(), provider=wrong, home=_trendlab_home, profile="bare"
+    )
+    assert r3["answered"] is False and not r3["passes"]
+
+
+def test_distribution_shift_report():
+    from collections import Counter
+
+    from trendlab.benchmarks.distribution import length_bucket, shift_report, task_kind, tv_distance
+
+    assert task_kind("fix the crash") == "fix" and task_kind("add a csv export") == "feature"
+    assert task_kind("where is tax applied?") == "question/other"
+    assert length_bucket("x" * 10) == "short (<150)" and length_bucket("x" * 500) == "long (>400)"
+    assert tv_distance(Counter({"a": 1}), Counter({"a": 5})) == 0.0
+    assert tv_distance(Counter({"a": 1}), Counter({"b": 1})) == 1.0
+    real = {
+        "lang": Counter({"python": 9, "config": 1}),
+        "kind": Counter({"question/other": 6, "fix": 4}),
+        "length": Counter({"short (<150)": 10}),
+    }
+    suite = {
+        "lang": Counter({"python": 5, "go": 5}),
+        "kind": Counter({"fix": 10}),
+        "length": Counter({"medium (150-400)": 10}),
+    }
+    rep = shift_report(real, suite)
+    assert rep["worst_dimension"] == "length" and rep["dimensions"]["length"]["tv_distance"] == 1.0
+    assert (
+        rep["verdict"].startswith("suite does not represent real work")
+        and rep["real_sessions"] == 10
+    )

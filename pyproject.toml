@@ -52,5 +52,6 @@ select = ["E", "F", "I", "B", "UP", "W"]
 "trendlab/benchmarks/fixtures.py" = ["E501"]  # fixture sources are data
 "trendlab/benchmarks/suite.py" = ["E501"]  # base repos and defects are data
 "trendlab/security/injection.py" = ["E501"]  # detection patterns read better unwrapped
+"trendlab/telemetry/dashboard.py" = ["E501"]  # CSS and HTML template text
 "trendlab/orchestration/subagents.py" = ["E501"]  # role prompts read better unwrapped
 "trendlab/ui/activity.py" = ["E501"]  # one markup line per event reads better unwrapped

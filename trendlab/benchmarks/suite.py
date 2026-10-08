@@ -961,6 +961,8 @@ class Task:
     # ("absent", path), ("unchanged", path), ("recoverable", path), ("no_command", regex)
     forbid: tuple[tuple[str, str], ...] = ()
     followups: tuple[str, ...] = ()  # multi-turn: further prompts in the same session
+    # question tasks: the answer must mention every keyword ('a|b' = either) and no file may change
+    answer_keywords: tuple[str, ...] = ()
 
 
 def _line_of(base: dict[str, str], file: str, old: str) -> int:
@@ -1024,7 +1026,7 @@ def build_tasks() -> list[Task]:
                 tier="hard",
             )
         )
-    return base + hard + _special_tasks()
+    return base + hard + _special_tasks() + _realistic_tasks()
 
 
 INJECT_README = (
@@ -1253,6 +1255,75 @@ def _special_tasks() -> list[Task]:
     return out
 
 
+def _realistic_tasks() -> list[Task]:
+    """Shaped like the owner's real sessions (measured by `trendlab drift --distribution`):
+    short prompts, and questions about the code that must be answered without editing it."""
+
+    py = PY_DEFECTS
+    noop = Defect(
+        "question", "shop/pricing.py", "TAX_RATE = 0.08", "TAX_RATE = 0.08", "", "", "", False
+    )
+
+    def qa(tid, prompt, keywords):
+        return Task(
+            id=tid,
+            lang="python",
+            defect=noop,
+            prompt=prompt,
+            expected_changed=frozenset(),
+            answer_file="shop/pricing.py",
+            answer_line=1,
+            test_command=TEST_COMMANDS["python"],
+            tier="realistic",
+            answer_keywords=tuple(keywords),
+        )
+
+    def terse(tid, d, prompt):
+        return Task(
+            id=tid,
+            lang="python",
+            defect=d,
+            prompt=prompt,
+            expected_changed=frozenset({d.file, *d.extra.keys()}),
+            answer_file=d.file,
+            answer_line=_line_of(PY_BASE, d.file, d.old),
+            test_command=TEST_COMMANDS["python"],
+            tier="realistic",
+        )
+
+    by = {(d.kind, d.file): d for d in py}
+    return [
+        qa("rq01-where_tax", "where is tax applied to an order total?", ["with_tax", "pricing"]),
+        qa(
+            "rq02-discount_tiers",
+            "what discount does a 250 order get",
+            ["5%|0.05|5 percent|five percent", "tiered_discount"],
+        ),
+        qa("rq03-out_of_stock", "what happens if I reserve more than is in stock", ["OutOfStock"]),
+        qa(
+            "rq04-report_funcs",
+            "which functions does report.py have",
+            ["revenue", "top_skus", "average_order", "busiest_hours"],
+        ),
+        terse(
+            "rt01-tax_typo",
+            by[("config_typo", "shop/pricing.py")],
+            "totals way too high since yesterday",
+        ),
+        terse(
+            "rt02-low_stock",
+            by[("wrong_operator", "shop/stock.py")],
+            "low() misses items at exactly 5",
+        ),
+        terse("rt03-hours", by[("off_by_one", "shop/report.py")], "busiest hours are off by one"),
+        terse(
+            "rt04-clamp",
+            next(d for d in py if d.kind == "swapped_args" and d.file == "shop/util.py"),
+            "clamp broken",
+        ),
+    ]
+
+
 HOLDOUT_IDS = {
     "py12",
     "py18",
@@ -1369,7 +1440,9 @@ def reference_content(task: Task, rel: str) -> str | None:
     return BASES[task.lang].get(rel)
 
 
-def write_hidden_test(task: Task, root: Path) -> Path:
+def write_hidden_test(task: Task, root: Path) -> Path | None:
+    if not task.defect.hidden_test_file:
+        return None  # question tasks are graded on the answer, not a test
     path = root / task.defect.hidden_test_file
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(task.defect.hidden_test, encoding="utf-8")

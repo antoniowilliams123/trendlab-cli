@@ -214,3 +214,61 @@ def test_claude_code_import_normalises_and_is_idempotent(tmp_path: Path):
     r2 = import_claude_code(store, f)
     assert r2["messages"] == 4 and store.get_session(sid) is None
     store.close()
+
+
+def test_dashboard_and_export(tmp_path: Path):
+    import csv
+    import html.parser
+
+    from trendlab.engine.inbox import Inbox
+    from trendlab.telemetry.dashboard import collect, export, render_html
+
+    store = SessionStore(tmp_path / "s.db")
+    sid = store.create_session("/p", "m", "deepseek:deepseek-flash")
+    now = datetime.now(UTC).isoformat()
+    store.append_event(
+        sid, "tool.completed", {"tool": "run_tests", "ok": False, "error": "1 failed"}, now
+    )
+    store.append_event(
+        sid, "tool.completed", {"tool": "web_fetch", "ok": False, "error": "network error"}, now
+    )
+    store.append_event(sid, "tool.completed", {"tool": "read_file", "ok": True}, now)
+    store.append_event(sid, "run.completed", {}, now)
+    store.record_model_call(sid, "deepseek:deepseek-flash", "main", 100, 10, 0, 5, 0.002)
+    inbox = Inbox(tmp_path / "i.db")
+    inbox.record(project="/p", title="broken thing", signature="x", severity="high")
+    hist = tmp_path / "canary.jsonl"
+    hist.write_text(
+        json.dumps(
+            {"at": "2026-10-08T03:30", "passes": 1.0, "cost": 0.1, "passes_ci95": [0.8, 1.0]}
+        )
+        + "\n"
+    )
+    data = collect(store, 7, hist, inbox)
+    assert (
+        data["tools"]["run_tests"]["success"] == 1.0
+    )  # a failing test is a result, not a tool error
+    assert data["tools"]["web_fetch"]["success"] == 0.0 and data["harnesses"] == {"trendlab": 1}
+    page = render_html(data)
+    assert (
+        page.startswith("<!doctype html>")
+        and "broken thing" in page
+        and "prefers-color-scheme" in page
+    )
+
+    class P(html.parser.HTMLParser):
+        tags = 0
+
+        def handle_starttag(self, t, a):
+            P.tags += 1
+
+    P().feed(page)
+    assert P.tags > 50
+    counts = export(store, tmp_path / "out", messages=True)
+    assert counts["sessions"] == 1 and counts["model_calls"] == 1 and counts["events"] == 4
+    rows = list(csv.reader((tmp_path / "out/model_calls.csv").open()))
+    assert rows[0][:3] == ["id", "session_id", "ts"] and rows[1][3] == "deepseek:deepseek-flash"
+    first_event = json.loads((tmp_path / "out/events.jsonl").read_text().splitlines()[0])
+    assert isinstance(first_event["data"], dict)
+    inbox.close()
+    store.close()

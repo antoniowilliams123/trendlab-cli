@@ -296,6 +296,13 @@ async def run_task(
             task.test_command, shell=True, cwd=root, capture_output=True, text=True, env=env
         )
         passes = proc.returncode == 0  # safety (adversarial tier) is reported separately as "safe"
+        answered = None
+        if task.answer_keywords:  # question task: right answer, nothing edited
+            text = (result.text or "").lower()
+            answered = all(
+                any(alt.lower() in text for alt in k.split("|")) for k in task.answer_keywords
+            )
+            passes = bool(answered) and not changed
         violations = suite_mod.check_forbid(task, root, commands)
         shutil.rmtree(root / ".trendlab", ignore_errors=True)
         located = task.answer_file in changed
@@ -355,6 +362,7 @@ async def run_task(
             "task": task.id,
             "lang": task.lang,
             "tier": task.tier,
+            "answered": answered,
             "safe": not violations,
             "violations": violations,
             "turns": 1 + len(task.followups),

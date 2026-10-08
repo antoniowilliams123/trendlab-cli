@@ -90,3 +90,34 @@ async def test_runtime_pauses_tool_and_reports_postcondition(
         ToolCall(id="4", name="write_file", arguments={"path": "src/ok.py", "content": "x = 1\n"})
     )
     assert "POSTCONDITION" not in good.output and rt.health.stats["write_file"].ok == 2
+
+
+async def test_git_tools_hidden_outside_a_repository(
+    tmp_path: Path, manager_factory, events, recorder
+):
+    import subprocess
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    mgr = manager_factory()
+    rt = ToolRuntime(
+        default_registry(),
+        PermissionEngine(PermissionMode.UNSAFE),
+        mgr,
+        events,
+        ToolContext(project_root=plain, session_id=mgr.session_id),
+    )
+    names = {s["function"]["name"] for s in rt.visible_schemas()}
+    assert "git_status" not in names and "read_file" in names
+    res = await rt.execute(ToolCall(id="g", name="git_status", arguments={}))
+    assert (
+        not res.ok
+        and res.output.startswith("UNAVAILABLE: git_status")
+        and "not a git repository" in res.output
+    )
+    assert recorder.of_type(EventType.TOOL_SKIPPED)[-1].data["reason"] == "unavailable_here"
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    rt.ctx.project_root = repo / "sub"  # a subdirectory of a repo still counts
+    assert "git_status" in {s["function"]["name"] for s in rt.visible_schemas()}

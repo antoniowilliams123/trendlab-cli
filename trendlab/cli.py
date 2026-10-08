@@ -978,8 +978,30 @@ def inbox_cmd(
 
 
 @app.command("drift")
-def drift_cmd(last: int = typer.Option(14, "--last", help="Nights to show.")) -> None:
-    """Canary history: pass rate, cost, served model id and prompt hash per night (U3)."""
+def drift_cmd(
+    last: int = typer.Option(14, "--last", help="Nights to show."),
+    distribution: bool = typer.Option(
+        False, "--distribution", help="Compare real sessions with the suite (distribution shift)."
+    ),
+    days: int = typer.Option(30, "--days", help="Window of real sessions for --distribution."),
+) -> None:
+    """Canary history per night, or how far real work is from what the suite measures."""
+    if distribution:
+        from trendlab.benchmarks.distribution import profile_sessions, profile_suite, shift_report
+        from trendlab.sessions.store import SessionStore
+
+        store = SessionStore(trendlab_home() / "sessions.db")
+        try:
+            rep = shift_report(profile_sessions(store, days), profile_suite())
+        finally:
+            store.close()
+        console.print(
+            f"[neon]{rep['verdict']}[/neon] · {rep['real_sessions']} real sessions in {days} days"
+        )
+        for dim, d in rep["dimensions"].items():
+            gaps = ", ".join(f"{k} {v:+.0%}" for k, v in d["biggest_gaps"])
+            console.print(f"  {dim}: distance {d['tv_distance']} · real − suite: {gaps}")
+        return
     hist = trendlab_home() / "engine" / "canary_history.jsonl"
     if not hist.is_file():
         console.print(
@@ -1263,6 +1285,48 @@ def judge_bias_cmd(
     console.print(
         f"[neon]{ref}[/neon]: verbosity bias {vb}/{len(results)} ({vb / n:.0%}), "
         f"style bias {sb}/{len(results)} ({sb / n:.0%})"
+    )
+
+
+@app.command("dashboard")
+def dashboard_cmd(
+    out: Path = typer.Option(Path("trendlab-dashboard.html"), "--out"),
+    days: int = typer.Option(14, "--days"),
+) -> None:
+    """One self-contained HTML page: sessions, spend, outcomes, tools, canary, inbox (U6)."""
+    from trendlab.engine.daemon import inbox_path
+    from trendlab.engine.inbox import Inbox
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.dashboard import collect, render_html
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    inbox = Inbox(inbox_path())
+    try:
+        data = collect(store, days, trendlab_home() / "engine" / "canary_history.jsonl", inbox)
+    finally:
+        store.close()
+        inbox.close()
+    out.write_text(render_html(data), encoding="utf-8")
+    console.print(f"[ok]dashboard[/ok] {out.resolve()}")
+
+
+@app.command("export")
+def export_cmd(
+    out: Path = typer.Option(Path("trendlab-export"), "--out"),
+    days: int | None = typer.Option(None, "--days"),
+    messages: bool = typer.Option(False, "--messages", help="Also export message bodies."),
+) -> None:
+    """Export sessions, model calls and events as CSV / JSONL (warehouse feed)."""
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.dashboard import export
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        counts = export(store, out, days=days, messages=messages)
+    finally:
+        store.close()
+    console.print(
+        "[ok]exported[/ok] " + ", ".join(f"{k} {v}" for k, v in counts.items()) + f" → {out}"
     )
 
 

@@ -446,7 +446,11 @@ class AgentRuntime:
 
     async def _model_call_inner(self) -> ModelResponse:
         messages = self.context.build()
-        tools = self.tools.registry.schemas()
+        tools = (
+            self.tools.visible_schemas()
+            if hasattr(self.tools, "visible_schemas")
+            else self.tools.registry.schemas()
+        )
         if self.hooks is not None:
             await self.hooks.run("before_model_call", model=self.model_ref)
         self.events.emit(

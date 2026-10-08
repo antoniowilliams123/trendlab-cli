@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -36,6 +37,17 @@ SCANNED_TOOLS = {
     "git_log",
     "git_diff",
 }
+GIT_TOOLS = {"git_status", "git_diff", "git_log"}
+
+
+def _in_git_repo(root: Path) -> bool:
+    p = root.resolve()
+    for candidate in (p, *p.parents):
+        if (candidate / ".git").exists():
+            return True
+    return False
+
+
 TAINT_GATED = {
     OperationCategory.FILE_DELETE,
     OperationCategory.NETWORK,
@@ -83,8 +95,27 @@ class ToolRuntime:
         with self.events.span(f"tool:{call.name}", self.ctx.session_id, tool=call.name):
             return await self._execute(call)
 
+    # -- tool routing (context-aware tool selection policy) ---------------------------------
+    def unavailable(self, name: str) -> str | None:
+        """Why ``name`` cannot work in this project, or None when it can. Tools that cannot
+        work are not offered to the model at all, so it never has to discover that by failing."""
+        root = self.ctx.project_root
+        if name in GIT_TOOLS and not _in_git_repo(root):
+            return "this project is not a git repository; use list_directory/read_file instead"
+        return None
+
+    def visible_schemas(self) -> list[dict[str, Any]]:
+        return [
+            t.schema()
+            for name, t in self.registry._tools.items()
+            if not self.unavailable(name)  # noqa: SLF001
+        ]
+
     async def _execute(self, call: ToolCall) -> ToolResult:
         tool = self.registry.get(call.name)
+        why = self.unavailable(call.name) if tool is not None else None
+        if why:
+            return self._skip(call, "unavailable_here", f"UNAVAILABLE: {call.name} — {why}")
         self.events.emit(
             EventType.TOOL_REQUESTED,
             session_id=self.ctx.session_id,
