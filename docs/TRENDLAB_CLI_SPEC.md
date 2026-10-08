@@ -3492,6 +3492,20 @@ The workflow remains portable even when model vendors change.
 
 ## 84. Future Roadmap
 
+### Cheap-model-first harness programme (2026-10-07, proposed)
+
+`docs/CHEAP_MODEL_HARNESS_SPEC.md` is the full implementation specification
+for the next programme: make DeepSeek-Flash-class models produce best-in-
+class output by supplying reliability from the harness — tiered tool output
+with deterministic parsers and a structural screener, a required verifier,
+a planner call on a stronger model (≤ 3 calls per task), step-scoped
+execution with best-of-N chosen by tests, verify-then-surface in a worktree
+with a regression-test gate, a model cocktail with phase attribution and a
+per-model prompt layer learned from traces, a daemon with inbox, sleeptime
+memory and meta-loop, and a 50-task suite with `bench --compare`. Success
+metric M1: Flash-in-harness ≥ Sonnet-bare on the suite at ≤ 10 % of the
+cost. It is merged into this document as §93 on delivery.
+
 ### Architecture audit against the LangSmith Engine pillars (2026-10-07)
 
 `docs/ARCHITECTURE_AUDIT_2026-10-07.md` scores TrendLab against the ten
