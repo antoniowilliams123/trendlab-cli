@@ -148,3 +148,78 @@
 | ts08-swapped_args | typescript | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0049 | 75140 | 75140 | 18.9 | {} | None | None |
 | ts09-bad_format | typescript | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0033 | 28660 | 28660 | 10.3 | {} | None | None |
 | ts10-wrong_import | typescript | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.004 | 43694 | 43694 | 13.5 | {} | None | None |
+
+## 2026-10-08 03:18 UTC — suite 40 deepseek:deepseek-flash@harness
+
+| task | lang | model | profile | located | root_cause | passes | no_collateral | regression_added | interventions | status | cost | tokens_lead | tokens_total | wall_s | guards_fired | verification | stop_reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| py01-off_by_one | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0082 | 36248 | 40478 | 28.0 | {} | pass | None |
+| py02-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0036 | 28453 | 29382 | 12.2 | {} | pass | None |
+| py03-missing_none_check | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0075 | 64970 | 67068 | 29.2 | {} | pass | None |
+| py04-swapped_args | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0064 | 76019 | 77741 | 24.5 | {} | pass | None |
+| py05-wrong_import | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0067 | 59157 | 60666 | 22.3 | {} | pass | None |
+| py06-early_return | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0035 | 35219 | 35979 | 12.0 | {} | pass | None |
+| py07-config_typo | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0046 | 53228 | 54180 | 15.6 | {} | pass | None |
+| py08-bad_format | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0037 | 35185 | 36229 | 12.3 | {} | pass | None |
+| py09-multi_file_contract | python | deepseek:deepseek-flash | harness | False | False | True | True | True | 0 | COMPLETED | 0.0135 | 130307 | 135636 | 51.8 | {} | pass | None |
+| py10-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0038 | 39227 | 40332 | 13.7 | {} | pass | None |
+| py11-off_by_one | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0049 | 36013 | 37403 | 17.5 | {} | pass | None |
+| py12-missing_none_check | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0043 | 39669 | 40912 | 15.8 | {} | pass | None |
+| py13-swapped_args | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0044 | 34144 | 35562 | 14.4 | {} | pass | None |
+| py14-early_return | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0067 | 58728 | 61288 | 23.3 | {} | pass | None |
+| py15-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0037 | 22827 | 23864 | 11.0 | {} | pass | None |
+| py16-off_by_one | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0046 | 35909 | 37083 | 15.0 | {} | pass | None |
+| py17-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0051 | 56174 | 57077 | 19.1 | {} | pass | None |
+| py18-missing_none_check | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0048 | 40945 | 42521 | 17.2 | {} | pass | None |
+| py19-swapped_args | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0042 | 36800 | 37897 | 13.8 | {} | pass | None |
+| py20-wrong_import | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0096 | 47385 | 52238 | 33.7 | {} | pass | None |
+| py21-early_return | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0051 | 50427 | 51482 | 17.7 | {} | pass | None |
+| py22-config_typo | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0065 | 46170 | 48386 | 22.3 | {} | pass | None |
+| py23-bad_format | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0052 | 56492 | 57905 | 19.7 | {} | pass | None |
+| py24-multi_file_contract | python | deepseek:deepseek-flash | harness | False | False | True | True | True | 0 | COMPLETED | 0.0133 | 74458 | 81611 | 48.2 | {} | pass | None |
+| py25-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0077 | 34658 | 38757 | 29.8 | {} | pass | None |
+| py26-off_by_one | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0083 | 50818 | 54406 | 28.4 | {} | pass | None |
+| py27-missing_none_check | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0043 | 48206 | 49133 | 15.9 | {} | pass | None |
+| py28-swapped_args | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0039 | 34426 | 35319 | 12.4 | {} | pass | None |
+| py29-early_return | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0147 | 51055 | 59197 | 51.5 | {} | pass | None |
+| py30-wrong_operator | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0056 | 56999 | 57834 | 20.2 | {} | pass | None |
+| ts01-off_by_one | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0044 | 43483 | 44783 | 16.2 | {} | pass | None |
+| ts02-wrong_operator | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0044 | 37518 | 38900 | 13.7 | {} | pass | None |
+| ts03-missing_none_check | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0042 | 29624 | 31004 | 12.9 | {} | pass | None |
+| ts04-async_misuse | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 1 | COMPLETED | 0.0127 | 110691 | 115947 | 50.8 | {} | pass | None |
+| ts05-config_typo | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0048 | 45680 | 47222 | 14.6 | {} | pass | None |
+| ts06-wrong_operator | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.013 | 45320 | 48443 | 40.4 | {} | pass | None |
+| ts07-early_return | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0056 | 58687 | 59965 | 20.0 | {} | pass | None |
+| ts08-swapped_args | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0051 | 45417 | 46747 | 17.6 | {} | pass | None |
+| ts09-bad_format | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0043 | 42234 | 43251 | 14.1 | {} | pass | None |
+| ts10-wrong_import | typescript | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0043 | 37601 | 38878 | 13.7 | {} | pass | None |
+
+## 2026-10-08 03:25 UTC — hard tier deepseek:deepseek-flash@harness
+
+| task | lang | model | profile | located | root_cause | passes | no_collateral | regression_added | interventions | status | cost | tokens_lead | tokens_total | wall_s | guards_fired | verification | stop_reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hd01-cross_module | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0081 | 74175 | 77166 | 31.9 | {} | pass | None |
+| hd02-misleading_test | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0082 | 67147 | 68462 | 29.8 | {} | pass | None |
+| hd03-shared_state | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0065 | 72932 | 74357 | 26.0 | {} | pass | None |
+| hd04-two_level_off_by_one | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0157 | 81167 | 91171 | 61.9 | {'verifier_fix_round': 1} | pass | None |
+| hd05-swallowed_exception | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0086 | 76657 | 80162 | 33.4 | {} | pass | None |
+| hd06-rounding_order | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0071 | 52015 | 54981 | 25.5 | {} | pass | None |
+| hd07-config_key | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0121 | 156216 | 158121 | 45.1 | {} | pass | None |
+| hd08-early_return_in_loop | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0063 | 69022 | 70134 | 23.3 | {} | pass | None |
+| hd09-wrong_aggregation | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0126 | 47113 | 54164 | 43.1 | {} | pass | None |
+| hd10-symptom_elsewhere | python | deepseek:deepseek-flash | harness | True | True | True | True | True | 0 | COMPLETED | 0.0081 | 89577 | 91686 | 30.3 | {} | pass | None |
+
+## 2026-10-08 03:32 UTC — hard tier deepseek:deepseek-flash@bare
+
+| task | lang | model | profile | located | root_cause | passes | no_collateral | regression_added | interventions | status | cost | tokens_lead | tokens_total | wall_s | guards_fired | verification | stop_reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hd01-cross_module | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0035 | 40925 | 40925 | 13.5 | {} | None | None |
+| hd02-misleading_test | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0069 | 79691 | 79691 | 23.2 | {} | None | None |
+| hd03-shared_state | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 1 | COMPLETED | 0.0077 | 93248 | 93248 | 27.6 | {} | None | None |
+| hd04-two_level_off_by_one | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0048 | 58810 | 58810 | 17.7 | {} | None | None |
+| hd05-swallowed_exception | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0066 | 92470 | 92470 | 23.1 | {} | None | None |
+| hd06-rounding_order | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.006 | 79556 | 79556 | 23.3 | {} | None | None |
+| hd07-config_key | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0198 | 293818 | 293818 | 246.5 | {} | None | None |
+| hd08-early_return_in_loop | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.004 | 41161 | 41161 | 15.7 | {} | None | None |
+| hd09-wrong_aggregation | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0044 | 38347 | 38347 | 15.6 | {} | None | None |
+| hd10-symptom_elsewhere | python | deepseek:deepseek-flash | bare | True | True | True | True | True | 0 | COMPLETED | 0.0051 | 65968 | 65968 | 22.6 | {} | None | None |

@@ -4003,6 +4003,10 @@ decisions taken after the original specification. Newest last.
     review now reserved for ≥ 3 files / ≥ 80 diff lines / unvalidated / missing regression
     test / escalated runs; the session model reviews the rest. A harder suite tier is the
     next evaluation step. See §93.7 → 9.5.
+-   Hard tier added (ten Python tasks) and measured: harness 10/10 vs bare 10/10. On all 60
+    synthetic tasks bare Flash passes everything; the harness's value is not shown by this
+    suite. Recorded as such in §93.7 → 9.5; the owner's real-session replay is the next
+    instrument.
 
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 
@@ -5181,6 +5185,61 @@ string; bare Flash happened to pick the expected form. Whether the harness earns
 hard half of the suite (symptom-only tasks, multi-file contracts) is the next measurement:
 `trendlab bench -m deepseek:deepseek-flash --suite --compare deepseek:deepseek-flash@harness
 deepseek:deepseek-flash@bare` on all 40 runnable tasks, best run overnight with the engine idle.
+
+Follow-ups the same night:
+
+- **py03 re-examined with tracing.** The harness's fix reported `item 0: missing qty`; the
+  hidden test demanded the original wording `qty must be positive`. Both fixes are correct —
+  the hidden test was over-strict. Fixed in the suite (py03 and ts03 now accept any
+  `item 0: … qty …` problem string), not in the harness. Classified: benchmark defect.
+- **Small changes are now reviewed by the cheap model instead of skipped.** A change under
+  `[verification] min_diff_lines` in fewer than `min_files` files that validated green with
+  its regression test is reviewed by the session model (Flash); larger or unvalidated changes
+  go to `[routing] verifier` (V4 Pro). Nothing ships unreviewed; the stronger model is spent
+  only where risk is.
+- **40-task comparison (all Python + TypeScript tasks), v0.3.0 gated defaults:**
+
+  | Configuration | passes | located | no collateral | regression test | cost | lead tokens | wall |
+  |---|---|---|---|---|---|---|---|
+  | flash @ harness (gated) | **40/40** | 38/40 | 40/40 | 40/40 | $0.303 | 1.89 M | 1 789 s |
+  | flash @ bare | **40/40** | 38/40 | 40/40 | 40/40 | $0.204 | 2.42 M | 1 334 s |
+
+  Cost by phase, harness: verify $0.137, plan $0.059, validate $0.048, explore $0.036, edit
+  $0.024. Every verifier verdict was `pass`: the stronger model spent 45 % of the run confirming
+  changes that were already right. The two "not located" tasks are the same in both runs
+  (py09/py24 multi-file contract): the correct fix lands in the caller, not on the seeded line —
+  a scoring quirk, both passed. **Conclusion: this suite does not separate the harness from bare
+  Flash; Flash alone handles every task in it.** Two actions: (a) the stronger-model review now
+  runs only for genuinely risky changes — ≥ 3 files, ≥ 80 diff lines, failed or missing
+  validation, missing regression test, or a run that escalated — everything else is reviewed by
+  the session model (cost parity run below); (b) the suite needs a harder tier (cross-file
+  contracts over three files, misleading tests, state bugs) before any claim rests on it.
+
+- **Re-run with the review routed to the session model for small changes** (40 tasks):
+  harness 40/40, $0.251 (was $0.303; bare $0.204), 883 s. Verify phase $0.083, all `pass`.
+  The remaining 1.23× over bare is the review call plus regression-gate rounds — the price of
+  never surfacing an unreviewed change, stated as such rather than as parity.
+- **Hard tier** (ten Python tasks: symptom in another module than the defect, a visible test
+  that encodes the wrong behaviour, shared mutable state, swallowed exceptions, premature
+  rounding, config key typo, early return in a loop, wrong aggregation):
+
+  | Configuration | passes | located | cost | wall |
+  |---|---|---|---|---|
+  | flash @ harness | **10/10** | 10/10 | $0.093 | 350 s |
+  | flash @ bare | **10/10** | 10/10 | $0.069 | 430 s |
+
+**What the evidence says, plainly.** On every task this suite can generate — 60 tasks across
+three languages, half symptom-only, ten deliberately nasty — DeepSeek Flash alone passes
+100 %. The harness adds a review and a regression-test discipline at 1.2–1.4× the cost and
+changes no outcome. The premise "cheap model + harness beats cheap model" is therefore
+**unproven on self-contained bug tasks**; Flash is simply stronger than the programme assumed.
+Where a harness can still earn its keep is work this suite does not contain: large real
+repositories, under-specified briefs, changes that break something the visible tests do not
+cover, long multi-step tasks. The instrument for that is the shadow replay of the owner's real
+sessions (§8.6), not another synthetic tier. Until that shows a difference, the defensible
+default is what v0.3.x now ships: tiering and the regression gate (free), the cheap review
+(small cost, catches nothing yet), and the stronger model only for risky changes and
+escalations.
 
 Decisions taken while building P5:
 

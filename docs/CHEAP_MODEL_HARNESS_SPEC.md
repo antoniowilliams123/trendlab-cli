@@ -524,7 +524,31 @@ Follow-ups the same night:
   the session model (cost parity run below); (b) the suite needs a harder tier (cross-file
   contracts over three files, misleading tests, state bugs) before any claim rests on it.
 
-HARD_RERUN_PLACEHOLDER
+- **Re-run with the review routed to the session model for small changes** (40 tasks):
+  harness 40/40, $0.251 (was $0.303; bare $0.204), 883 s. Verify phase $0.083, all `pass`.
+  The remaining 1.23× over bare is the review call plus regression-gate rounds — the price of
+  never surfacing an unreviewed change, stated as such rather than as parity.
+- **Hard tier** (ten Python tasks: symptom in another module than the defect, a visible test
+  that encodes the wrong behaviour, shared mutable state, swallowed exceptions, premature
+  rounding, config key typo, early return in a loop, wrong aggregation):
+
+  | Configuration | passes | located | cost | wall |
+  |---|---|---|---|---|
+  | flash @ harness | **10/10** | 10/10 | $0.093 | 350 s |
+  | flash @ bare | **10/10** | 10/10 | $0.069 | 430 s |
+
+**What the evidence says, plainly.** On every task this suite can generate — 60 tasks across
+three languages, half symptom-only, ten deliberately nasty — DeepSeek Flash alone passes
+100 %. The harness adds a review and a regression-test discipline at 1.2–1.4× the cost and
+changes no outcome. The premise "cheap model + harness beats cheap model" is therefore
+**unproven on self-contained bug tasks**; Flash is simply stronger than the programme assumed.
+Where a harness can still earn its keep is work this suite does not contain: large real
+repositories, under-specified briefs, changes that break something the visible tests do not
+cover, long multi-step tasks. The instrument for that is the shadow replay of the owner's real
+sessions (§8.6), not another synthetic tier. Until that shows a difference, the defensible
+default is what v0.3.x now ships: tiering and the regression gate (free), the cheap review
+(small cost, catches nothing yet), and the stronger model only for risky changes and
+escalations.
 
 Decisions taken while building P5:
 
