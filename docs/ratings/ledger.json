@@ -4,8 +4,8 @@
   "evidence": "git tools hidden outside repos, run_tests offered only with a test command (2b3e3ae, 777f673); live dashboard tool success rose once misrouted calls stopped"
  },
  "53": {
-  "rating": 8,
-  "evidence": "selection is shaped by tool visibility rules and the route; no learned policy"
+  "rating": 9,
+  "evidence": "routing, allowlist, availability rules and automatic fallback"
  },
  "55": {
   "rating": 9,
@@ -20,16 +20,16 @@
   "evidence": "every structured reply validated against its model; invalid → repair → explicit unusable (test_judge_quality)"
  },
  "59": {
-  "rating": 8,
-  "evidence": "runtime invariants + edit postconditions enforce contracts; tool schemas not versioned"
+  "rating": 9,
+  "evidence": "constitution + postconditions + symbol and arch checks"
  },
  "60": {
-  "rating": 8,
-  "evidence": "postconditions per edit tool (hash change, syntax parse) (93a1ae0)"
+  "rating": 9,
+  "evidence": "tool schemas, postconditions, fallbacks, recorded results"
  },
  "61": {
-  "rating": 8,
-  "evidence": "read-before-edit precondition measured per run (read_before_edit metric)"
+  "rating": 9,
+  "evidence": "read-before-edit, run lock, plan gate before first change"
  },
  "62": {
   "rating": 9,
@@ -340,16 +340,16 @@
   "evidence": "jailbreak tier live: 10/10 runs safe (bare and harness); Flash attempted outside-project write and secret hard-coding, hard boundaries refused both (7d75215)"
  },
  "178": {
-  "rating": 8,
-  "evidence": "test-tampering bait task ad04 + 'unchanged' forbid checks (cc36a93)"
+  "rating": 9,
+  "evidence": "test-gaming detector + hidden tests + tampering bait (ccae579)"
  },
  "179": {
-  "rating": 8,
-  "evidence": "hidden tests the agent cannot see; scope checks catch gaming by deletion"
+  "rating": 9,
+  "evidence": "same"
  },
  "180": {
-  "rating": 8,
-  "evidence": "agent cannot see or edit the grader; tampering bait measured"
+  "rating": 9,
+  "evidence": "grader hidden from the agent; tampering detected"
  },
  "181": {
   "rating": 9,
@@ -407,6 +407,190 @@
   "rating": 9,
   "evidence": "exact paired sign test in --compare (3a17e49)"
  },
+ "568": {
+  "rating": 9,
+  "evidence": "off-by-one defects in the suite fixed live; mutation testing flags boundary flips (075a969)"
+ },
+ "557": {
+  "rating": 9,
+  "evidence": "overreach rate, scope budget, change scope and jailbreak tier all measured"
+ },
+ "599": {
+  "rating": 9,
+  "evidence": "destructive requests recoverable via checkpoints; jb04/ad05 held live"
+ },
+ "561": {
+  "rating": 7,
+  "evidence": "caught only when it breaks the line/file budget"
+ },
+ "607": {
+  "rating": 9,
+  "evidence": "inbox cards by severity, FMEA ranking of failure modes, PR triage"
+ },
+ "608": {
+  "rating": 9,
+  "evidence": "verify → review → gate → canary → replay, each measured"
+ },
+ "641": {
+  "rating": 9,
+  "evidence": "nudges (scope, communication, latency), escalation, cooldown, co-design — each tested"
+ },
+ "738": {
+  "rating": 7,
+  "evidence": "gate and canary keep changes eval-driven"
+ },
+ "760": {
+  "rating": 8,
+  "evidence": "tiered output, cache share, quick review; tokens per run tracked"
+ },
+ "774": {
+  "rating": 8,
+  "evidence": "fully loaded ledger of AI service use per project/role/model"
+ },
+ "777": {
+  "rating": 7,
+  "evidence": "cost per run and per validated change; no per-prompt listing"
+ },
+ "683": {
+  "rating": 7,
+  "evidence": "health trend shows durability regressions indirectly"
+ },
+ "684": {
+  "rating": 7,
+  "evidence": "regression tests + health trend; no design-level check"
+ },
+ "850": {
+  "rating": 7,
+  "evidence": "scope budget from the task before edits"
+ },
+ "441": {
+  "rating": 8,
+  "evidence": "remote approvals need HMAC decision tokens; Telegram checks chat id"
+ },
+ "444": {
+  "rating": 8,
+  "evidence": "per-request decision tokens; keys only in the secrets store"
+ },
+ "11": {
+  "rating": 8,
+  "evidence": "plan review → repair, verifier fix round, communication rewrite; no free-form self-reflection"
+ },
+ "12": {
+  "rating": 8,
+  "evidence": "deterministic plan critique (lint) and verifier critique; not model self-critique"
+ },
+ "75": {
+  "rating": 8,
+  "evidence": "per-tool timeouts, wall-clock cap and latency budget"
+ },
+ "86": {
+  "rating": 8,
+  "evidence": "layered context (system, map, summary, plan, recent) with budgets; retention measured"
+ },
+ "177": {
+  "rating": 8,
+  "evidence": "network calls after a secret read need approval in every mode (7d75215)"
+ },
+ "442": {
+  "rating": 9,
+  "evidence": "permission engine + HMAC approvals + plan gate"
+ },
+ "445": {
+  "rating": 9,
+  "evidence": "keys in a 0600 secrets store, never in config or output; exfil guard"
+ },
+ "537": {
+  "rating": 9,
+  "evidence": "pre-PR gate runs locally before CI"
+ },
+ "544": {
+  "rating": 8,
+  "evidence": "structure lens in every review"
+ },
+ "545": {
+  "rating": 8,
+  "evidence": "structure lens; no repository-wide architecture model"
+ },
+ "576": {
+  "rating": 8,
+  "evidence": "diff-shape budget + nudge (c862202)"
+ },
+ "577": {
+  "rating": 8,
+  "evidence": "same (c862202)"
+ },
+ "578": {
+  "rating": 8,
+  "evidence": "same (c862202)"
+ },
+ "584": {
+  "rating": 8,
+  "evidence": "sycophancy tier: confident wrong diagnoses; Flash followed 0/10 and fixed the real cause 10/10 (ccae579)"
+ },
+ "597": {
+  "rating": 8,
+  "evidence": "overreach rate: edits on question tasks, per bench summary (ccae579)"
+ },
+ "598": {
+  "rating": 8,
+  "evidence": "timidity rate: no change or a question on a clear fix (ccae579)"
+ },
+ "643": {
+  "rating": 8,
+  "evidence": "both rates measured; route settings tune how proactive each request kind is"
+ },
+ "680": {
+  "rating": 8,
+  "evidence": "nightly canary + per-commit review"
+ },
+ "697": {
+  "rating": 8,
+  "evidence": "served model and provider stamped per record (242a16c)"
+ },
+ "709": {
+  "rating": 8,
+  "evidence": "retention, prune and export (8649a00, 2b3e3ae)"
+ },
+ "718": {
+  "rating": 6,
+  "evidence": "JSONL/OTel export only; no warehouse"
+ },
+ "506": {
+  "rating": 8,
+  "evidence": "`trendlab feedback` per run; satisfaction in stats (538633f)"
+ },
+ "681": {
+  "rating": 9,
+  "evidence": "`trendlab selftest`: 8/8 end-to-end stages offline in ~9 s (538633f)"
+ },
+ "682": {
+  "rating": 9,
+  "evidence": "same self-test harness + 540 tests"
+ },
+ "802": {
+  "rating": 9,
+  "evidence": "failover, cooldown retries, run lock, deterministic replay"
+ },
+ "842": {
+  "rating": 8,
+  "evidence": "scope budget + dependency gate + test strength (c862202)"
+ },
+ "843": {
+  "rating": 8,
+  "evidence": "same, measured per bench row"
+ },
+ "844": {
+  "rating": 8,
+  "evidence": "same"
+ },
+ "856": {
+  "rating": 9,
+  "evidence": "verification gates surfacing; edit→verdict latency measured"
+ },
+ "857": {
+  "rating": 8,
+  "evidence": "cost per validated change and health trend together"
+ },
  "460": {
   "rating": 9,
   "evidence": "injection scanner + taint gating; held-out recall 87%, real-text FP 0.035% (cc36a93, 004f295)"
@@ -443,10 +627,6 @@
   "rating": 8,
   "evidence": "diff shape vs task budget; scope_ok per bench row (c862202)"
  },
- "561": {
-  "rating": 7,
-  "evidence": "caught only when it breaks the line/file budget"
- },
  "562": {
   "rating": 9,
   "evidence": "new-file count in the scope budget; extraneous files nudged (c862202)"
@@ -466,18 +646,6 @@
  "567": {
   "rating": 8,
   "evidence": "mutation survivors point at missed edge cases"
- },
- "576": {
-  "rating": 8,
-  "evidence": "diff-shape budget + nudge (c862202)"
- },
- "577": {
-  "rating": 8,
-  "evidence": "same (c862202)"
- },
- "578": {
-  "rating": 8,
-  "evidence": "same (c862202)"
  },
  "579": {
   "rating": 8,
@@ -527,10 +695,6 @@
   "rating": 9,
   "evidence": "same: search, stats, trace, rca and failures span imported harnesses"
  },
- "697": {
-  "rating": 8,
-  "evidence": "served model and provider stamped per record (242a16c)"
- },
  "698": {
   "rating": 9,
   "evidence": "trendlab search, exact and --ranked (8649a00, e625908)"
@@ -567,10 +731,6 @@
   "rating": 8,
   "evidence": "one HTML dashboard for runs, costs, tools, routes"
  },
- "709": {
-  "rating": 8,
-  "evidence": "retention, prune and export (8649a00, 2b3e3ae)"
- },
  "714": {
   "rating": 9,
   "evidence": "chat-log and Claude Code formats normalised to one event schema (f7b5a80)"
@@ -582,10 +742,6 @@
  "717": {
   "rating": 9,
   "evidence": "same"
- },
- "718": {
-  "rating": 6,
-  "evidence": "JSONL/OTel export only; no warehouse"
  },
  "719": {
   "rating": 9,
@@ -647,10 +803,6 @@
   "rating": 9,
   "evidence": "paired harness vs bare comparisons with significance (3a17e49)"
  },
- "738": {
-  "rating": 7,
-  "evidence": "gate and canary keep changes eval-driven"
- },
  "740": {
   "rating": 8,
   "evidence": "capability map (380a06e)"
@@ -691,18 +843,6 @@
   "rating": 8,
   "evidence": "imports from other harnesses; standalone tools"
  },
- "842": {
-  "rating": 8,
-  "evidence": "scope budget + dependency gate + test strength (c862202)"
- },
- "843": {
-  "rating": 8,
-  "evidence": "same, measured per bench row"
- },
- "844": {
-  "rating": 8,
-  "evidence": "same"
- },
  "853": {
   "rating": 9,
   "evidence": "spans and stats were built before routing and retrieval were tuned"
@@ -718,14 +858,6 @@
  "8": {
   "rating": 9,
   "evidence": "planner role + executor loop with per-step validation, dependency graph honoured, planner-only eval (e1009ce)"
- },
- "11": {
-  "rating": 8,
-  "evidence": "plan review → repair, verifier fix round, communication rewrite; no free-form self-reflection"
- },
- "12": {
-  "rating": 8,
-  "evidence": "deterministic plan critique (lint) and verifier critique; not model self-critique"
  },
  "14": {
   "rating": 9,
@@ -903,10 +1035,6 @@
   "rating": 9,
   "evidence": "validated changes per dollar per project; bench passes per dollar (3614a6b)"
  },
- "777": {
-  "rating": 7,
-  "evidence": "cost per run and per validated change; no per-prompt listing"
- },
  "778": {
   "rating": 8,
   "evidence": "spend on sessions that never completed reported as waste"
@@ -971,10 +1099,6 @@
   "rating": 9,
   "evidence": "trendlab surface: everything the agent can reach + risks (1c8339c)"
  },
- "177": {
-  "rating": 8,
-  "evidence": "network calls after a secret read need approval in every mode (7d75215)"
- },
  "454": {
   "rating": 8,
   "evidence": "every capability listed with its policy; taints force approval"
@@ -994,10 +1118,6 @@
  "45": {
   "rating": 9,
   "evidence": "per-route latency budgets with one wrap-up nudge; within-budget share in bench (d170f3d)"
- },
- "75": {
-  "rating": 8,
-  "evidence": "per-tool timeouts, wall-clock cap and latency budget"
  },
  "43": {
   "rating": 8,
@@ -1051,14 +1171,6 @@
   "rating": 9,
   "evidence": "large diffs reviewed in per-file chunks, never elided (ff05b6e)"
  },
- "544": {
-  "rating": 8,
-  "evidence": "structure lens in every review"
- },
- "545": {
-  "rating": 8,
-  "evidence": "structure lens; no repository-wide architecture model"
- },
  "546": {
   "rating": 9,
   "evidence": "edge cases lens; quick+confirm review caught 32/32 seeded defects (f5e08f7)"
@@ -1098,22 +1210,6 @@
  "575": {
   "rating": 9,
   "evidence": "same trend per watched project with inbox cards (64a2202)"
- },
- "683": {
-  "rating": 7,
-  "evidence": "health trend shows durability regressions indirectly"
- },
- "684": {
-  "rating": 7,
-  "evidence": "regression tests + health trend; no design-level check"
- },
- "857": {
-  "rating": 8,
-  "evidence": "cost per validated change and health trend together"
- },
- "680": {
-  "rating": 8,
-  "evidence": "nightly canary + per-commit review"
  },
  "19": {
   "rating": 9,
@@ -1267,10 +1363,6 @@
   "rating": 7,
   "evidence": "plan lint + architecture rules before/after; no dedicated architecture step"
  },
- "850": {
-  "rating": 7,
-  "evidence": "scope budget from the task before edits"
- },
  "583": {
   "rating": 9,
   "evidence": "verifier + confirmation-pass review: blind acceptance is the thing being measured (f5e08f7)"
@@ -1366,10 +1458,6 @@
  "87": {
   "rating": 9,
   "evidence": "fallback compaction fixed from 0% to 100% retention at 9% of tokens (0dc8673)"
- },
- "86": {
-  "rating": 8,
-  "evidence": "layered context (system, map, summary, plan, recent) with budgets; retention measured"
  },
  "84": {
   "rating": 9,
@@ -1675,25 +1763,9 @@
   "rating": 9,
   "evidence": "skip/xfail added, assertions removed, test files deleted or CI loosened are flagged; 0 false alarms on 80 commits (ccae579)"
  },
- "584": {
-  "rating": 8,
-  "evidence": "sycophancy tier: confident wrong diagnoses; Flash followed 0/10 and fixed the real cause 10/10 (ccae579)"
- },
  "595": {
   "rating": 8,
   "evidence": "constitution rules each enforced, tested and measured; misalignment shows as rule violations"
- },
- "597": {
-  "rating": 8,
-  "evidence": "overreach rate: edits on question tasks, per bench summary (ccae579)"
- },
- "598": {
-  "rating": 8,
-  "evidence": "timidity rate: no change or a question on a clear fix (ccae579)"
- },
- "643": {
-  "rating": 8,
-  "evidence": "both rates measured; route settings tune how proactive each request kind is"
  },
  "558": {
   "rating": 8,
