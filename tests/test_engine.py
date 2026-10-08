@@ -220,11 +220,9 @@ async def test_engine_schedule_socket_and_digest(tmp_path: Path, monkeypatch, _t
     assert not eng.due("sleep", now)
     eng.state.pop("last_sleep")
     # the job stamps the day in the same (local) zone the schedule reads
-    res = await eng.run_job("sleep")
-    assert "error" not in res or "sleep" in res
-    assert eng.state["sleep_day"] == eng.now().strftime("%Y-%m-%d") and not eng.due(
-        "sleep", eng.now()
-    )
+    await eng.run_job("sleep")  # no model key in tests: the job errors but still stamps the day
+    assert eng.state["sleep_day"] == eng.now().strftime("%Y-%m-%d")
+    assert not eng.due("sleep", eng.now())
     eng.state["last_watch"] = now.timestamp()
     assert not eng.due("watch", now)
     sent = []
