@@ -419,6 +419,7 @@ def bench_cmd(
         None, "--tasks", help="Suite: count (e.g. 10) or ids/prefixes."
     ),
     lang: str | None = typer.Option(None, "--lang", help="Suite: python | typescript | go."),
+    tier: str = typer.Option("base", "--tier", help="Suite: base | hard | all."),
     profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
     compare: list[str] | None = typer.Option(
         None,
@@ -468,7 +469,13 @@ def bench_cmd(
 
             results = asyncio.run(
                 run_suite(
-                    m, profile=prof, selector=tasks, lang=lang, sandbox=sandbox, on_result=show
+                    m,
+                    profile=prof,
+                    selector=tasks,
+                    lang=lang,
+                    sandbox=sandbox,
+                    on_result=show,
+                    tier=tier,
                 )
             )
             summary = {"config": spec, **summarize(results)}

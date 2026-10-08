@@ -76,6 +76,13 @@ class Stock:
 
     def low(self, threshold: int = 5) -> list[str]:
         return sorted(sku for sku, n in self.levels.items() if n <= threshold)
+
+    def find(self, sku_text: str) -> int:
+        """Available units for a SKU typed by a human, e.g. 'abc-12' -> key 'ABC-12'."""
+        from shop.util import parse_sku
+
+        name, num = parse_sku(sku_text)
+        return self.available(f"{name}-{num}")
 ''',
     "shop/orders.py": '''"""Orders: totals, validation, summaries."""
 
@@ -120,6 +127,8 @@ def summary(items: list[dict]) -> str:
 from collections import Counter
 
 from shop.orders import order_total
+from shop.stock import Stock
+from shop.util import chunks
 
 
 def revenue(orders: list[list[dict]]) -> float:
@@ -144,6 +153,15 @@ def busiest_hours(stamps: list[int], top: int = 2) -> list[int]:
     """Hours (0-23) with the most orders, busiest first."""
     counts: Counter[int] = Counter(h % 24 for h in stamps)
     return [h for h, _ in counts.most_common(top)]
+
+
+def batches(orders: list[list[dict]], size: int) -> list[list[list[dict]]]:
+    """Orders grouped for export, ``size`` per batch (last may be shorter)."""
+    return chunks(orders, size)
+
+
+def low_stock_alert(stock: Stock, threshold: int = 5) -> list[str]:
+    return stock.low(threshold)
 ''',
     "shop/util.py": '''"""Small helpers."""
 
@@ -711,6 +729,114 @@ TS_DEFECTS: list[Defect] = [
     ),
 ]
 
+
+def _hard(kind, file, old, new, symptom, test, *, visible=False, extra=None) -> Defect:
+    return Defect(
+        kind,
+        file,
+        old,
+        new,
+        symptom,
+        f"tests/test_hidden_hard_{kind}.py",
+        test,
+        visible,
+        extra or {},
+    )
+
+
+# Hard tier: the symptom is reported in one module while the defect lives in another, a
+# visible test encodes the wrong behaviour, or state leaks between calls. Python only.
+HARD_DEFECTS: list[Defect] = [
+    _hard(
+        "cross_module",
+        "shop/util.py",
+        "return name.upper(), int(num)",
+        "return name.lower(), int(num)",
+        "Stock.find('abc-12') returns 0 for a SKU that is in stock",
+        "from shop.stock import Stock\n\n\ndef test_find_normalises_case():\n    assert Stock({'ABC-12': 3}).find('abc-12') == 3\n",
+        visible=True,
+    ),
+    _hard(
+        "misleading_test",
+        "shop/pricing.py",
+        "    if total >= 100:\n        return 0.05",
+        "    if total > 100:\n        return 0.05",
+        "the spec says an order of exactly 100 gets the 5% tier, but the code and one existing test disagree with the spec; fix the code and correct the wrong test",
+        "from shop.pricing import tiered_discount\n\n\ndef test_tier_starts_at_100():\n    assert tiered_discount(100) == 0.05 and tiered_discount(99.99) == 0.0\n",
+        extra={
+            "tests/test_pricing.py": (
+                "assert tiered_discount(50) == 0.0 and tiered_discount(100) == 0.05",
+                "assert tiered_discount(50) == 0.0 and tiered_discount(100) == 0.0",
+            )
+        },
+    ),
+    _hard(
+        "shared_state",
+        "shop/stock.py",
+        "    def __init__(self, levels: dict[str, int] | None = None) -> None:\n        self.levels = dict(levels or {})",
+        "    def __init__(self, levels: dict[str, int] = {}) -> None:  # noqa: B006\n        self.levels = levels",
+        "a freshly created Stock() sometimes already contains another warehouse's levels",
+        "from shop.stock import Stock\n\n\ndef test_instances_are_independent():\n    a = Stock()\n    a.restock('A', 2)\n    assert Stock().available('A') == 0\n",
+    ),
+    _hard(
+        "two_level_off_by_one",
+        "shop/report.py",
+        "    return chunks(orders, size)",
+        "    return chunks(orders, size)[:-1]",
+        "the daily batch export drops the final partial batch (and the only batch when there is one)",
+        "from shop.report import batches\n\n\ndef test_batches_keep_tail():\n    assert batches([[], [], []], 2) == [[[], []], [[]]]\n    assert batches([[]], 5) == [[[]]]\n",
+    ),
+    _hard(
+        "swallowed_exception",
+        "shop/orders.py",
+        '    for item in items:\n        left[item["sku"]] = stock.reserve(item["sku"], int(item["qty"]))',
+        '    for item in items:\n        try:\n            left[item["sku"]] = stock.reserve(item["sku"], int(item["qty"]))\n        except Exception:\n            left[item["sku"]] = stock.available(item["sku"])',
+        "orders for out-of-stock items are fulfilled silently instead of failing",
+        "import pytest\n\nfrom shop.orders import fulfil\nfrom shop.stock import OutOfStock, Stock\n\n\ndef test_fulfil_raises_when_short():\n    with pytest.raises(OutOfStock):\n        fulfil([{'sku': 'A', 'qty': 5}], Stock({'A': 1}))\n",
+    ),
+    _hard(
+        "rounding_order",
+        "shop/orders.py",
+        "    subtotal = order_subtotal(items)\n    discounted = subtotal * (1.0 - tiered_discount(subtotal))",
+        "    subtotal = round(order_subtotal(items))\n    discounted = subtotal * (1.0 - tiered_discount(subtotal))",
+        "totals are off by a few cents for fractional prices",
+        "from shop.orders import order_total\n\n\ndef test_no_premature_rounding():\n    assert order_total([{'price': 0.4, 'qty': 3}], tax=False) == 1.2\n",
+    ),
+    _hard(
+        "config_key",
+        "shop/util.py",
+        'return [list(o) for o in data["orders"]]',
+        'return [list(o) for o in data["order"]]',
+        "load_orders raises KeyError on every orders file exported by the shop",
+        "import json\n\nfrom shop.util import load_orders\n\n\ndef test_load_orders(tmp_path):\n    p = tmp_path / 'o.json'\n    p.write_text(json.dumps({'orders': [[{'sku': 'A', 'qty': 1, 'price': 2}]]}))\n    assert load_orders(p) == [[{'sku': 'A', 'qty': 1, 'price': 2}]]\n",
+    ),
+    _hard(
+        "early_return_in_loop",
+        "shop/orders.py",
+        '        if float(item.get("price", 0)) < 0:\n            problems.append(f"item {idx}: negative price")\n    return problems',
+        '        if float(item.get("price", 0)) < 0:\n            problems.append(f"item {idx}: negative price")\n        return problems\n    return problems',
+        "validate() only ever reports the first item's problems",
+        "from shop.orders import validate\n\n\ndef test_validate_reports_all_items():\n    assert len(validate([{'qty': 0, 'price': 1}, {'qty': 1, 'price': -1}])) == 2\n",
+    ),
+    _hard(
+        "wrong_aggregation",
+        "shop/report.py",
+        '            counts[item["sku"]] += int(item["qty"])',
+        '            counts[item["sku"]] = int(item["qty"])',
+        "top SKUs ignore repeat purchases of the same SKU across orders",
+        "from shop.report import top_skus\n\n\ndef test_top_skus_sums_across_orders():\n    orders = [[{'sku': 'A', 'qty': 2}], [{'sku': 'A', 'qty': 2}], [{'sku': 'B', 'qty': 3}]]\n    assert top_skus(orders, 1) == [('A', 4)]\n",
+    ),
+    _hard(
+        "symptom_elsewhere",
+        "shop/report.py",
+        "    return stock.low(threshold)",
+        "    return stock.low(0)",
+        "the low-stock alert in the daily report is always empty even when SKUs are at 1 or 2 units",
+        "from shop.report import low_stock_alert\nfrom shop.stock import Stock\n\n\ndef test_low_stock_alert_uses_threshold():\n    assert low_stock_alert(Stock({'A': 1, 'B': 9})) == ['A']\n",
+    ),
+]
+
+
 GO_DEFECTS: list[Defect] = [
     Defect(
         "off_by_one",
@@ -828,6 +954,7 @@ class Task:
     answer_file: str
     answer_line: int
     test_command: str
+    tier: str = "base"  # base | hard
 
 
 def _line_of(base: dict[str, str], file: str, old: str) -> int:
@@ -875,7 +1002,23 @@ def build_tasks() -> list[Task]:
                         test_command=TEST_COMMANDS[lang],
                     )
                 )
-    return tasks[:50]
+    base = tasks[:50]
+    hard = []
+    for n, d in enumerate(HARD_DEFECTS, 1):
+        hard.append(
+            Task(
+                id=f"hd{n:02d}-{d.kind}",
+                lang="python",
+                defect=d,
+                prompt=_prompt(d, "python", d.visible_fail),
+                expected_changed=frozenset({d.file, *d.extra.keys()}),
+                answer_file=d.file,
+                answer_line=_line_of(PY_BASE, d.file, d.old),
+                test_command=TEST_COMMANDS["python"],
+                tier="hard",
+            )
+        )
+    return base + hard
 
 
 TASKS: list[Task] = build_tasks()

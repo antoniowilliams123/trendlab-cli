@@ -284,10 +284,13 @@ async def run_task(
         }
 
 
-def select_tasks(selector: str | None = None, lang: str | None = None) -> list:
+def select_tasks(selector: str | None = None, lang: str | None = None, tier: str = "base") -> list:
+    """``tier``: base (the 50), hard (the ten cross-module/state tasks) or all."""
     from trendlab.benchmarks.suite import TASKS
 
     tasks = [t for t in TASKS if not lang or t.lang == lang]
+    if tier != "all":
+        tasks = [t for t in tasks if t.tier == tier]
     if selector:
         if selector.isdigit():
             tasks = tasks[: int(selector)]
@@ -305,10 +308,11 @@ async def run_suite(
     lang: str | None = None,
     sandbox: str | None = None,
     on_result=None,
+    tier: str = "base",
     **kw,
 ) -> list[dict[str, Any]]:
     out = []
-    for task in select_tasks(selector, lang):
+    for task in select_tasks(selector, lang, tier):
         r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
         out.append(r)
         if on_result:
