@@ -89,6 +89,7 @@ class ToolRuntime:
         # start), harmful categories need approval even in AUTO mode.
         self.tainted: list[dict[str, str]] = []
         self.secrets_touched: list[str] = []  # secret-bearing paths read this run (U11)
+        self.recorder = None  # (tool name, raw result) -> None; cassette recording (U20)
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -447,6 +448,8 @@ class ToolRuntime:
             result = ToolResult(ok=False, output=f"tool error: {exc.__class__.__name__}: {exc}")
         finally:
             self.ctx.progress = None
+        if self.recorder is not None and not result.data.get("replayed"):
+            self.recorder(tool.name, result)  # cassette: raw command/web results (U20)
         duration_ms = int((time.monotonic() - call_started) * 1000)
         if result.ok and perm.category != OperationCategory.NETWORK:
             from trendlab.security.exfil import touches_secret

@@ -47,7 +47,10 @@ async def _record(project: Path) -> str:
 async def test_session_is_recorded_and_replays_identically(project: Path, _trendlab_home: Path):
     sid = await _record(project)
     tape = load(sid)
-    assert [r["role"] for r in tape] == ["main"] * 4
+    assert [r["role"] for r in tape if "role" in r] == ["main"] * 4
+    taped = [r for r in tape if "tool" in r]  # the shell result, raw, with its exit code
+    assert [r["tool"] for r in taped] == ["shell"] and taped[0]["exit_code"] == 0
+    assert "ran ok" in taped[0]["output"]
     assert (project / "src/app.py").read_text() == "TIMEOUT = 60\n"
     store = SessionStore(trendlab_home() / "sessions.db")
     try:

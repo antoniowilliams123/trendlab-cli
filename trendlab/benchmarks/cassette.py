@@ -40,16 +40,27 @@ class Recorder:
         self.session_id_fn = session_id_fn  # the app's session id can change on /resume
 
     def __call__(self, role: str, model: str, response: ModelResponse) -> None:
+        self._write({"role": role, "model": model, "response": response.model_dump(mode="json")})
+
+    def tool(self, name: str, result: ToolResult) -> None:
+        """Raw result of a command or web call, including the harness's own (step validation,
+        test-strength checks), so replay serves each call exactly what it got."""
+        if name in RECORDED_TOOLS:
+            self._write(
+                {
+                    "tool": name,
+                    "output": result.output,
+                    "ok": result.ok,
+                    "exit_code": result.data.get("exit_code"),
+                }
+            )
+
+    def _write(self, record: dict[str, Any]) -> None:
         path = cassette_dir() / f"{self.session_id_fn()}.jsonl"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as fh:
-                fh.write(
-                    json.dumps(
-                        {"role": role, "model": model, "response": response.model_dump(mode="json")}
-                    )
-                    + "\n"
-                )
+                fh.write(json.dumps(record) + "\n")
         except OSError:
             pass  # recording must never break a run
 
@@ -160,7 +171,8 @@ class Tape:
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self.queues: dict[str, deque] = defaultdict(deque)
         for r in records:
-            self.queues[r["role"]].append(ModelResponse.model_validate(r["response"]))
+            if "role" in r:
+                self.queues[r["role"]].append(ModelResponse.model_validate(r["response"]))
         self.served = 0
         self.divergences: list[str] = []
 
@@ -189,7 +201,8 @@ class DeterministicTools:
         self.divergences: list[str] = []
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        self.calls.append(call.name)
+        if not str(call.id).startswith("step-"):  # the harness's own step validations are not
+            self.calls.append(call.name)  # in the transcript; compare model-issued calls only
         return await self.runtime.execute(call)
 
     def __getattr__(self, name: str) -> Any:
@@ -250,9 +263,14 @@ async def deterministic_replay(
         tl.gateway._factory = lambda ref: ScriptedProvider([])  # noqa: SLF001
         tl.gateway._providers.clear()  # noqa: SLF001
         tools = DeterministicTools(tl.tools)
-        install_recorded_tools(
-            tl.tools.registry, recorded_tool_outputs(messages, events), tools.divergences
-        )
+        taped = [r for r in records if "tool" in r]
+        if taped:  # exact: every command/web result in call order, harness calls included
+            recorded: dict[str, deque] = defaultdict(deque)
+            for r in taped:
+                recorded[r["tool"]].append((r["output"], r["ok"], r["exit_code"]))
+        else:  # cassettes from before tool recording: rebuild from the transcript
+            recorded = recorded_tool_outputs(messages, events)
+        install_recorded_tools(tl.tools.registry, recorded, tools.divergences)
         tl.agent.tools = tools  # type: ignore[assignment]
         started = time.monotonic()
         after_status, stop_reasons = [], []
@@ -280,7 +298,7 @@ async def deterministic_replay(
     return {
         "session": session_id,
         "identical": identical,
-        "model_calls_recorded": len(records),
+        "model_calls_recorded": sum(1 for r in records if "role" in r),
         "model_calls_served": tape.served,
         "unused_recorded_calls": leftover,
         "tool_calls_before": len(old_tools),

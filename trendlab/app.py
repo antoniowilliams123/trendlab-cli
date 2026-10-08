@@ -191,7 +191,8 @@ class TrendLabApp:
         if self.config.sessions.record_cassettes:
             from trendlab.benchmarks.cassette import Recorder
 
-            self.gateway.recorder = Recorder(lambda: self.session_id)
+            self._recorder = Recorder(lambda: self.session_id)
+            self.gateway.recorder = self._recorder
         if self._provider_override is not None:
             self.gateway.register(self.model_ref, self._provider_override)
         self.costs = CostTracker(self.config)
@@ -247,6 +248,8 @@ class TrendLabApp:
 
         self.tools.baselines = Baselines(self.project_root)
         self.tools.on_before_mutation = self._before_mutation
+        if getattr(self, "_recorder", None) is not None:
+            self.tools.recorder = self._recorder.tool
         self.plan_gate = PlanGate(
             self.config.plan_gate, self.approvals, self.plan, self.events, self.project_root
         )
