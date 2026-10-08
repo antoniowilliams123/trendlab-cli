@@ -197,27 +197,64 @@ class BM25:
         return out
 
 
+def _cache_path(root: Path) -> Path:
+    return root / ".trendlab" / "index" / "chunks.json"
+
+
 def index_project(
-    root: Path, rules=None, max_files: int = 1500, max_bytes: int = 400_000
+    root: Path, rules=None, max_files: int = 1500, max_bytes: int = 400_000, *, cache: bool = True
 ) -> list[Chunk]:
+    """Chunks of the project's code files. With ``cache`` (U29 workspace caching), a file whose
+    size and modification time are unchanged reuses its chunks from ``.trendlab/index/``."""
+    import json as _json
+
+    cached: dict = {}
+    if cache:
+        try:
+            cached = _json.loads(_cache_path(root).read_text())
+        except (OSError, ValueError):
+            cached = {}
+    fresh: dict = {}
+    chunks: list[Chunk] = []
+    for rel, st, path in _code_files(root, rules, max_files, max_bytes):
+        key = f"{st.st_size}:{int(st.st_mtime_ns)}"
+        hit = cached.get(rel)
+        if hit and hit.get("key") == key:
+            file_chunks = [Chunk(rel, c[0], c[1], c[2]) for c in hit["chunks"]]
+        else:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            file_chunks = chunk_file(rel, text)
+        fresh[rel] = {"key": key, "chunks": [[c.start, c.end, c.text] for c in file_chunks]}
+        chunks.extend(file_chunks)
+    if cache and fresh != cached:
+        try:
+            _cache_path(root).parent.mkdir(parents=True, exist_ok=True)
+            _cache_path(root).write_text(_json.dumps(fresh))
+        except OSError:
+            pass
+    return chunks
+
+
+def _code_files(root: Path, rules, max_files: int, max_bytes: int):
     from trendlab.context.ignore import IgnoreRules
 
     rules = rules or IgnoreRules.for_project(root, respect_gitignore=True)
-    chunks: list[Chunk] = []
     for p in rules.walk(root, max_files=max_files):
         if p.suffix.lower() not in CODE_EXT:
             continue
         try:
-            if p.stat().st_size > max_bytes:
-                continue
-            text = p.read_text(encoding="utf-8", errors="replace")
+            st = p.stat()
         except OSError:
+            continue
+        if st.st_size > max_bytes:
             continue
         rel = p.relative_to(root).as_posix()
         if "test" in rel.lower().split("/")[-1]:
             continue  # the code under test is what we want to surface, not the tests
-        chunks.extend(chunk_file(rel, text))
-    return chunks
+        yield rel, st, p
 
 
 def search(chunks: list[Chunk], query: str, k: int = 3) -> list[tuple[Chunk, float]]:

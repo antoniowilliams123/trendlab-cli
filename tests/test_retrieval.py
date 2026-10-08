@@ -104,3 +104,20 @@ def test_ranked_session_search(tmp_path: Path):
     assert store.ranked_search("zzzz qqqq") == []
     store.close()
     assert isinstance(Chunk("x", 1, 1, ""), Chunk)
+
+
+def test_index_cache_reuses_unchanged_files(tmp_path):
+    import os
+
+    from trendlab.context.retrieval import index_project
+
+    (tmp_path / "a.py").write_text("def alpha():\n    return 1\n")
+    (tmp_path / "b.py").write_text("def beta():\n    return 2\n")
+    first = index_project(tmp_path, IgnoreRules([]))
+    assert (tmp_path / ".trendlab/index/chunks.json").is_file()
+    (tmp_path / "b.py").write_text("def gamma():\n    return 3\n")
+    st = (tmp_path / "b.py").stat()
+    os.utime(tmp_path / "b.py", ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    second = index_project(tmp_path, IgnoreRules([]))
+    texts = {c.text.split("(")[0] for c in second}
+    assert texts == {"def alpha", "def gamma"} and len(first) == len(second)
