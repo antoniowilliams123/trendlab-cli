@@ -4864,6 +4864,22 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
 - **Re-rating pass**: terms rated before the programme re-rated where measured work now
   supports it (part 7 of the ledger). Mean 8.05; 260 terms below 9.
 
+- **U23 Agent behaviour** (`ccae579`): test-gaming check (skip/xfail, removed assertions, deleted
+  tests, loosened CI; 0 false alarms on 80 commits); sycophancy tier sy01–sy05 (live: Flash
+  followed 0/10 wrong diagnoses, fixed the real cause 10/10); overreach and timidity rates;
+  `docs/AGENT_CONSTITUTION.md` — 14 rules, each with enforcing code, proving test and metric,
+  guarded by `tests/test_constitution.py`.
+- **U24 Architecture and parsimony** (`ceca98a`): `trendlab arch` (cycles, `forbid_imports`
+  rules, big modules, fan-in); runs judged on the import edges they add; parsimony per fix —
+  saved live fixes: harness 94 % within 2 lines of the minimal fix, bare 80 %.
+- **U25 Mutation testing** (`075a969`): `trendlab mutate`; on the shop code the survivors are the
+  boundary bugs the suite plants elsewhere.
+- **U26 Runtime controls** (`994b379`): run lock per checkout, `[tools] allow/deny` + `--tools`,
+  `[limits] max_tokens_per_run` (BUDGET_TOKENS), verification latency per bench row.
+- **U27 Security inventory** (`1c8339c`): `trendlab surface` (reach + risks, secrets by name),
+  `trendlab audit` (OSV; this repo 55 packages, 0 known vulnerabilities).
+- Ratings: mean 8.23; 242 terms below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

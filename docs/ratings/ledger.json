@@ -240,8 +240,8 @@
   "evidence": "load profile (p50/p95, makespan, throughput) in every bench summary; one load level measured"
  },
  "149": {
-  "rating": 7,
-  "evidence": "generated-test strength check (fails when the fix is reverted) (c862202); no edge-case coverage metric"
+  "rating": 9,
+  "evidence": "trendlab mutate: survivors are untested behaviour; found the suite's boundary bugs (075a969)"
  },
  "150": {
   "rating": 9,
@@ -464,8 +464,8 @@
   "evidence": "generated-test strength: the new test must fail when the fix is reverted (c862202)"
  },
  "567": {
-  "rating": 6,
-  "evidence": "test-strength check only; no edge-case enumeration"
+  "rating": 8,
+  "evidence": "mutation survivors point at missed edge cases"
  },
  "576": {
   "rating": 8,
@@ -480,12 +480,12 @@
   "evidence": "same (c862202)"
  },
  "579": {
-  "rating": 7,
-  "evidence": "new class/function counts only"
+  "rating": 8,
+  "evidence": "new-definition budget + parsimony"
  },
  "580": {
-  "rating": 7,
-  "evidence": "same signal; no design-level check"
+  "rating": 8,
+  "evidence": "same"
  },
  "582": {
   "rating": 9,
@@ -968,16 +968,16 @@
   "evidence": "budgets, alerts, ledger and fully loaded cost together (3614a6b)"
  },
  "456": {
-  "rating": 7,
-  "evidence": "network-after-secret path closed; shell remains the broad surface"
+  "rating": 9,
+  "evidence": "trendlab surface: everything the agent can reach + risks (1c8339c)"
  },
  "177": {
   "rating": 8,
   "evidence": "network calls after a secret read need approval in every mode (7d75215)"
  },
  "454": {
-  "rating": 7,
-  "evidence": "secret taint and injection taint force approval regardless of mode"
+  "rating": 8,
+  "evidence": "every capability listed with its policy; taints force approval"
  },
  "459": {
   "rating": 9,
@@ -1216,8 +1216,8 @@
   "evidence": "hallucinated imports/APIs caught on the lines an edit adds; 0 false alarms on 1,078 real files, 5/5 seeded (18b6be9)"
  },
  "566": {
-  "rating": 6,
-  "evidence": "unresolved names caught; invented edge cases in tests are not checked"
+  "rating": 7,
+  "evidence": "weak/fabricated tests caught by test strength + mutation"
  },
  "559": {
   "rating": 6,
@@ -1264,8 +1264,8 @@
   "evidence": "spec drift + verifier against the original task"
  },
  "848": {
-  "rating": 6,
-  "evidence": "plan lint and spec check before/after; no architecture review step"
+  "rating": 7,
+  "evidence": "plan lint + architecture rules before/after; no dedicated architecture step"
  },
  "850": {
   "rating": 7,
@@ -1670,5 +1670,161 @@
  "867": {
   "rating": 9,
   "evidence": "verify, review, health, canary, replay and gates form one quality system"
+ },
+ "604": {
+  "rating": 9,
+  "evidence": "skip/xfail added, assertions removed, test files deleted or CI loosened are flagged; 0 false alarms on 80 commits (ccae579)"
+ },
+ "584": {
+  "rating": 8,
+  "evidence": "sycophancy tier: confident wrong diagnoses; Flash followed 0/10 and fixed the real cause 10/10 (ccae579)"
+ },
+ "595": {
+  "rating": 8,
+  "evidence": "constitution rules each enforced, tested and measured; misalignment shows as rule violations"
+ },
+ "597": {
+  "rating": 8,
+  "evidence": "overreach rate: edits on question tasks, per bench summary (ccae579)"
+ },
+ "598": {
+  "rating": 8,
+  "evidence": "timidity rate: no change or a question on a clear fix (ccae579)"
+ },
+ "643": {
+  "rating": 8,
+  "evidence": "both rates measured; route settings tune how proactive each request kind is"
+ },
+ "558": {
+  "rating": 8,
+  "evidence": "overreach rate + scope budget + change scope"
+ },
+ "609": {
+  "rating": 9,
+  "evidence": "docs/AGENT_CONSTITUTION.md: 14 rules, each with enforcing code, proving test, metric; coverage test (ccae579)"
+ },
+ "612": {
+  "rating": 9,
+  "evidence": "same contract, checked by tests/test_constitution.py"
+ },
+ "610": {
+  "rating": 9,
+  "evidence": "behavioural guidelines are the constitution's rules, enforced in code"
+ },
+ "611": {
+  "rating": 9,
+  "evidence": "rules of engagement = constitution + permission policy"
+ },
+ "616": {
+  "rating": 9,
+  "evidence": "behavioural guardrails measured per rule"
+ },
+ "622": {
+  "rating": 9,
+  "evidence": "agent behaviour policy written and enforced"
+ },
+ "648": {
+  "rating": 9,
+  "evidence": "discipline measured: scope, parsimony, test gaming, overreach"
+ },
+ "621": {
+  "rating": 8,
+  "evidence": "harness intent is written down as enforced rules"
+ },
+ "642": {
+  "rating": 8,
+  "evidence": "nudges correct scope, communication and test gaming once per run"
+ },
+ "637": {
+  "rating": 8,
+  "evidence": "coded failures + rule metrics close the loop"
+ },
+ "674": {
+  "rating": 9,
+  "evidence": "trendlab arch: cycles, rule violations, oversized modules; new edges judged per run (ceca98a)"
+ },
+ "675": {
+  "rating": 8,
+  "evidence": "architecture rules enforced; design quality beyond imports is not"
+ },
+ "685": {
+  "rating": 8,
+  "evidence": "import graph + module size + fan-in report"
+ },
+ "686": {
+  "rating": 8,
+  "evidence": "parsimony measured per fix"
+ },
+ "687": {
+  "rating": 9,
+  "evidence": "parsimony: harness 94% of fixes within 2 lines of the minimal fix vs bare 80% (ceca98a)"
+ },
+ "632": {
+  "rating": 9,
+  "evidence": "same measurement"
+ },
+ "633": {
+  "rating": 9,
+  "evidence": "same measurement"
+ },
+ "634": {
+  "rating": 8,
+  "evidence": "minimal-fix share measured; terseness of prose handled by communication rules"
+ },
+ "569": {
+  "rating": 8,
+  "evidence": "mutation testing surfaces latent bugs before they ship (075a969)"
+ },
+ "570": {
+  "rating": 8,
+  "evidence": "same"
+ },
+ "571": {
+  "rating": 6,
+  "evidence": "boundary mutants catch some paper-cut bugs; no broader check"
+ },
+ "47": {
+  "rating": 9,
+  "evidence": "one live run per checkout with stale-lock takeover; worktrees for parallel work (994b379)"
+ },
+ "38": {
+  "rating": 9,
+  "evidence": "[tools] allow/deny + --tools hide and refuse tools (994b379)"
+ },
+ "44": {
+  "rating": 9,
+  "evidence": "[limits] max_tokens_per_run with its own failure code (994b379)"
+ },
+ "538": {
+  "rating": 9,
+  "evidence": "edit → validation and edit → verdict seconds per bench row (994b379)"
+ },
+ "539": {
+  "rating": 8,
+  "evidence": "review is immediate (verifier/review gate); turnaround measured via verdict latency"
+ },
+ "540": {
+  "rating": 8,
+  "evidence": "prompt → first edit and edit → verdict measured"
+ },
+ "33": {
+  "rating": 8,
+  "evidence": "worktree runs, docker sandbox option, run lock"
+ },
+ "48": {
+  "rating": 8,
+  "evidence": "parallel read-only tool calls bounded by limits.parallel_tools"
+ },
+ "50": {
+  "rating": 8,
+  "evidence": "async tool execution and background processes"
+ },
+ "457": {
+  "rating": 8,
+  "evidence": "trendlab audit against OSV; this repo 55 packages, 0 known vulnerabilities (1c8339c)"
+ },
+ "825": {
+  "rating": 8,
+  "evidence": "surface report + audit + local-first + no outward actions by default"
  }
 }
