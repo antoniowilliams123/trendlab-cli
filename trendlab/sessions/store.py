@@ -416,6 +416,47 @@ class SessionStore:
             self._conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
             self._conn.commit()
 
+    def spend_rows(self, since: str, until: str | None = None) -> list[dict[str, Any]]:
+        """Model calls in [since, until) with their session's project (U10 cost ledger)."""
+        q = (
+            "SELECT m.session_id, s.project_path, m.model, m.role, m.input_tokens, "
+            "m.output_tokens, m.cached_input_tokens, m.cost_usd, m.ts FROM model_calls m "
+            "LEFT JOIN sessions s ON s.id = m.session_id WHERE m.ts >= ?"
+        )
+        params: list[Any] = [since]
+        if until:
+            q += " AND m.ts < ?"
+            params.append(until)
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(q, params).fetchall()]
+
+    def run_outcomes(self, since: str, until: str | None = None) -> list[dict[str, Any]]:
+        """Finished runs in [since, until): session, outcome, whether a change was validated."""
+        q = (
+            "SELECT e.session_id, e.type, e.data, s.project_path FROM events e "
+            "LEFT JOIN sessions s ON s.id = e.session_id WHERE e.ts >= ? AND e.type IN "
+            "('run.completed','run.failed','run.canceled')"
+        )
+        params: list[Any] = [since]
+        if until:
+            q += " AND e.ts < ?"
+            params.append(until)
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        out = []
+        for r in rows:
+            d = json.loads(r["data"]) if r["data"] else {}
+            out.append(
+                {
+                    "session_id": r["session_id"],
+                    "project_path": r["project_path"],
+                    "outcome": r["type"].split(".", 1)[1],
+                    "changed": bool(d.get("changed_files")),
+                    "validated": bool(d.get("changed_files")) and bool(d.get("validated")),
+                }
+            )
+        return out
+
     def stats(self, days: int = 7) -> dict[str, Any]:
         """Session analytics (U6): volume, spend, outcomes and failure reasons over a window."""
         from collections import Counter
@@ -436,7 +477,7 @@ class SessionStore:
                 "SELECT type, data FROM events WHERE ts >= ? AND type IN ('run.completed',"
                 "'run.failed','guard.fired','tool.skipped','verify.verdict','tool.circuit_opened',"
                 "'claim.unsupported','scope.checked','security.injection_suspected',"
-                "'invariant.violated','route.decided')",
+                "'invariant.violated','route.decided','communication.checked')",
                 (since,),
             ).fetchall()
         outcomes: Counter[str] = Counter()

@@ -237,6 +237,15 @@ class EngineConfig(BaseModel):
     canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
 
 
+class EconomicsConfig(BaseModel):
+    """Spend governance (U10): monthly budgets checked by the engine, alerted once per
+    threshold per month (Telegram when configured, and an inbox card)."""
+
+    monthly_budget_usd: float = Field(default=0.0, ge=0)  # all projects; 0 = no budget
+    project_budgets: dict[str, float] = Field(default_factory=dict)  # path -> USD per month
+    alert_at: list[float] = Field(default_factory=lambda: [0.8, 1.0])
+
+
 class SessionsConfig(BaseModel):
     """Retention (U6): how long stored sessions and events are kept."""
 
@@ -424,6 +433,7 @@ class AppConfig(BaseModel):
     engine: EngineConfig = EngineConfig()
     governance: GovernanceConfig = GovernanceConfig()
     sessions: SessionsConfig = SessionsConfig()
+    economics: EconomicsConfig = EconomicsConfig()
     attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)

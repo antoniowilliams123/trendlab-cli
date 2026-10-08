@@ -181,6 +181,39 @@ async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, A
     return report
 
 
+async def budget_check(inbox: Inbox, config, state: dict[str, Any], *, now=None) -> dict[str, Any]:
+    """U10: month-to-date spend vs [economics] budgets; each crossed threshold alerts once."""
+    from datetime import datetime
+
+    from trendlab.engine.meta import HARNESS_PROJECT
+    from trendlab.engine.notify import send_telegram
+    from trendlab.telemetry.ledger import budget_status, new_alerts
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        status = budget_status(store, config.economics, now=now)
+    finally:
+        store.close()
+    month = (now or datetime.now()).strftime("%Y-%m")
+    alerts = new_alerts(status, state, month)
+    for alert in alerts:
+        inbox.record(
+            project=HARNESS_PROJECT,
+            title=alert["text"],
+            # words, not numbers: the inbox clusters signatures with digits normalised away
+            signature=f"budget|{alert['budget']}|"
+            + ("over budget" if alert["threshold"] >= 1.0 else "near budget"),
+            source="budget",
+            evidence=[f"{b['budget']}: ${b['spent']:.2f} of ${b['limit']:.2f}" for b in status],
+            severity="high" if alert["threshold"] >= 1.0 else "med",
+        )
+        try:
+            await send_telegram(config, alert["text"])
+        except Exception:  # noqa: BLE001 — an alert channel failure must not stop the job
+            pass
+    return {"budgets": status, "alerts": [a["text"] for a in alerts]}
+
+
 async def meta_scan(inbox: Inbox, config, *, days: int = 7) -> dict[str, Any]:
     store = SessionStore(trendlab_home() / "sessions.db")
     try:

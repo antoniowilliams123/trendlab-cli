@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from trendlab.config.schema import AppConfig
 from trendlab.providers.base import TokenUsage
@@ -46,6 +47,9 @@ class CostTracker:
     config: AppConfig
     records: list[ModelCallRecord] = field(default_factory=list)
     _warned: bool = False
+    # called with every record (U10): the app persists ALL roles — planner, verifier, router,
+    # summarizer — not only the lead, so stored spend is the fully loaded cost
+    on_record: Any = None
 
     def price(self, model_ref: str, usage: TokenUsage) -> float:
         pricing = self.config.pricing.get(model_ref)
@@ -94,6 +98,11 @@ class CostTracker:
             prompt_hash,
         )
         self.records.append(rec)
+        if self.on_record is not None:
+            try:
+                self.on_record(rec)
+            except Exception:  # noqa: BLE001 — persistence must never break a model call
+                pass
         return rec
 
     @property

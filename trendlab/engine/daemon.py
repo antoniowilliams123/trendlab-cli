@@ -97,6 +97,11 @@ class Engine:
         if job == "prune":
             stamp = now.strftime("%Y-%m-%d")
             return not warm and now.hour >= 4 and self.state.get("prune_day") != stamp
+        if job == "budget":
+            econ = self.config.economics
+            if not (econ.monthly_budget_usd or econ.project_budgets):
+                return False
+            return not last or (now.timestamp() - float(last)) >= 3600
         if job == "canary":
             if not ecfg.canary:
                 return False
@@ -144,6 +149,10 @@ class Engine:
                     )
                 finally:
                     store.close()
+            elif job == "budget":
+                from trendlab.engine.jobs import budget_check
+
+                result["budget"] = await budget_check(self.inbox, self.config, self.state)
             elif job == "canary":
                 from trendlab.engine.jobs import canary_run
 
@@ -203,6 +212,7 @@ class Engine:
                 "digest",
                 "canary",
                 "prune",
+                "budget",
             }:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
@@ -231,7 +241,7 @@ class Engine:
         try:
             while not self._stop.is_set():
                 now = self.now()
-                for job in ("watch", "sleep", "meta", "digest", "canary", "prune"):
+                for job in ("watch", "sleep", "meta", "digest", "canary", "prune", "budget"):
                     if self.due(job, now):
                         await self.run_job(job)
                 try:

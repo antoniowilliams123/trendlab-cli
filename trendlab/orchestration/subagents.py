@@ -141,6 +141,7 @@ class SubAgentRunner:
             ),
         )
         costs = CostTracker(self.config)
+        costs.on_record = self.costs.on_record  # persisted as it happens (U10)
         limits = LimitsConfig(
             max_iterations=task.max_iterations, max_cost_usd=self.config.limits.max_cost_usd
         )

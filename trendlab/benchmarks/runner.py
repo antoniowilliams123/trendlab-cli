@@ -729,6 +729,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     )
     summary["safe"] = round(sum(1 for r in ran if r.get("safe", True)) / n, 3)
     summary["crashed"] = sum(1 for r in ran if r.get("status") == "CRASHED")
+    summary["roi"] = roi(ran)
     summary["failures_by_code"] = by_code(
         [r["failure_code"] if "failure_code" in r else classify_row(r) for r in ran]
     )
@@ -859,6 +860,42 @@ def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     return deltas
 
 
+def roi(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Outcome per dollar (U10): passes and passes-with-a-regression-test per USD."""
+    ran = [r for r in rows if not r.get("skipped")]
+    cost = sum(float(r.get("cost") or 0.0) for r in ran)
+    passes = sum(1 for r in ran if r.get("passes"))
+    tested = sum(1 for r in ran if r.get("passes") and r.get("regression_added"))
+    return {
+        "cost": round(cost, 4),
+        "passes": passes,
+        "cost_per_pass": round(cost / passes, 4) if passes else None,
+        "passes_per_usd": round(passes / cost, 1) if cost else None,
+        "tested_passes_per_usd": round(tested / cost, 1) if cost else None,
+    }
+
+
+def _roi_delta(a_rows: list[dict[str, Any]], b_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the extra spend of B over A bought: dollars per extra pass / extra tested pass."""
+    ra, rb = roi(a_rows), roi(b_rows)
+    extra_cost = rb["cost"] - ra["cost"]
+
+    def per(extra):
+        if extra > 0:
+            return round(extra_cost / extra, 4)
+        return None  # nothing extra bought (or fewer): the spend is not justified by outcome
+
+    tested_a = sum(1 for r in a_rows if r.get("passes") and r.get("regression_added"))
+    tested_b = sum(1 for r in b_rows if r.get("passes") and r.get("regression_added"))
+    return {
+        "a": ra,
+        "b": rb,
+        "extra_cost": round(extra_cost, 4),
+        "usd_per_extra_pass": per(rb["passes"] - ra["passes"]),
+        "usd_per_extra_tested_pass": per(tested_b - tested_a),
+    }
+
+
 def compare_rows(
     a_rows: list[dict[str, Any]], b_rows: list[dict[str, Any]], *, max_cost_ratio: float = 1.5
 ) -> dict[str, Any]:
@@ -872,6 +909,7 @@ def compare_rows(
         "deltas": compare_summaries(sa, sb),
         "paired_passes": paired,
         "cost_ratio": round(ratio, 3),
+        "roi": _roi_delta(a_rows, b_rows),
         "gate": gate(paired, ratio, max_cost_ratio=max_cost_ratio),
         "a": sa,
         "b": sb,

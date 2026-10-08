@@ -1156,6 +1156,54 @@ def turns_cmd(
     typer.echo(log)
 
 
+@app.command("cost")
+def cost_cmd(
+    days: int = typer.Option(30, "--days"),
+    project: str | None = typer.Option(None, "--project", help="Only this project path."),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Cost ledger (U10): spend per project with ROI, overhead, waste and cache share; this
+    period against the previous one; month-to-date budgets."""
+    from trendlab.config.loader import load_config
+    from trendlab.sessions.store import SessionStore
+    from trendlab.telemetry.ledger import bucket, budget_status, ledger
+
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        led = ledger(store, days)
+        budgets = budget_status(store, load_config().economics)
+    finally:
+        store.close()
+    if project:
+        key = bucket(str(Path(project).expanduser().resolve()))
+        led["projects"] = [r for r in led["projects"] if r["project"] == key]
+    if output == "json":
+        typer.echo(json.dumps({**led, "budgets": budgets}, indent=2))
+        return
+    change = (
+        f" ({led['change']:+.0%} vs the {days} days before)" if led["change"] is not None else ""
+    )
+    console.print(
+        f"[neon]Spend, last {days} days[/neon]: ${led['total']:.3f}{change} · "
+        f"project work {led['work_share'] or 0:.0%} · wasted on runs that never completed "
+        f"${led['wasted']:.3f}"
+    )
+    for r in led["projects"][:15]:
+        roi = (
+            f"${r['cost_per_validated_change']:.3f}/validated change"
+            if r["cost_per_validated_change"]
+            else "no validated changes"
+        )
+        console.print(
+            f"  ${r['cost']:.3f}  {r['project']} · {r['runs']} runs ({r['completed']} done) · "
+            f"{roi} · overhead {r['overhead_share'] or 0:.0%} · cache {r['cache_share'] or 0:.0%}"
+        )
+    for b in budgets:
+        console.print(
+            f"  budget {b['budget']}: ${b['spent']:.2f} of ${b['limit']:.2f} ({b['share']:.0%})"
+        )
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),

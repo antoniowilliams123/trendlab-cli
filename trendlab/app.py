@@ -191,6 +191,7 @@ class TrendLabApp:
         if self._provider_override is not None:
             self.gateway.register(self.model_ref, self._provider_override)
         self.costs = CostTracker(self.config)
+        self.costs.on_record = self._persist_cost
         self.engine.project_rules = ProjectRules(self.project_root)
 
         rules = IgnoreRules.for_project(
@@ -1094,6 +1095,20 @@ class TrendLabApp:
             )
         self.store.touch_session(self.session_id)
 
+    def _persist_cost(self, rec) -> None:
+        """Every model call of every role lands in the store (fully loaded cost, U10)."""
+        if self.store is not None:
+            self.store.record_model_call(
+                self.session_id,
+                rec.model_ref,
+                rec.role,
+                rec.input_tokens,
+                rec.output_tokens,
+                rec.cached_input_tokens,
+                rec.latency_ms,
+                rec.cost_usd,
+            )
+
     def _persist_message(self, message: dict[str, Any]) -> None:
         if self.store is not None:
             self.store.append_message(self.session_id, message)
@@ -1103,19 +1118,7 @@ class TrendLabApp:
             return
         rec = event.to_record()
         self.store.append_event(event.session_id, rec.pop("event"), rec, rec.pop("ts"))
-        if event.type == EventType.MODEL_CALL_COMPLETED:
-            d = event.data
-            self.store.record_model_call(
-                self.session_id,
-                d.get("model", "?"),
-                d.get("role", "main"),
-                d.get("input_tokens", 0),
-                d.get("output_tokens", 0),
-                d.get("cached_input_tokens", 0),
-                d.get("latency_ms", 0),
-                d.get("cost_usd", 0.0),
-            )
-        elif event.type == EventType.PLAN_UPDATED:
+        if event.type == EventType.PLAN_UPDATED:
             self.store.set_state(self.session_id, "plan", event.data.get("plan"))
 
     def _notify_run_events(self, event: Event) -> None:

@@ -169,6 +169,7 @@ class CandidateRunner:
             self.config.context, self.events, self.session_id, system_prompt=SYSTEM
         )
         costs = CostTracker(self.config)
+        costs.on_record = self.costs.on_record  # persisted as it happens (U10)
         agent = AgentRuntime(
             gateway=gateway,
             model_ref=self.model_ref,
