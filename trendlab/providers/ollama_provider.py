@@ -141,6 +141,8 @@ class OllamaProvider(ModelProvider):
         }
         if tools and self._caps.native_tools:
             payload["tools"] = tools
+        elif any(m.get("_json_mode") for m in messages):
+            payload["format"] = "json"  # structured output mode
         return payload
 
     def _raise_for_status(self, resp: httpx.Response, body: str | None = None) -> None:

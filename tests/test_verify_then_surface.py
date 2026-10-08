@@ -198,11 +198,18 @@ async def test_fail_verdict_stops_required_but_not_advisory(project: Path, manag
         and "deletes user data" in result.stop_reason
     )
     assert "verifier: fail (1)" in run_footer(result)
+    write3 = ModelResponse(
+        tool_calls=[
+            ToolCall(
+                id="w3", name="write_file", arguments={"path": "src/x.py", "content": "x = 3\n"}
+            )
+        ]
+    )  # a different edit: rewriting identical content is a no-op since edits are idempotent
     agent2, _ = make_agent(
         project,
         manager_factory(),
         events,
-        ScriptedProvider([WRITE, TEST, DONE]),
+        ScriptedProvider([write3, TEST, DONE]),
         mode=PermissionMode.UNSAFE,
     )
     agent2.verifier = _verifier([VerifierVerdict("fail", findings=bad.findings)])

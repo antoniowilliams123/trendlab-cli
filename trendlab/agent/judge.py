@@ -60,8 +60,10 @@ async def pairwise(
             }
         ]
 
-    first = parse_pairwise(await call(msgs(a, b)))
-    second = parse_pairwise(await call(msgs(b, a)))
+    from trendlab.providers.structured_json import ask_json
+
+    first, _ = await ask_json(call, msgs(a, b), parse_pairwise)
+    second, _ = await ask_json(call, msgs(b, a), parse_pairwise)
     if first is None or second is None:
         return {"winner": "tie", "position_bias": False, "orders": [first, second], "usable": False}
     # map the swapped order back: in the second call "A" was candidate b

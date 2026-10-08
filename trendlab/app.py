@@ -550,15 +550,21 @@ class TrendLabApp:
         messages = build_messages(
             task, ctx_text, self.tools.ctx.validation_commands if self.tools else None
         )
-        response, used = await self.gateway.complete(ref, messages, None)
-        self.costs.record(
-            used,
-            response.usage,
-            0,
-            role="planner",
-            local=self.gateway.provider(used).capabilities().local,
-        )
-        return parse_steps(response.text)
+        from trendlab.providers.structured_json import ask_json
+
+        async def call(msgs):
+            response, used = await self.gateway.complete(ref, msgs, None)
+            self.costs.record(
+                used,
+                response.usage,
+                0,
+                role="planner",
+                local=self.gateway.provider(used).capabilities().local,
+            )
+            return response.text
+
+        steps, _ = await ask_json(call, messages, parse_steps)
+        return steps
 
     def _best_of_for(self, model_ref: str) -> int:
         cfg = self.config.attempts

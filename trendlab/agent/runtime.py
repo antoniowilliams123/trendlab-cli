@@ -292,6 +292,10 @@ class AgentRuntime:
                 if await self._track_step():
                     refresh_plan = True
                 self.state.transition(AgentState.THINKING)
+                broken = self._check_invariants()
+                if broken:
+                    stop_reason, status = broken, AgentState.FAILED
+                    break
                 if refresh_plan:
                     self.context.plan_text = self.plan.render() if self.plan.tasks else ""
                     refresh_plan = False
@@ -597,6 +601,26 @@ class AgentRuntime:
             output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
         self._append(_tool_message(call, output))
         return None
+
+    def _check_invariants(self) -> str | None:
+        """Runtime assertions after every iteration; a fatal one stops the run."""
+        from trendlab.agent.invariants import check
+
+        try:
+            problems = check(self)
+        except Exception as exc:  # noqa: BLE001 — the checker itself must never break a run
+            problems = [(f"invariant checker error: {exc}", False)]
+        fatal = None
+        for message, is_fatal in problems:
+            self.events.emit(
+                EventType.INVARIANT_VIOLATED,
+                session_id=self.session_id,
+                message=message,
+                fatal=is_fatal,
+            )
+            if is_fatal and fatal is None:
+                fatal = f"invariant violated: {message}"
+        return fatal
 
     # -- telemetry helpers (spec §6.2, §6.3) -------------------------------------------------
     def _guard(self, guard: str) -> None:

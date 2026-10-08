@@ -176,9 +176,17 @@ async def verify(
     call: Caller, *, task: str, diff: str, validation: dict[str, Any] | None, plan: str
 ) -> VerifierVerdict | None:
     """Ask the verifier model once; ``None`` when the answer is unusable (= unavailable)."""
+    from trendlab.providers.structured_json import ask_json
+
     messages = build_messages(task=task, diff=diff, validation=validation, plan=plan)
-    text, model = await call(messages)
-    verdict = parse_verdict(text)
+    used: list[str] = []
+
+    async def text_only(msgs):
+        text, model = await call(msgs)
+        used.append(model)
+        return text
+
+    verdict, _attempts = await ask_json(text_only, messages, parse_verdict)
     if verdict is not None:
-        verdict.model = model
+        verdict.model = used[-1] if used else ""
     return verdict

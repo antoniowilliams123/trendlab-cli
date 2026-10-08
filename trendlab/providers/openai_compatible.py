@@ -92,6 +92,8 @@ class OpenAICompatibleProvider(ModelProvider):
                 c["reasoning_content"] = m["_reasoning_content"]
             clean.append(c)
         payload: dict[str, Any] = {"model": self.model, "messages": clean}
+        if any(m.get("_json_mode") for m in messages) and not tools:
+            payload["response_format"] = {"type": "json_object"}  # structured output mode
         if getattr(self, "temperature", None) is not None:
             payload["temperature"] = self.temperature
         if tools and self._caps.native_tools:

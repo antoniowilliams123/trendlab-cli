@@ -32,7 +32,11 @@ async def test_pairwise_swaps_order_and_flags_position_bias():
     answers[:] = ['{"winner": "A"}', '{"winner": "A"}']  # always the first shown → bias
     v2 = await pairwise(call, task="fix x", a="patch-a", b="patch-b")
     assert v2["winner"] == "tie" and v2["position_bias"] is True
-    answers[:] = ["nonsense", '{"winner": "B"}']
+    answers[:] = [
+        "nonsense",
+        "still nonsense",
+        '{"winner": "B"}',
+    ]  # first order fails even after repair
     v3 = await pairwise(call, task="fix x", a="a", b="b")
     assert v3["winner"] == "tie" and v3["usable"] is False
     assert parse_pairwise('{"winner": "tie"}') == "TIE" and parse_pairwise("{}") is None

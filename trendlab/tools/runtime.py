@@ -102,6 +102,8 @@ class ToolRuntime:
         root = self.ctx.project_root
         if name in GIT_TOOLS and not _in_git_repo(root):
             return "this project is not a git repository; use list_directory/read_file instead"
+        if name == "run_tests" and not (self.ctx.validation_commands or {}):
+            return "no test command is known for this project; run the tests with shell"
         return None
 
     def visible_schemas(self) -> list[dict[str, Any]]:
@@ -412,7 +414,7 @@ class ToolRuntime:
                 cooldown_s=self.health.cooldown_s,
                 last_error=error_text,
             )
-        if result.ok and tool.name in MUTATING_TOOLS:
+        if result.ok and tool.name in MUTATING_TOOLS and not result.data.get("unchanged"):
             problems = []
             for f in perm.affected_files:
                 problem = postcondition(self.ctx.project_root / f)
@@ -460,7 +462,7 @@ class ToolRuntime:
                 tier3_ref=tiered.tier3_ref,
                 anomaly=tiered.stats.get("anomaly"),
             )
-        if result.ok and tool.name in MUTATING_TOOLS:
+        if result.ok and tool.name in MUTATING_TOOLS and not result.data.get("unchanged"):
             self.events.emit(
                 EventType.FILE_CHANGED,
                 session_id=self.ctx.session_id,

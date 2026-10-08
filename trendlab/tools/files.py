@@ -363,6 +363,12 @@ class WriteFileTool(Tool):
                     ok=False, output="conflict: file changed since it was read; read it again"
                 )
             old = current.decode("utf-8", errors="replace")
+            if old == args.content:  # idempotent: same content again is a no-op, not a change
+                return ToolResult(
+                    ok=True,
+                    output=f"{args.path} already has exactly this content (no change)",
+                    data={"sha256": _sha256(current), "unchanged": True, "path": args.path},
+                )
         _atomic_write(path, args.content)
         diff = unified_diff(args.path, old, args.content)
         added, removed = diff_stats(diff)
@@ -442,6 +448,18 @@ class PatchFileTool(Tool):
                 ok=False, output="conflict: file changed since it was read; read it again"
             )
         old = raw.decode("utf-8", errors="replace")
+        if (
+            args.old_text not in old
+            and args.new_text
+            and args.new_text in old
+            and args.old_text not in args.new_text
+        ):
+            # idempotent: this exact patch is already in the file (e.g. a retried call)
+            return ToolResult(
+                ok=True,
+                output=f"{args.path} already contains this change (no change)",
+                data={"sha256": _sha256(raw), "unchanged": True, "path": args.path},
+            )
         new, err = self._apply(old, args)
         if new is None:
             return ToolResult(ok=False, output=f"patch failed: {err}")

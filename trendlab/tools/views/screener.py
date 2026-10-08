@@ -61,4 +61,7 @@ def parse_answer(answer: str) -> ToolOutput | None:
 async def screen(
     call: Callable[[list[dict[str, Any]]], Awaitable[str]], text: str, meta: dict[str, Any]
 ) -> ToolOutput | None:
-    return parse_answer(await call(build_messages(text, meta)))
+    from trendlab.providers.structured_json import ask_json
+
+    parsed, _ = await ask_json(call, build_messages(text, meta), parse_answer)
+    return parsed

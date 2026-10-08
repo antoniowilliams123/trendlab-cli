@@ -59,7 +59,10 @@ def parse_card(text: str) -> dict[str, Any] | None:
 async def draft_card(
     call: Callable[[list[dict[str, Any]]], Awaitable[str]], title: str, trace: str
 ) -> dict[str, Any] | None:
-    return parse_card(await call(build_messages(title, trace)))
+    from trendlab.providers.structured_json import ask_json
+
+    card, _ = await ask_json(call, build_messages(title, trace), parse_card)
+    return card
 
 
 def render_card(card: dict[str, Any]) -> str:
