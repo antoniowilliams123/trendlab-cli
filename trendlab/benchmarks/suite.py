@@ -1561,16 +1561,22 @@ def _suite_version() -> str:
     return h.hexdigest()[:12]
 
 
-def leakage(task: Task, context_text: str) -> list[str]:
+def leakage(task: Task, context_text: str, authored: str = "") -> list[str]:
     """Benchmark/test-set leakage guard: the hidden test and the reference fix must never reach
-    the model's context. Returns what leaked (empty = clean)."""
+    the model's context. Returns what leaked (empty = clean).
+
+    ``authored`` is the run's own diff: an assertion the agent wrote itself (an obvious test
+    such as ``assert clamp(2, 0, 3) == 2``) is not leakage, so added diff lines are excluded.
+    Question tasks have no hidden test and cannot leak one."""
     leaked = []
+    own = {ln[1:].strip() for ln in authored.splitlines() if ln.startswith("+")}
     hidden_body = [ln.strip() for ln in task.defect.hidden_test.splitlines() if "assert" in ln]
     for ln in hidden_body:
-        if len(ln) > 25 and ln in context_text:
+        if len(ln) > 25 and ln not in own and ln in context_text:
             leaked.append("hidden test assertion")
             break
-    if task.defect.hidden_test_file in context_text:
+    name = task.defect.hidden_test_file
+    if name and name in context_text:
         leaked.append("hidden test file name")
     return leaked
 

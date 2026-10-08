@@ -18,6 +18,11 @@ def test_leakage_guard_and_suite_version():
     line = next(ln.strip() for ln in task.defect.hidden_test.splitlines() if "assert" in ln)
     assert "hidden test assertion" in suite_mod.leakage(task, f"... {line} ...")
     assert "hidden test file name" in suite_mod.leakage(task, task.defect.hidden_test_file)
+    # the agent writing the same obvious assertion itself is not leakage
+    assert suite_mod.leakage(task, f"... {line} ...", authored=f"+    {line}\n") == []
+    # question tasks have no hidden test, so nothing can leak
+    question = suite_mod.get_task("rq01-where_tax")
+    assert suite_mod.leakage(question, "any context at all") == []
     assert len(suite_mod.SUITE_VERSION) == 12
 
 

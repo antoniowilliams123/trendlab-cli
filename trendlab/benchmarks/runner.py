@@ -367,7 +367,7 @@ async def run_task(
             )
         run_diff = "\n".join(diff_parts)[:20_000]
         context_text = json.dumps(tl.context.messages if tl.context else [], default=str)
-        leak = suite_mod.leakage(task, context_text)
+        leak = suite_mod.leakage(task, context_text, authored=run_diff)
         # tool-use eval: every edited file was read first; validation ran after the last edit
         edits = [
             i
