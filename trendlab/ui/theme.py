@@ -119,7 +119,7 @@ Screen {{
     padding: 0 1;
 }}
 #stream {{
-    width: 3fr;
+    width: 100%;
     height: auto;
     max-height: 12;
     background: {BLACK};

@@ -620,6 +620,7 @@ class TrendLabTUI(App[None]):
         self._run_task: asyncio.Task | None = None
         self._modals: dict[str, ApprovalModal] = {}
         self._stream_buf: list[str] = []
+        self._committed = ""  # the answer already moved into the transcript this run
         self._think_buf: list[str] = []
         self._tool_tail: tuple[str, str, float] | None = None  # (tool, tail, elapsed)
         self._spin = 0
@@ -762,7 +763,11 @@ class TrendLabTUI(App[None]):
 
     # -- rendering ---------------------------------------------------------------------------------
     def log_line(self, text) -> None:
-        self.query_one("#transcript", RichLog).write(text)
+        """Append to the transcript; follow new output only when already at the bottom, so
+        reading something above is never interrupted."""
+        log = self.query_one("#transcript", RichLog)
+        at_bottom = log.scroll_y >= log.max_scroll_y - 1
+        log.write(text, scroll_end=at_bottom)
 
     def _clear_log(self) -> None:
         self.query_one("#transcript", RichLog).clear()
@@ -904,8 +909,30 @@ class TrendLabTUI(App[None]):
             out.append("💭 thinking  ", style=f"bold {GREY}")
             out.append(thinking, style=f"italic {GREY}")
         elif self._stream_buf:
-            out.append("".join(self._stream_buf)[-1500:], style=NEON)
-        pane.update(out)
+            out.append("".join(self._stream_buf), style=NEON)
+        pane.update(self._tail_lines(out, pane))
+
+    def _tail_lines(self, text: Text, pane, rows: int = 10) -> Text:
+        """The newest wrapped lines that fit the live pane, so the end is always visible."""
+        width = max(20, (pane.size.width or self.size.width) - 4)
+        lines = text.wrap(self.console, width)
+        if len(lines) <= rows:
+            return text
+        tail = Text("…\n", style=GREY)
+        tail.append(Text("\n").join(lines[-(rows - 1) :]))
+        return tail
+
+    def _commit_stream(self, *, answer: bool) -> None:
+        """A model message is finished: move it from the live pane into the scrollable
+        transcript. Answers render as Markdown; text written before tool calls is narration."""
+        text = "".join(self._stream_buf).strip()
+        if text:
+            if answer:
+                self.log_line(Markdown(text))
+                self._committed = text
+            else:
+                self.log_line(Text(text, style=f"italic {GREY}"))
+        self._flush_stream()
 
     def _flush_stream(self) -> None:
         pane = self.query_one("#stream", Static)
@@ -940,6 +967,8 @@ class TrendLabTUI(App[None]):
         if t == EventType.MODEL_CALL_STARTED:
             self._flush_stream()
             return
+        if t == EventType.MODEL_CALL_COMPLETED and d.get("role", "main") == "main":
+            self._commit_stream(answer=not d.get("tool_calls"))
         if t == EventType.TOOL_OUTPUT:
             self._tool_tail = (
                 str(d.get("tool")),
@@ -1137,6 +1166,7 @@ class TrendLabTUI(App[None]):
         self._refresh_plan()
 
     async def _run(self, text: str) -> None:
+        self._committed = ""
         try:
             result = await self.tl.run_prompt(text)
         except asyncio.CancelledError:
@@ -1148,8 +1178,8 @@ class TrendLabTUI(App[None]):
             self.log_line(f"[bold {RED}]error:[/] {exc}")
             return
         self._flush_stream()
-        if result.text.strip():
-            self.log_line(Markdown(result.text))
+        if result.text.strip() and result.text.strip() != self._committed:
+            self.log_line(Markdown(result.text))  # not streamed, or changed after a rewrite
         self.log_line(run_footer(result))
         self._refresh_header()
         self._refresh_plan()

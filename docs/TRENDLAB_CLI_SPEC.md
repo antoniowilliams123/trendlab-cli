@@ -4958,6 +4958,17 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   folder: 0.1 s; glob over it stops itself at ~26 s with the UI live throughout.
 - Starting in the home folder shows a one-line notice to cd into a project.
 
+#### 2026-10-08 — readable TUI output
+
+- Every finished model message moves into the scrollable transcript at once: answers as
+  rendered Markdown, text written before tool calls as dim narration (it used to be dropped).
+  The run end no longer prints the same answer twice.
+- The live pane wraps to the screen and shows the newest lines (it showed the oldest 12 lines
+  of the last 1,500 characters, so the end of a long answer was cut off, and lines ran off the
+  right edge).
+- The transcript follows new output only when you are at the bottom; reading above is not
+  interrupted.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is
