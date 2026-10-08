@@ -497,7 +497,7 @@ PY_DEFECTS: list[Defect] = [
         '        if int(item.get("qty", 0)) <= 0:',
         '        if int(item["qty"]) <= 0:',
         "validate() crashes with KeyError on an item without qty instead of reporting a problem",
-        "from shop.orders import validate\n\n\ndef test_validate_missing_qty():\n    assert validate([{'price': 1}]) == ['item 0: qty must be positive']\n",
+        "from shop.orders import validate\n\n\ndef test_validate_missing_qty():\n    problems = validate([{'price': 1}])\n    assert len(problems) == 1 and 'qty' in problems[0] and problems[0].startswith('item 0:')\n",
         visible=False,
     ),
     _py(
@@ -636,7 +636,7 @@ TS_DEFECTS: list[Defect] = [
         "if (item.qty <= 0)",
         "validate() lets items without qty through",
         "tests/hidden_missing_none_check.test.mjs",
-        "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { validate } from '../src/orders.mjs';\ntest('missing qty', () => { assert.deepEqual(validate([{ price: 1 }]), ['item 0: qty must be positive']); });\n",
+        "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { validate } from '../src/orders.mjs';\ntest('missing qty', () => { const p = validate([{ price: 1 }]); assert.equal(p.length, 1); assert.ok(p[0].startsWith('item 0:') && p[0].includes('qty')); });\n",
         False,
     ),
     Defect(

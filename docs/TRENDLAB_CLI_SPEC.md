@@ -3995,6 +3995,9 @@ decisions taken after the original specification. Newest last.
     30 lines in one file that validated green with a regression test
     (`[verification] min_diff_lines / min_files`). Gated harness: $0.063 vs bare $0.047.
 -   v0.3.0 tagged.
+-   After v0.3.0: small validated changes are reviewed by the session model rather than
+    skipped (`_verify_change(..., small)`); two over-strict hidden tests in the suite
+    (py03/ts03) relaxed after tracing showed the harness's fix was correct.
 
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 

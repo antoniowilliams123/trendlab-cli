@@ -82,8 +82,9 @@ def test_fix_heuristics():
 def _verifier(verdicts):
     calls = []
 
-    async def fake(task_text, ev):
+    async def fake(task_text, ev, small=False):
         calls.append((task_text, list(ev.changed_files)))
+        fake.small = small
         v = verdicts.pop(0)
         return v
 
@@ -155,7 +156,9 @@ async def test_fix_after_rounds_exhausted_surfaces_with_findings(
     assert "verifier: fix (1)" in run_footer(result)
 
 
-async def test_small_verified_change_skips_review(project: Path, manager_factory, events, recorder):
+async def test_small_verified_change_is_reviewed_cheaply(
+    project: Path, manager_factory, events, recorder
+):
     agent, _ = make_agent(
         project,
         manager_factory(),
@@ -163,13 +166,13 @@ async def test_small_verified_change_skips_review(project: Path, manager_factory
         ScriptedProvider([WRITE, TEST, DONE]),
         mode=PermissionMode.UNSAFE,
     )
-    agent.verifier = _verifier([VerifierVerdict("fail")])
+    agent.verifier = _verifier([VerifierVerdict("pass")])
     agent.verification_mode = "required"
     agent.verify_min_diff_lines, agent.verify_min_files = 30, 2
     result = await agent.run("add x = 2 to x.py")
-    assert result.status == "COMPLETED" and result.verification["verdict"] == "skipped"
-    assert recorder.of_type(EventType.VERIFY_VERDICT)[0].data["verdict"] == "skipped"
-    assert not recorder.of_type(EventType.VERIFY_STARTED)
+    assert result.status == "COMPLETED" and result.verification["verdict"] == "pass"
+    assert agent.verifier.small is True  # the cheap model reviewed it
+    assert recorder.of_type(EventType.VERIFY_STARTED)[0].data["small"] is True
 
 
 async def test_fail_verdict_stops_required_but_not_advisory(project: Path, manager_factory, events):
@@ -211,7 +214,7 @@ async def test_fail_verdict_stops_required_but_not_advisory(project: Path, manag
 async def test_verifier_failure_or_no_changes_never_blocks(
     project: Path, manager_factory, events, recorder
 ):
-    async def broken(task_text, ev):
+    async def broken(task_text, ev, small=False):
         raise RuntimeError("provider down")
 
     agent, _ = make_agent(

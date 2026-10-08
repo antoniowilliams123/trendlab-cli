@@ -586,15 +586,21 @@ class TrendLabApp:
         return await runner.run_best_of(task, failure_tail, n)
 
     # -- verify-then-surface (cheap-model spec §3.2, §5) ------------------------------------------
-    async def _verify_change(self, task_text: str, ev) -> Any:
-        """Fresh-context verifier call: task + diff + latest validation + plan → verdict."""
+    async def _verify_change(self, task_text: str, ev, small: bool = False) -> Any:
+        """Fresh-context verifier call: task + diff + latest validation + plan → verdict.
+        Small validated changes are reviewed by the session (cheap) model; the rest by
+        [routing] verifier / escalation."""
         from trendlab.agent.verifier import verify
 
         assert self.gateway is not None and self.costs is not None and self.tools is not None
         ref = (
-            self.config.routing.get("verifier")
-            or self.config.routing.get("escalation")
-            or self.model_ref
+            self.model_ref
+            if small
+            else (
+                self.config.routing.get("verifier")
+                or self.config.routing.get("escalation")
+                or self.model_ref
+            )
         )
 
         async def call(messages):

@@ -119,7 +119,7 @@ class AgentRuntime:
         self.state = AgentStateMachine(on_change=self._emit_state)
         self.evaluator = CompletionEvaluator()
         # Verify-then-surface (cheap-model spec §3.2): attached by the app.
-        self.verifier: Any = None  # async (task_text, evidence) -> VerifierVerdict | None
+        self.verifier: Any = None  # async (task_text, evidence, small) -> VerifierVerdict | None
         self.verification_mode = "off"  # required | advisory | off
         self.verification_max_rounds = 1
         self.verify_min_diff_lines = 0  # risk gating, set by the app from config
@@ -815,8 +815,8 @@ class AgentRuntime:
         return True
 
     def _small_verified_change(self, ev: EvidenceSummary, final_text: str) -> bool:
-        """Risk gate (M1): skip the stronger model's review when the change is below both size
-        thresholds, validation passed, and a regression test is present or not applicable."""
+        """Risk gate (M1): a change below both size thresholds that validated green with its
+        regression test is reviewed by the cheap lead model, not the stronger one."""
         if self.verify_min_diff_lines <= 0 and self.verify_min_files <= 1:
             return False
         if not ev.validated:
@@ -853,18 +853,12 @@ class AgentRuntime:
             )
         if self.verification_mode == "off" or self.verifier is None or not ev.mutated:
             return None
-        if self._small_verified_change(ev, final_text):
-            self._verification = {"verdict": "skipped", "reason": "small change, validated"}
-            self.events.emit(
-                EventType.VERIFY_VERDICT,
-                session_id=self.session_id,
-                verdict="skipped",
-                reason="small change validated green with its test",
-            )
-            return None
-        self.events.emit(EventType.VERIFY_STARTED, session_id=self.session_id, role=self.role)
+        small = self._small_verified_change(ev, final_text)
+        self.events.emit(
+            EventType.VERIFY_STARTED, session_id=self.session_id, role=self.role, small=small
+        )
         try:
-            verdict = await self.verifier(self._task_text, ev)
+            verdict = await self.verifier(self._task_text, ev, small)
         except Exception as exc:  # noqa: BLE001 — a broken verifier never blocks surfacing
             verdict = None
             self.events.emit(

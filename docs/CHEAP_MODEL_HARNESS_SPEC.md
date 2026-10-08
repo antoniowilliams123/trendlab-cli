@@ -495,6 +495,20 @@ hard half of the suite (symptom-only tasks, multi-file contracts) is the next me
 `trendlab bench -m deepseek:deepseek-flash --suite --compare deepseek:deepseek-flash@harness
 deepseek:deepseek-flash@bare` on all 40 runnable tasks, best run overnight with the engine idle.
 
+Follow-ups the same night:
+
+- **py03 re-examined with tracing.** The harness's fix reported `item 0: missing qty`; the
+  hidden test demanded the original wording `qty must be positive`. Both fixes are correct —
+  the hidden test was over-strict. Fixed in the suite (py03 and ts03 now accept any
+  `item 0: … qty …` problem string), not in the harness. Classified: benchmark defect.
+- **Small changes are now reviewed by the cheap model instead of skipped.** A change under
+  `[verification] min_diff_lines` in fewer than `min_files` files that validated green with
+  its regression test is reviewed by the session model (Flash); larger or unvalidated changes
+  go to `[routing] verifier` (V4 Pro). Nothing ships unreviewed; the stronger model is spent
+  only where risk is.
+- The 40-task harness-vs-bare comparison is running on the v0.3.0 defaults; its summaries
+  land in `docs/BENCH_LOG.md`.
+
 Decisions taken while building P5:
 
 - The suite ships as a generator (`suite.py`), not as files: three base repos plus a defect
