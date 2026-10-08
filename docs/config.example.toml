@@ -159,8 +159,9 @@ verifier = "required"      # required | advisory | off (needs routing.verifier o
 max_rounds = 1             # 'fix' verdicts handed back to the author
 workspace = "inplace"      # inplace | worktree (edit in .trendlab/worktrees, apply verified diff)
 regression_gate = true     # fix-type tasks must add/change a test or state a waiver
-min_diff_lines = 30        # review runs when the diff is at least this big ...
-min_files = 2              # ... or touches this many files, or validation did not pass
+min_diff_lines = 80        # the stronger model reviews when the diff is at least this big ...
+min_files = 3              # ... or touches this many files, or validation did not pass or the run
+                           # escalated; smaller validated changes are reviewed by the session model
 
 # Planner and best-of-N (spec §3.3, §4).
 [planner]

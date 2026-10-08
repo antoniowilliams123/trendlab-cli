@@ -3998,6 +3998,11 @@ decisions taken after the original specification. Newest last.
 -   After v0.3.0: small validated changes are reviewed by the session model rather than
     skipped (`_verify_change(..., small)`); two over-strict hidden tests in the suite
     (py03/ts03) relaxed after tracing showed the harness's fix was correct.
+-   40-task comparison: harness 40/40 vs bare 40/40 (bare Flash handles the whole suite);
+    the V4 Pro review was 45 % of harness cost with every verdict `pass`. Stronger-model
+    review now reserved for ≥ 3 files / ≥ 80 diff lines / unvalidated / missing regression
+    test / escalated runs; the session model reviews the rest. A harder suite tier is the
+    next evaluation step. See §93.7 → 9.5.
 
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 

@@ -160,8 +160,8 @@ class VerificationConfig(BaseModel):
     apply_timeout_seconds: int = 60
     # Risk gating (M1 finding): a small change that validated green and has its regression
     # test does not need the stronger model's review. Either threshold met → review runs.
-    min_diff_lines: int = Field(default=30, ge=0)
-    min_files: int = Field(default=2, ge=1)
+    min_diff_lines: int = Field(default=80, ge=0)
+    min_files: int = Field(default=3, ge=1)
 
     @field_validator("verifier")
     @classmethod

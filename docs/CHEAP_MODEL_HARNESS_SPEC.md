@@ -506,8 +506,25 @@ Follow-ups the same night:
   its regression test is reviewed by the session model (Flash); larger or unvalidated changes
   go to `[routing] verifier` (V4 Pro). Nothing ships unreviewed; the stronger model is spent
   only where risk is.
-- The 40-task harness-vs-bare comparison is running on the v0.3.0 defaults; its summaries
-  land in `docs/BENCH_LOG.md`.
+- **40-task comparison (all Python + TypeScript tasks), v0.3.0 gated defaults:**
+
+  | Configuration | passes | located | no collateral | regression test | cost | lead tokens | wall |
+  |---|---|---|---|---|---|---|---|
+  | flash @ harness (gated) | **40/40** | 38/40 | 40/40 | 40/40 | $0.303 | 1.89 M | 1 789 s |
+  | flash @ bare | **40/40** | 38/40 | 40/40 | 40/40 | $0.204 | 2.42 M | 1 334 s |
+
+  Cost by phase, harness: verify $0.137, plan $0.059, validate $0.048, explore $0.036, edit
+  $0.024. Every verifier verdict was `pass`: the stronger model spent 45 % of the run confirming
+  changes that were already right. The two "not located" tasks are the same in both runs
+  (py09/py24 multi-file contract): the correct fix lands in the caller, not on the seeded line —
+  a scoring quirk, both passed. **Conclusion: this suite does not separate the harness from bare
+  Flash; Flash alone handles every task in it.** Two actions: (a) the stronger-model review now
+  runs only for genuinely risky changes — ≥ 3 files, ≥ 80 diff lines, failed or missing
+  validation, missing regression test, or a run that escalated — everything else is reviewed by
+  the session model (cost parity run below); (b) the suite needs a harder tier (cross-file
+  contracts over three files, misleading tests, state bugs) before any claim rests on it.
+
+HARD_RERUN_PLACEHOLDER
 
 Decisions taken while building P5:
 

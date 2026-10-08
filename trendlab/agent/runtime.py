@@ -819,8 +819,8 @@ class AgentRuntime:
         regression test is reviewed by the cheap lead model, not the stronger one."""
         if self.verify_min_diff_lines <= 0 and self.verify_min_files <= 1:
             return False
-        if not ev.validated:
-            return False
+        if not ev.validated or self._escalated_from is not None:
+            return False  # unvalidated, or the run already needed the stronger model
         if self.regression_gate and looks_like_fix(self._task_text):
             if regression_outcome(ev.changed_files, final_text, ev.validation_runs) in {
                 "missing",
