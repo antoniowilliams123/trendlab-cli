@@ -411,8 +411,10 @@ class ApprovalManager:
         decision_token: str | None = None,
         fingerprint: str | None = None,
         trusted: bool = False,
+        reason: str | None = None,
     ) -> DecisionResult:
-        """Apply a decision. Thread-safe; callable from HTTP handler threads.
+        """Apply a decision. Thread-safe; callable from HTTP handler threads. ``reason`` carries
+        the person's words with the decision (a denial that says why, U30 co-design).
 
         ``trusted`` is True only for in-process channels (terminal, slash
         command). Remote callers must present the decision token *and* the
@@ -489,7 +491,13 @@ class ApprovalManager:
                 scope=scope.value,
             )
             result = self._resolve_locked(
-                pending, status, decision=decision, scope=scope, via=via, by=by
+                pending,
+                status,
+                decision=decision,
+                scope=scope,
+                via=via,
+                by=by,
+                reason=(reason or "")[:2000] or None,
             )
         self._notify_pending_changed()
         return result

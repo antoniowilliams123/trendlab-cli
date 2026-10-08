@@ -141,6 +141,8 @@ class AgentRuntime:
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
+        self._codesign_rounds = 0
+        self._pending_codesign_note = ""
         self._latency_nudged = False
         self._tokens_at_start = (
             self.costs.total_input_tokens + self.costs.total_output_tokens if self.costs else 0
@@ -162,6 +164,7 @@ class AgentRuntime:
         self.provider_cooldown_s = 10.0
         self._planner_calls = 0
         self.plan_review: dict[str, Any] | None = None  # set by the app's planner call (U7)
+        self.plan_gate_reset: Any = None  # app hook: re-arm the plan gate (co-design, U30)
         self._replanned_divergence = False
         self.step_iterations = 12
         self.candidates: Any = None  # async (task, failure_tail, n) -> outcome dict
@@ -290,6 +293,8 @@ class AgentRuntime:
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
+        self._codesign_rounds = 0
+        self._pending_codesign_note = ""
         self._latency_nudged = False
         self._tokens_at_start = (
             self.costs.total_input_tokens + self.costs.total_output_tokens if self.costs else 0
@@ -463,6 +468,12 @@ class AgentRuntime:
                         refresh_plan = True
                     if await self._check_divergence():
                         refresh_plan = True
+                    if self._pending_codesign_note:
+                        note, self._pending_codesign_note = self._pending_codesign_note, ""
+                        if await self._maybe_plan(
+                            f"The user rejected the plan: {note}", reason="codesign"
+                        ):
+                            refresh_plan = True
                     await self._trigger_skills(
                         tools=[c.name for c in response.tool_calls],
                         paths=[
@@ -717,8 +728,11 @@ class AgentRuntime:
     def _observe(self, call, result) -> tuple[str, AgentState] | None:
         output = result.output
         if result.data.get("plan_rejected"):
+            reason = str(result.data.get("reason", ""))
             self._append(_tool_message(call, output))
-            return f"plan rejected by user: {result.data.get('reason', '')}", AgentState.FAILED
+            if self._codesign(reason):
+                return None
+            return f"plan rejected by user: {reason}", AgentState.FAILED
         fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
         reason = self.loops.record(call.name, fingerprint, output, result.ok)
         if reason:
@@ -747,6 +761,44 @@ class AgentRuntime:
             output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
         self._append(_tool_message(call, output))
         return None
+
+    def _codesign(self, reason: str) -> bool:
+        """U30 human-agent co-design: a rejection that says *why* is direction, not a stop.
+        Up to two revision rounds; the gate asks again before the next change."""
+        words = reason.split()
+        bare = reason.strip().lower() in {
+            "",
+            "denied",
+            "deny",
+            "rejected",
+            "no",
+            "expired",
+            "canceled",
+            "cancelled",
+            "superseded",
+        }
+        if bare or len(words) < 3 or self._codesign_rounds >= 2 or self.plan_gate_reset is None:
+            return False
+        self._codesign_rounds += 1
+        self.plan_gate_reset()
+        self.events.emit(
+            EventType.RECOVERY,
+            session_id=self.session_id,
+            failure="PLAN_REJECTED",
+            action="codesign",
+            round=self._codesign_rounds,
+            reason=reason[:300],
+        )
+        self._append(
+            {
+                "role": "user",
+                "content": f'The user rejected the plan and said: "{reason}". Revise your '
+                "approach to follow that, say in one line what changes, and make no edits until "
+                "the revised plan is approved.",
+            }
+        )
+        self._pending_codesign_note = reason
+        return True
 
     def _check_invariants(self) -> str | None:
         """Runtime assertions after every iteration; a fatal one stops the run."""

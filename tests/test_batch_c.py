@@ -443,3 +443,75 @@ async def test_app_enables_telegram_channel_with_remote(
         assert tl.telegram_channel is None
     finally:
         await tl.stop()
+
+
+async def test_plan_rejection_with_a_reason_becomes_codesign(project: Path, _trendlab_home: Path):
+    """U30: 'no, keep it at 45' is direction, not a stop: the agent revises and asks again."""
+    from trendlab.config.schema import PlanGateConfig
+
+    def write(i, value):
+        return ModelResponse(
+            tool_calls=[
+                ToolCall(
+                    id=f"w{i}",
+                    name="write_file",
+                    arguments={"path": "src/app.py", "content": f"TIMEOUT = {value}\n"},
+                )
+            ]
+        )
+
+    provider = ScriptedProvider(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="p",
+                        name="task",
+                        arguments={"action": "plan", "titles": ["Raise TIMEOUT"]},
+                    )
+                ]
+            ),
+            write(1, 60),
+            write(2, 45),
+            ModelResponse(text="Set the timeout to 45 as asked."),
+        ]
+    )
+    from trendlab.config.schema import PlannerConfig
+
+    # no planner here: in tests it would share the scripted provider with the agent
+    tl = _tl(
+        project,
+        provider,
+        plan_gate=PlanGateConfig(enabled=True),
+        planner=PlannerConfig(enabled=False),
+    )
+    await tl.start(interactive=False)
+
+    async def next_pending():
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if tl.approvals.pending():
+                return tl.approvals.pending()[0]
+        raise AssertionError("no approval request")
+
+    try:
+        task = asyncio.create_task(tl.run_prompt("raise the timeout"))
+        first = await next_pending()
+        tl.approvals.decide(
+            first.approval_id,
+            "deny",
+            "once",
+            via="local",
+            trusted=True,
+            reason="keep the timeout at 45, not 60",
+        )
+        second = await next_pending()  # the gate asks again before the revised change
+        assert second.approval_id != first.approval_id
+        tl.approvals.decide(second.approval_id, "approve", "once", via="local", trusted=True)
+        result = await task
+    finally:
+        await tl.stop()
+    assert result.status == "COMPLETED"
+    assert (project / "src" / "app.py").read_text() == "TIMEOUT = 45\n"
+    said = [m for m in tl.agent.messages if "keep the timeout at 45" in str(m.get("content"))]
+    assert said  # the person's words reached the agent

@@ -304,6 +304,8 @@ class TrendLabApp:
         self.agent.verify_min_confidence = vcfg.min_confidence
         self.agent.scope_config = self.config.governance
         self.agent.pre_run_sources = self._pre_run_sources
+        if self.plan_gate is not None:
+            self.agent.plan_gate_reset = self.plan_gate.reset
         if self.config.routing.get("router"):
             self.agent.router = self._route_request
         if self.config.context.retrieval:
