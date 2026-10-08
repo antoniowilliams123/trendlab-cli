@@ -4969,6 +4969,17 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
 - The transcript follows new output only when you are at the bottom; reading above is not
   interrupted.
 
+#### 2026-10-08 — test commands follow the edits; placeholder scripts ignored
+
+- A package.json script that runs nothing (npm-init "no test specified", a bare echo, `true`)
+  is no longer taken as a validation command; it failed every run by design.
+- run_tests tests the project around this session's edits: the closest folder above the
+  changed files with a project marker or tests folder and a detectable test command; files in
+  several projects use their common folder. `path=` picks one explicitly; output starts with
+  "(ran in <folder>/)". Configured `[project]` commands still apply to the root.
+- The agent counts validation as available when that edited project has tests. Live: a
+  home-folder session editing FUTURES_DATA/scripts runs its pytest suite (6 passed).
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

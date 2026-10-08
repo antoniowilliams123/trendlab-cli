@@ -35,6 +35,9 @@ class ToolContext:
     background: Any = None  # trendlab.tools.background.BackgroundProcessManager
     # Set by the runtime for the duration of one call: tools report live output through it.
     progress: Any = None  # Callable[[str], None] | None
+    # Files changed this session (rel path → diffs), shared with the tool runtime; run_tests
+    # uses it to test the project around the edits.
+    changed_files: Any = None
 
     def resolve(self, raw: str) -> Path:
         """Resolve ``raw`` inside the project root, following symlinks; reject escapes.

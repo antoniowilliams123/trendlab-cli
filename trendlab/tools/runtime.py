@@ -76,6 +76,7 @@ class ToolRuntime:
         self.ctx = ctx
         self._set_state = state_hook or (lambda _s: None)
         self.changed_files: dict[str, list[str]] = {}  # rel path → diffs this session
+        ctx.changed_files = self.changed_files
         self.validation_runs: list[dict[str, Any]] = []
         self.hooks: Any = None  # trendlab.hooks.HookRunner, attached by the app
         self.diagnostics: Any = None  # trendlab.tools.diagnostics.Diagnostics, attached by the app

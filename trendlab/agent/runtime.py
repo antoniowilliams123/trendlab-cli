@@ -265,7 +265,19 @@ class AgentRuntime:
 
     @property
     def validation_available(self) -> bool:
-        return bool(self.tools.ctx.validation_commands)
+        """The root has a validation command, or the project around this session's edits
+        does (a home-folder session editing ~/proj/x.py is validated by ~/proj's tests)."""
+        ctx = self.tools.ctx
+        if ctx.validation_commands:
+            return True
+        changed = list(getattr(ctx, "changed_files", None) or {})
+        if not changed:
+            return False
+        from trendlab.context.validation import detect_validation_commands, nearest_project
+
+        root = ctx.project_root.resolve()
+        where = nearest_project(root, changed)
+        return where != root and bool(detect_validation_commands(where))
 
     def evidence(self) -> EvidenceSummary:
         return EvidenceSummary(

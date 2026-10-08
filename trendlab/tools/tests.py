@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
-from trendlab.context.validation import KINDS
+from trendlab.context.validation import KINDS, detect_validation_commands, nearest_project
 from trendlab.permissions.engine import PermissionRequest
 from trendlab.permissions.models import OperationCategory
 from trendlab.tools.base import Tool, ToolContext, ToolResult
@@ -17,6 +19,11 @@ class RunTestsInput(BaseModel):
         default="", description="Appended to the configured command, e.g. 'tests/test_x.py -x'"
     )
     timeout: int = Field(default=600, ge=1, le=3600)
+    path: str = Field(
+        default="",
+        description="Folder of the project to test (default: the project around the files "
+        "changed this session, else the project root)",
+    )
 
 
 class RunTestsTool(Tool):
@@ -30,8 +37,26 @@ class RunTestsTool(Tool):
     def __init__(self) -> None:
         self._shell = ShellTool()
 
+    def _where(self, args: RunTestsInput, ctx: ToolContext) -> Path:
+        """The project to test: an explicit path, else the one around this session's edits."""
+        root = ctx.project_root.resolve()
+        if args.path:
+            try:
+                d = ctx.resolve(args.path)
+            except Exception:  # noqa: BLE001 — outside the project: test the root
+                return root
+            return d if d.is_dir() else d.parent
+        return nearest_project(root, list(ctx.changed_files or {}))
+
     def _command(self, args: RunTestsInput, ctx: ToolContext) -> str | None:
-        cmd = (ctx.validation_commands or {}).get(args.kind)
+        where = self._where(args, ctx)
+        root = ctx.project_root.resolve()
+        configured = (ctx.validation_commands or {}).get(args.kind)
+        if where != root:
+            # a sub-project's own command (configured [project] commands are for the root)
+            cmd = detect_validation_commands(where).get(args.kind)
+        else:
+            cmd = configured
         if not cmd:
             return None
         return f"{cmd} {args.extra_args}".strip()
@@ -43,7 +68,7 @@ class RunTestsTool(Tool):
             category=OperationCategory.RUN_TESTS,
             summary=f"Run {args.kind}: {cmd}",
             command=cmd,
-            cwd=str(ctx.project_root),
+            cwd=str(self._where(args, ctx)),
             args=args.model_dump(),
             task_id=ctx.task_id,
         )
@@ -58,10 +83,19 @@ class RunTestsTool(Tool):
             )
             return ToolResult(
                 ok=False,
-                output=f"no {args.kind} command configured (known: {known}); "
-                f"use the shell tool or set [project] {args.kind}_command",
+                output=f"no {args.kind} command for {self._where(args, ctx).name or '.'} "
+                f"(known: {known}); pass path=<folder> to test a sub-project, use the shell "
+                f"tool, or set [project] {args.kind}_command",
             )
-        result = await self._shell.run(ShellInput(command=cmd, timeout=args.timeout), ctx)
+        where = self._where(args, ctx)
+        root = ctx.project_root.resolve()
+        rel = "" if where == root else where.relative_to(root).as_posix()
+        result = await self._shell.run(
+            ShellInput(command=cmd, timeout=args.timeout, cwd=rel or None), ctx
+        )
+        if rel:
+            result.output = f"(ran in {rel}/)\n{result.output}"
         result.data["validation_kind"] = args.kind
         result.data["command"] = cmd
+        result.data["cwd"] = rel or "."
         return result

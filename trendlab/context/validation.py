@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def detect_validation_commands(root: Path) -> dict[str, str]:
             ("build", ["build"]),
         ):
             for n in names:
-                if n in scripts:
+                if n in scripts and not is_placeholder_script(str(scripts[n])):
                     cmds.setdefault(kind, f"npm run {n}" if n != "test" else "npm test")
                     break
     if (root / "Cargo.toml").is_file():
@@ -64,6 +65,63 @@ def detect_validation_commands(root: Path) -> dict[str, str]:
         if "\ntest:" in mk and "test" not in cmds:
             cmds["test"] = "make test"
     return cmds
+
+
+# `npm init` writes a test script that only fails; others are just an echo. Neither tests.
+_PLACEHOLDER = re.compile(
+    r"""^\s*(echo\s+(["']).*?\2|echo\b[^&|;]*|true|:)?\s*(&&\s*exit\s+\d+)?\s*$""", re.I
+)
+
+
+def is_placeholder_script(script: str) -> bool:
+    """True for a package.json script that runs nothing (the npm-init 'no test specified')."""
+    s = script.strip()
+    return not s or "no test specified" in s.lower() or bool(_PLACEHOLDER.match(s))
+
+
+_MARKERS = (
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "pytest.ini",
+    "tox.ini",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "Makefile",
+)
+
+
+def _has_tests(d: Path) -> bool:
+    return (d / "tests").is_dir() or any(d.glob("test_*.py"))
+
+
+def nearest_project(root: Path, rel_files) -> Path:
+    """The folder whose tests cover the changed files: for each file, the closest folder up to
+    ``root`` that has a project marker or a tests folder *and* a detectable test command. When
+    the files live in different projects, the deepest folder that contains them all. Falls
+    back to ``root``."""
+    root = root.resolve()
+    found: list[Path] = []
+    for rel in rel_files or []:
+        d = (root / rel).resolve().parent
+        if root not in d.parents and d != root:
+            continue
+        while d != root:
+            marked = any((d / m).exists() for m in _MARKERS) or _has_tests(d)
+            if marked and "test" in detect_validation_commands(d):
+                found.append(d)
+                break
+            d = d.parent
+        else:
+            found.append(root)
+    if not found:
+        return root
+    common = found[0]
+    for d in found[1:]:
+        while common != root and common not in d.parents and common != d:
+            common = common.parent
+    return common
 
 
 def validation_commands(config: AppConfig, root: Path) -> dict[str, str]:
