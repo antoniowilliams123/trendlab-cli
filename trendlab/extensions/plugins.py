@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -98,9 +99,43 @@ def read_plugin(path: Path) -> Plugin:
     )
 
 
+_SAFE_GIT = re.compile(r"^(https://|ssh://|git@[\w.-]+:|/|file://)")
+
+
+def _check_git_source(source: str, ref: str = "") -> None:
+    """A catalogue is untrusted input: refuse anything git could read as an option or as a
+    command-running transport (``--upload-pack=…``, ``ext::…``)."""
+    if not _SAFE_GIT.match(source) or "::" in source or any(c in source for c in "\n\r\0"):
+        raise PluginError(f"refusing git source {source[:80]!r}: use https://, ssh:// or a path")
+    if ref and (ref.startswith("-") or not re.match(r"^[\w./-]{1,100}$", ref)):
+        raise PluginError(f"refusing git ref {ref[:80]!r}")
+
+
+# allow-list: anything else (ext::, fd::, …) is refused by git itself
+_PROTOCOLS = [
+    "-c",
+    "protocol.allow=never",
+    "-c",
+    "protocol.https.allow=always",
+    "-c",
+    "protocol.ssh.allow=always",
+    "-c",
+    "protocol.file.allow=always",
+]
+
+
 def _git(*args: str, cwd: Path | None = None) -> str:
+    # no prompts; transports limited by _PROTOCOLS
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
-        out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120)
+        out = subprocess.run(
+            ["git", *_PROTOCOLS, *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PluginError(f"git {args[0]} failed: {exc}") from exc
     if out.returncode != 0:
@@ -204,8 +239,9 @@ class PluginManager:
             if (dest / ".git").is_dir():
                 _git("pull", "--ff-only", "-q", cwd=dest)
             else:
+                _check_git_source(source)
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                _git("clone", "--depth", "1", "-q", source, str(dest))
+                _git("clone", "--depth", "1", "-q", "--", source, str(dest))
             return dest
         path = Path(source).expanduser()
         if not path.is_dir():
@@ -251,9 +287,14 @@ class PluginManager:
             src, ref = str(src.get("git") or ""), str(src.get("ref") or "")
         src = str(src or "")
         if _is_git(src):
-            _git("clone", "-q", src, str(tmp / "p"))
-            if ref:
-                _git("checkout", "-q", ref, cwd=tmp / "p")
+            try:
+                _check_git_source(src, ref)
+            except PluginError:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+            _git("clone", "-q", "--", src, str(tmp / "p"))
+            if ref:  # ref before "--": a commit or tag, never a path
+                _git("checkout", "-q", ref, "--", cwd=tmp / "p")
             entry["_commit"] = _git("rev-parse", "HEAD", cwd=tmp / "p")
         else:
             base = Path(entry.get("_base") or ".")

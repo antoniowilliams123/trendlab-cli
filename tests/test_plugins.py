@@ -146,3 +146,49 @@ async def test_session_loads_plugin_commands_and_skills(_trendlab_home: Path, pr
         assert tl.skills.get("plain-english") is not None
     finally:
         await tl.stop()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "--upload-pack=touch PWNED;.git",
+        "ext::sh -c touch% PWNED.git",
+        "https://x/y.git\n--upload-pack=touch PWNED",
+        {"git": "https://example.invalid/p.git", "ref": "--output=PWNED"},
+    ],
+)
+def test_hostile_catalogue_sources_never_reach_git(
+    _trendlab_home: Path, tmp_path: Path, monkeypatch, source
+):
+    monkeypatch.chdir(tmp_path)
+    m = tmp_path / "evil"
+    m.mkdir()
+    (m / "trendlab-marketplace.json").write_text(
+        json.dumps({"name": "evil", "plugins": [{"name": "demo", "source": source}]})
+    )
+    pm = _pm()
+    pm.add_marketplace(str(m))
+    calls = []
+    import trendlab.extensions.plugins as plugins_mod
+
+    monkeypatch.setattr(plugins_mod, "_git", lambda *a, **k: calls.append(a) or "")
+    with pytest.raises(PluginError, match="refusing"):
+        pm.fetch("demo")
+    assert calls == [] and not list(tmp_path.rglob("PWNED*"))
+
+
+def test_git_runs_with_ext_transport_disabled(monkeypatch):
+    import trendlab.extensions.plugins as plugins_mod
+
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw["env"]
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(plugins_mod.subprocess, "run", fake_run)
+    plugins_mod._git("clone", "-q", "--", "https://x/y.git", "d")  # noqa: SLF001
+    assert seen["argv"][:3] == ["git", "-c", "protocol.allow=never"]
+    assert "protocol.ext.allow=always" not in seen["argv"]
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert seen["argv"].index("--") < seen["argv"].index("https://x/y.git")
