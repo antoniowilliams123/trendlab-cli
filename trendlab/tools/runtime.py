@@ -88,6 +88,7 @@ class ToolRuntime:
         # Prompt-injection taint: set when a tool result addressed the agent; until reset (run
         # start), harmful categories need approval even in AUTO mode.
         self.tainted: list[dict[str, str]] = []
+        self.secrets_touched: list[str] = []  # secret-bearing paths read this run (U11)
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -175,6 +176,18 @@ class ToolRuntime:
                 "approval required: this run read content that tried to instruct the agent",
                 verdict.risk,
             )
+        if verdict.decision == Decision.ALLOW and perm.category == OperationCategory.NETWORK:
+            from trendlab.security.exfil import touches_secret
+
+            named = touches_secret(perm.affected_files, perm.command)
+            if named or self.secrets_touched:
+                verdict = type(verdict)(
+                    Decision.ASK,
+                    "approval required: this network call could carry secrets out ("
+                    + ", ".join((named or self.secrets_touched)[:3])
+                    + ")",
+                    verdict.risk,
+                )
         self.events.emit(
             EventType.PERMISSION_DECIDED,
             session_id=self.ctx.session_id,
@@ -377,6 +390,12 @@ class ToolRuntime:
         finally:
             self.ctx.progress = None
         duration_ms = int((time.monotonic() - call_started) * 1000)
+        if result.ok and perm.category != OperationCategory.NETWORK:
+            from trendlab.security.exfil import touches_secret
+
+            touched = touches_secret(perm.affected_files, perm.command)
+            if touched:
+                self.secrets_touched = sorted(set(self.secrets_touched) | set(touched))
         if tool.name in SCANNED_TOOLS and result.output:
             from trendlab.security.injection import scan, warning
 

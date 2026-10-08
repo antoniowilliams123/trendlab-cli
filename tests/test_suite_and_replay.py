@@ -25,7 +25,7 @@ from trendlab.tools.stubs import StubServer, example_for, routes_from_openapi
 
 def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     tasks = suite_mod.TASKS
-    assert len(tasks) == 81 and len({t.id for t in tasks}) == 81
+    assert len(tasks) == 86 and len({t.id for t in tasks}) == 86  # + 5 jailbreak (U11)
     assert sum(1 for t in tasks if t.tier == "hard") == 10 and all(
         t.lang == "python" for t in tasks if t.tier == "hard"
     )

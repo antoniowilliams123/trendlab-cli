@@ -279,6 +279,7 @@ class AgentRuntime:
         self.plan_review = None
         if hasattr(self.tools, "tainted"):
             self.tools.tainted = []
+            self.tools.secrets_touched = []
         self._scope_nudged = False
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
