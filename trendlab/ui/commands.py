@@ -29,7 +29,8 @@ HELP = """\
 /plan | /tasks             Show the current task plan
 /context                   Context budget and compaction status
 /compact                   Compact older conversation into a structured summary
-/cost                      Session cost by model        /cost-limit <usd>   Set a hard budget
+/cost [--by role|phase|step]  Session cost          /cost-limit <usd>   Set a hard budget
+/inbox [apply|test|dismiss|silence|open <id>]  Issue cards (engine inbox)
 /diff [file]               Changes made this session (or git diff of a file)
 /git <status|diff|log>     Read-only git commands
 /commit [msg]              Commit everything; the message is written from the diff when omitted
@@ -115,6 +116,7 @@ class CommandRouter:
             "/context": self._context,
             "/compact": self._compact,
             "/cost": self._cost,
+            "/inbox": self._inbox,
             "/cost-limit": self._cost_limit,
             "/diff": self._diff,
             "/git": self._git,
@@ -316,6 +318,22 @@ class CommandRouter:
         costs = self.app.costs
         if not costs:
             return
+        if (
+            args
+            and args[0] in {"--by", "by"}
+            and len(args) > 1
+            and args[1] in {"role", "phase", "step"}
+        ):
+            key = args[1]
+            t = Table(title=f"Session cost by {key}")
+            for col in (key, "calls", "input", "output", "usd"):
+                t.add_column(col)
+            for name, d in sorted(costs.by(key).items(), key=lambda kv: -kv[1]["usd"]):
+                t.add_row(
+                    name, str(d["calls"]), str(d["input"]), str(d["output"]), f"${d['usd']:.4f}"
+                )
+            self.console.print(t)
+            return
         t = Table(title="Session cost")
         for col in ("model", "calls", "input", "output", "usd"):
             t.add_column(col)
@@ -340,6 +358,140 @@ class CommandRouter:
             f"Budget: {f'${limit:.2f}' if limit else 'none'} · "
             f"pricing entries: {len(self.app.config.pricing)}"
         )
+
+    async def _inbox(self, args: list[str]) -> None:
+        """Inbox actions (cheap-model spec §7.2): list · apply · test · dismiss · silence · open."""
+        from trendlab.engine.daemon import inbox_path
+        from trendlab.engine.inbox import Inbox, digest
+
+        app = self.app
+        inbox = Inbox(inbox_path())
+        try:
+            project = str(app.project_root)
+            if not args or args[0] in {"list", "ls"}:
+                items = inbox.list(project, status="open", limit=20)
+                if not items:
+                    self.console.print("[dim]inbox empty for this project[/dim]")
+                    return
+                t = Table(title="Inbox (open)")
+                for col in ("id", "sev", "×", "title", "files", "source", "last seen"):
+                    t.add_column(col)
+                for it in items:
+                    t.add_row(
+                        it["id"],
+                        it["severity"],
+                        str(it["occurrences"]),
+                        it["title"][:70],
+                        ", ".join(it["impacted_files"][:2]),
+                        it["source"],
+                        it["last_seen"][:16],
+                    )
+                self.console.print(t)
+                self.console.print("[dim]/inbox apply|test|dismiss|silence|open <id>[/dim]")
+                return
+            if args[0] == "digest":
+                self.console.print(
+                    digest(inbox.list(project, limit=3), inbox.counts(project), project)
+                )
+                return
+            action = args[0]
+            if len(args) < 2:
+                self.console.print("[red]usage: /inbox <action> <id>[/red]")
+                return
+            item = inbox.find(args[1], project) or inbox.find(args[1])
+            if item is None:
+                self.console.print(f"[red]no unique issue matching {args[1]!r}[/red]")
+                return
+            if action == "dismiss":
+                inbox.set_status(item["id"], "dismissed", feedback=" ".join(args[2:]) or None)
+                self.console.print(f"[green]dismissed[/green] {item['title']}")
+            elif action == "silence":
+                reason = " ".join(args[2:]) or "silenced by the user"
+                inbox.set_status(item["id"], "silenced", feedback=reason)
+                if app.memory is not None:
+                    app.memory.add(f"Ignore inbox cluster '{item['title'][:80]}': {reason}")
+                    app.refresh_system_prompt()
+                self.console.print(
+                    f"[green]silenced[/green] {item['title']} — rule saved to memory"
+                )
+            elif action == "test":
+                cmd = (app.tools.ctx.validation_commands or {}).get("test") if app.tools else None
+                if not cmd:
+                    self.console.print("[red]no test command configured for this project[/red]")
+                    return
+                from trendlab.providers.base import ToolCall
+
+                res = await app.tools.execute(
+                    ToolCall(id=f"inbox-{item['id']}", name="shell", arguments={"command": cmd})
+                )
+                inbox.set_status(item["id"], "tested", feedback=f"exit ok={res.ok}")
+                self.console.print(res.output[-1500:])
+            elif action == "open":
+                card = item.get("card")
+                if not card:
+                    card = await self._draft_card(item)
+                    if card:
+                        inbox.attach(item["id"], card=card)
+                from trendlab.engine.drafter import render_card
+
+                self.console.print(
+                    f"[bold]{item['title']}[/bold] [{GREY}]{item['id']}"
+                    f" · seen ×{item['occurrences']}[/]"
+                )
+                self.console.print(render_card(card) if card else "(drafter unavailable)")
+                for ref in item["evidence_refs"][:5]:
+                    self.console.print(f"  [{GREY}]{ref}[/]")
+            elif action == "apply":
+                prompt = (
+                    f"Fix this issue with the smallest correct change and a regression test: "
+                    f"{item['title']}.\nKnown root cause: {item.get('root_cause') or 'unknown'}."
+                    + (
+                        f"\nFiles involved: {', '.join(item['impacted_files'])}."
+                        if item["impacted_files"]
+                        else ""
+                    )
+                )
+                prev = app.config.verification.workspace
+                app.config.verification.workspace = "worktree"  # verified diff or parked patch
+                try:
+                    result = await app.run_prompt(prompt)
+                finally:
+                    app.config.verification.workspace = prev
+                verdict = (result.verification or {}).get("verdict")
+                status = "applied" if result.status == "COMPLETED" and verdict != "fail" else "open"
+                inbox.set_status(item["id"], status, feedback=f"apply: {result.status} / {verdict}")
+                inbox.attach(item["id"], verification_ref=str(verdict))
+                self.console.print(f"[green]{status}[/green] ({result.status}, verifier {verdict})")
+            else:
+                self.console.print(f"[red]unknown inbox action {action!r}[/red]")
+        finally:
+            inbox.close()
+
+    async def _draft_card(self, item: dict) -> dict | None:
+        from trendlab.engine.drafter import draft_card
+        from trendlab.providers.registry import resolve_role
+
+        app = self.app
+        if app.gateway is None or app.costs is None:
+            return None
+        ref = resolve_role(app.config, "screener", app.model_ref)
+
+        async def call(messages):
+            response, used = await app.gateway.complete(ref, messages, None)
+            app.costs.record(
+                used,
+                response.usage,
+                0,
+                role="drafter",
+                local=app.gateway.provider(used).capabilities().local,
+            )
+            return response.text
+
+        trace = "\n".join([item.get("root_cause") or "", *item.get("evidence_refs", [])])
+        try:
+            return await draft_card(call, item["title"], trace)
+        except Exception:  # noqa: BLE001
+            return None
 
     async def _cost_limit(self, args: list[str]) -> None:
         if not args:

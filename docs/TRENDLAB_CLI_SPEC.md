@@ -3977,6 +3977,18 @@ decisions taken after the original specification. Newest last.
     `tool.output_tiered` event, `tokens_lead` benchmark metric. See §93.1.
 -   Phase 2 (same night): verifier + fix round + regression gate + worktree workspace
     (`agent/verifier.py`, `[verification]` config, `verify.*` events). See §93.2.
+-   Phase 3 (same night): planner call, step-scoped loop with per-step validation and
+    iteration cap, best-of-N candidates in parallel worktrees (`agent/planner.py`,
+    `orchestration/candidates.py`). See §93.3.
+-   Phase 4 (same night): routing cocktail defaults, cost attribution by phase/step,
+    per-model prompt layer with the Flash driver profile, `guard.fired` telemetry, skill
+    triggers (`prompts/drivers.py`, `extensions/skills.py`). See §93.4.
+
+### 2026-10-08 — Cheap-model programme, Phases 5–6
+-   Phase 5: 50-task suite generator + metrics, `bench --suite/--compare/--sandbox docker`,
+    docker sandbox mode, `stub`, `replay`, `docs/BENCH_LOG.md`. See §93.5.
+-   Phase 6: engine package (inbox, digest, drafter, sleeptime, meta-loop, watch, daemon),
+    `/inbox`, failed runs filed automatically, `[engine]` config, cron install. See §93.6.
 
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 
@@ -4548,3 +4560,110 @@ the programme spec in full when the last phase lands. Locked rules are unchanged
   branch are always removed. Non-git projects fall back to in-place with a logged reason.
 - Events `verify.started`, `verify.verdict`, `verify.regression_gate`, `verify.worktree`;
   activity lines for each. Tests: `tests/test_verify_then_surface.py` (9).
+
+### 93.3 Phase 3 — Step-scoped execution, planner call, best-of-N (2026-10-07)
+
+- **Planner** `trendlab/agent/planner.py`: for a non-trivial prompt (> 200 chars or ≥ 2 file
+  mentions) one call to the `planning` role returns 2–6 steps as strict JSON
+  (`title, files, done_when, validation`), applied onto the existing `Plan` (`Task` gained
+  `files`, `done_when`, `validation`, `attempts`). The first step becomes ACTIVE and a plan
+  message tells the lead to work through it. At most `[planner] max_calls` (3) calls per run
+  including re-plans. Cost recorded under role `planner`.
+- **Step loop** in `AgentRuntime`: each active step has `limits.step_iterations` (12)
+  iterations; over the cap the attempt fails (`step.failed reason=iteration_cap`), the
+  planner re-plans the remaining work, and a second overrun escalates. When the model marks
+  a step complete and the step has a validation command, the harness runs it through the
+  tool runtime; a pass emits `step.completed`, a failure flips the step back to ACTIVE with
+  the output tail (`step.failed reason=validation_failed`), the second failure escalates.
+- **Best-of-N** `trendlab/orchestration/candidates.py`: after the first failed validation of
+  a step, `attempts.best_of` candidates (auto: 3 for models under $1/M input or local, else
+  1) run in parallel throwaway worktrees with write tools, temperature jitter (OpenAI-
+  compatible providers) and an approach hint each; every candidate runs the step's
+  validation in its worktree; the first passing candidate (smallest diff on ties) is applied
+  to the main tree via `git apply --check` + `git apply`; `attempt.candidate` per candidate,
+  `step.completed via=best_of`. Candidate spend rolls into the session under role
+  `candidate`. Patches come from `gitflow.worktree_patch` (skips caches, `.trendlab/`, and
+  ignore-rule matches) — also used by the P2 worktree workspace.
+- Config `[planner] enabled/max_calls/min_prompt_chars`, `[attempts] best_of/cheap_price_per_m`,
+  `limits.step_iterations`. Tests: `tests/test_step_execution.py` (5).
+
+### 93.4 Phase 4 — Model cocktail, attribution, prompt layer, skill triggers (2026-10-07)
+
+- **Routing defaults**: `trendlab init` (DeepSeek preset) writes `[routing]` planning /
+  verifier / escalation → `deepseek-v4-pro`, screener / summarizer → `deepseek-flash`;
+  `trendlab doctor` shows the routing row and warns when every role resolves to one model.
+  Owner's live config updated the same way.
+- **Attribution**: every `ModelCallRecord` carries `phase` (plan | explore | edit | validate
+  | verify | summarise | other), `step_id` and `attempt`. The lead's phase is inferred from
+  the tools its previous turn used (`infer_phase`); helper roles map by role. `/cost --by
+  role|phase|step`; the benchmark report gains `cost_by_phase`, `guards_fired` and
+  `verification`.
+- **Per-model prompt layer** `trendlab/prompts/drivers.py`: packaged
+  `drivers/<provider-type>.md` (openai_compatible, anthropic, ollama) + packaged
+  `drivers/models/<provider>-<model>.md` (Flash profile seeded from this week's guards:
+  finish with evidence, no bare JSON, validate after edits, don't re-plan, regression test
+  or waiver, use inspect_output, ranged reads) + owner `~/.trendlab/skills/_model/` +
+  project `.trendlab/skills/_model/`, merged as a `## Model notes` section; `[prompts]
+  drivers = true`; rebuilt on model switch.
+- **Guards as telemetry**: `guard.fired {guard, model, role}` from the text-tool-call
+  rescue, each evaluator rejection reason (`empty_answer`, `announced_action`,
+  `unvalidated_change`, `open_tasks`, `regression_test_missing`), the loop detector
+  (`no_progress`), the step iteration cap, the verifier fix round and the task tool's
+  re-plan block (`replan_blocked`).
+- **Skill triggers**: `skill.toml` `[triggers] paths = [globs], tools = [...], keywords =
+  [...], on_failure = [substrings]`; `SkillLibrary.match(...)`; the loop checks the task
+  text at run start, tools and paths after each tool batch, and failures after a failed step
+  validation; a matching skill is injected once per run as a user message with
+  `skill.loaded {name, trigger}`, and `skill.unloaded` at run end.
+- Tests: `tests/test_cocktail_layer.py` (4).
+
+### 93.5 Phase 5 — Suite, comparison, docker, stubs, replay (2026-10-08)
+
+- **Suite** `trendlab/benchmarks/suite.py`: 50 deterministic tasks (30 Python, 10 TypeScript,
+  10 Go) from three base repos and a defect catalogue; each task carries the files that may
+  change, the localisation answer (file + line) and a hidden regression test written only at
+  scoring time; ~half are symptom-only (visible suite green). `trendlab bench --suite
+  [--tasks N|ids] [--lang] [--profile harness|bare] [--sandbox docker]`; `--compare a@p b@q`
+  prints per-metric deltas; results append to `docs/BENCH_LOG.md`.
+- **Metrics** per task: located, root_cause (±3 lines), passes (hidden test), no_collateral,
+  regression_added, interventions, cost, tokens_lead, tokens_total, wall_s, cost_by_phase,
+  guards_fired, verification. Unattended runs auto-deny approvals.
+- **Docker sandbox**: `[sandbox] mode = "docker"` (or `TRENDLAB_SANDBOX=docker`) runs shell
+  commands as `docker run --rm -i [--network none] --user uid:gid -v <project>:/work -w /work
+  <image> sh -c …`; the suite picks a pinned image per language.
+- **Stubs** `trendlab stub --spec <openapi.json|yaml|recorded.json> [--port] [--record host]`:
+  answers from examples/schemas, replays recordings, records an allow-listed host once.
+- **Replay** `trendlab replay <session-id> [--model] [--max-prompts]`: re-runs the stored
+  prompts in a scratch copy of the project, feeding recorded read-only tool results where the
+  call matches, and reports tool-sequence drift, transcript length, cost and outcome
+  (`~/.trendlab/replays/<id>.json`).
+- Tests: `tests/test_suite_and_replay.py` (6).
+
+### 93.6 Phase 6 — Engine: inbox, sleeptime, meta-loop, daemon (2026-10-08)
+
+- **Inbox** `trendlab/engine/inbox.py` (SQLite at `~/.trendlab/engine/inbox.db`): issue
+  cards clustered by a normalised signature (numbers/addresses stripped) with occurrences,
+  evidence refs, severity, status (open / applied / tested / dismissed / silenced / fixed);
+  a dismissed cluster that recurs reopens. Sources: `trendlab watch` (failing tests), failed
+  interactive runs and verifier rejections (filed by the app), meta-loop findings.
+- **Actions** `/inbox [list|digest|apply|test|dismiss|silence|open] <id>`: apply runs the
+  fix in worktree workspace (verified diff or parked patch), test runs the project's test
+  command, silence writes an ignore rule to project memory, open drafts a diagnosis card
+  with the drafter role (`engine/drafter.py`, strict JSON card).
+- **Digest**: one Telegram message per engine cycle (counts + top three cards) through a
+  send-only path (`engine/notify.py`); unchanged digests are not re-sent.
+- **Sleeptime** `trendlab sleep` / nightly: day digest (prompts, denials, undos, steering,
+  failures, learned facts) → summarizer → memory.md rewritten to ≤40 facts (dates kept),
+  TRENDLAB.md amendments, per-model notes, new skills; committed on branch
+  `trendlab/memory-YYYY-MM-DD` through a temporary worktree, never on the working branch;
+  `narrow_exclude` lets `.trendlab/memory.md`, `.trendlab/skills/` and
+  `.trendlab/permissions.toml` be tracked.
+- **Meta-loop** `trendlab meta [--days] [--draft]`: clusters `run.failed` stop reasons,
+  `tool.skipped`, `guard.fired`, `loop.detected`, verifier fails and cost outliers over
+  stored sessions into cards against `harness:trendlab-cli` with session ids as evidence;
+  `--draft` runs the agent on the trendlab-cli checkout in worktree workspace for the top card.
+- **Daemon** `trendlab engine start|stop|status|run <job>`: scheduler (watch every
+  `watch_minutes`, sleep once a day after `sleep_at`, meta every `meta_days`, digest every
+  `digest_minutes`), Unix socket at `~/.trendlab/engine/engine.sock`, pid file, state file;
+  one failing job never stops the loop. `[engine] projects` lists the roots.
+- Tests: `tests/test_engine.py` (8).

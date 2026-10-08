@@ -36,6 +36,11 @@ class Task(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     assigned_agent: str | None = None
     evidence: list[str] = Field(default_factory=list)
+    # Step fields (cheap-model spec §4.1): set by the planner; the loop validates each step.
+    files: list[str] = Field(default_factory=list)
+    done_when: str = ""
+    validation: str | None = None
+    attempts: int = 0
 
 
 class Plan(BaseModel):

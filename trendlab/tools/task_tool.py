@@ -56,6 +56,13 @@ class TaskTool(Tool):
             if plan.open:
                 self._replans += 1
                 if self._replans >= 2:
+                    self.events.emit(
+                        EventType.GUARD_FIRED,
+                        session_id=ctx.session_id,
+                        guard="replan_blocked",
+                        model=None,
+                        role=ctx.agent_role or "main",
+                    )
                     return ToolResult(
                         ok=False,
                         output="A plan already exists and its tasks are open — do NOT re-plan. "

@@ -26,10 +26,15 @@ from trendlab.agent.recovery import (
 )
 from trendlab.agent.rescue import prose_outside_calls, rescue_text_tool_calls
 from trendlab.agent.state import AgentState, AgentStateMachine
-from trendlab.agent.tasks import Plan
+from trendlab.agent.tasks import Plan, Task, TaskStatus
 from trendlab.config.schema import LimitsConfig
 from trendlab.context.manager import ContextManager
-from trendlab.providers.base import ModelResponse, ProviderContextOverflowError, ProviderError
+from trendlab.providers.base import (
+    ModelResponse,
+    ProviderContextOverflowError,
+    ProviderError,
+    ToolCall,
+)
 from trendlab.providers.gateway import ModelGateway
 from trendlab.telemetry.costs import CostTracker
 from trendlab.telemetry.events import EventBus, EventType
@@ -121,6 +126,20 @@ class AgentRuntime:
         self._verify_rounds = 0
         self._verification: dict[str, Any] | None = None
         self._task_text = ""
+        # Step-scoped execution (cheap-model spec §3.3, §4): attached by the app.
+        self.planner: Any = None  # async (task_text, note) -> list[step dict] | None
+        self.planner_max_calls = 3
+        self.planner_min_chars = 200
+        self._planner_calls = 0
+        self.step_iterations = 12
+        self.candidates: Any = None  # async (task, failure_tail, n) -> outcome dict
+        self.best_of = 1
+        self._step_id: str | None = None
+        self._step_iters = 0
+        self._verified_steps: set[str] = set()
+        self._phase = "plan"  # phase attributed to the next model call (spec §6.2)
+        self.skills: Any = None  # trendlab.extensions.skills.SkillLibrary (triggers, §6.4)
+        self._skills_loaded: set[str] = set()
         self.loops = LoopDetector()
         self.iterations = 0
         self._cancel = asyncio.Event()
@@ -225,6 +244,13 @@ class AgentRuntime:
         self._task_text = _text_of(prompt)
         self._verify_rounds = 0
         self._verification = None
+        self._planner_calls = 0
+        self._step_id, self._step_iters = None, 0
+        self._verified_steps = set()
+        self._phase = "plan"
+        self._skills_loaded = set()
+        await self._trigger_skills(task_text=self._task_text)
+        await self._maybe_plan()
         compaction_attempted = False
         stop_reason: str | None = None
         text = ""
@@ -245,6 +271,8 @@ class AgentRuntime:
                     break
                 self.iterations += 1
                 self._drain_steering()
+                if await self._track_step():
+                    refresh_plan = True
                 self.state.transition(AgentState.THINKING)
                 if refresh_plan:
                     self.context.plan_text = self.plan.render() if self.plan.tasks else ""
@@ -287,6 +315,7 @@ class AgentRuntime:
                     if rescued:
                         # The model wrote the call as text (common with small/local models):
                         # run it instead of accepting the JSON as the final answer.
+                        self._guard("tool_call_as_text")
                         self.events.emit(
                             EventType.RECOVERY,
                             session_id=self.session_id,
@@ -305,9 +334,20 @@ class AgentRuntime:
                     if response.text and self.on_token is None:
                         pass
                     stop = await self._run_tools(response)
+                    self._phase = infer_phase([c.name for c in response.tool_calls])
                     if stop:
                         stop_reason, status = stop
                         break
+                    if await self._check_steps():
+                        refresh_plan = True
+                    await self._trigger_skills(
+                        tools=[c.name for c in response.tool_calls],
+                        paths=[
+                            str(c.arguments.get("path") or "")
+                            for c in response.tool_calls
+                            if c.arguments.get("path")
+                        ],
+                    )
                     continue
 
                 # Final text: let the evaluator decide.
@@ -319,6 +359,8 @@ class AgentRuntime:
                     fix_task=self.regression_gate and looks_like_fix(self._task_text),
                 )
                 self._append({"role": "assistant", "content": response.text})
+                for reason in verdict.reasons if not verdict.accept else []:
+                    self._guard(_guard_name(reason))
                 if verdict.accept:
                     outcome = await self._verify_before_surface(response.text)
                     if outcome is None:
@@ -346,6 +388,8 @@ class AgentRuntime:
             status, stop_reason = AgentState.CANCELED, "canceled"
         self.state.transition(status)
         self._restore_after_escalation()
+        for name in sorted(self._skills_loaded):
+            self.events.emit(EventType.SKILL_UNLOADED, session_id=self.session_id, name=name)
         return self._finish(status, text, stop_reason, started)
 
     def _limit_hit(self, started: float) -> str | None:
@@ -404,7 +448,18 @@ class AgentRuntime:
             response, used = await self.gateway.complete(self.model_ref, messages, tools)
         latency = int((time.monotonic() - t0) * 1000)
         caps = self.gateway.provider(used).capabilities()
-        rec = self.costs.record(used, response.usage, latency, role=self.role, local=caps.local)
+        active = self.plan.active
+        rec = self.costs.record(
+            used,
+            response.usage,
+            latency,
+            role=self.role,
+            local=caps.local,
+            phase=self._phase,
+            step_id=active.id if active else None,
+            attempt=(active.attempts + 1) if active else 0,
+        )
+        self._phase = "other"
         self.events.emit(
             EventType.MODEL_CALL_COMPLETED,
             session_id=self.session_id,
@@ -482,6 +537,7 @@ class AgentRuntime:
         fingerprint = json.dumps(call.arguments, sort_keys=True, default=str)
         reason = self.loops.record(call.name, fingerprint, output, result.ok)
         if reason:
+            self._guard("no_progress")
             action = recovery_for(
                 FailureClass.NO_PROGRESS,
                 compaction_attempted=False,
@@ -506,6 +562,255 @@ class AgentRuntime:
             output += "\n\n" + NO_PROGRESS_FEEDBACK.format(reason=reason)
         self._append(_tool_message(call, output))
         return None
+
+    # -- telemetry helpers (spec §6.2, §6.3) -------------------------------------------------
+    def _guard(self, guard: str) -> None:
+        """A weak-model guard fired; counted per model so useless guards can be retired."""
+        self.events.emit(
+            EventType.GUARD_FIRED,
+            session_id=self.session_id,
+            guard=guard,
+            model=self.model_ref,
+            role=self.role,
+        )
+
+    async def _trigger_skills(
+        self,
+        *,
+        tools: list[str] | None = None,
+        paths: list[str] | None = None,
+        failure: str | None = None,
+        task_text: str | None = None,
+    ) -> None:
+        """Skill triggers (§6.4): a matching skill joins the run as a user message once."""
+        if self.skills is None:
+            return
+        try:
+            matches = self.skills.match(
+                task_text=task_text, tools=tools, paths=paths, failure=failure
+            )
+        except Exception:  # noqa: BLE001
+            return
+        for skill, trigger in matches:
+            if skill.name in self._skills_loaded:
+                continue
+            self._skills_loaded.add(skill.name)
+            self.events.emit(
+                EventType.SKILL_LOADED,
+                session_id=self.session_id,
+                name=skill.name,
+                trigger=trigger,
+            )
+            self._append(
+                {
+                    "role": "user",
+                    "content": f"Skill '{skill.name}' applies here ({trigger}). Follow it:\n"
+                    + skill.instructions[:6000],
+                }
+            )
+
+    # -- step-scoped execution (spec §3.3, §4) ---------------------------------------------
+    async def _maybe_plan(self, note: str = "") -> bool:
+        """One planner call for a non-trivial task (or a re-plan after a failed step)."""
+        from trendlab.agent.planner import apply_steps, needs_planner, plan_message
+
+        if self.planner is None or self._planner_calls >= self.planner_max_calls:
+            return False
+        if not note and (
+            self.plan.open
+            or not needs_planner(self._task_text, min_prompt_chars=self.planner_min_chars)
+        ):
+            return False
+        self._planner_calls += 1
+        try:
+            steps = await self.planner(self._task_text, note)
+        except Exception as exc:  # noqa: BLE001 — planning is best effort
+            self.events.emit(
+                EventType.PLANNER_CALLED,
+                session_id=self.session_id,
+                call=self._planner_calls,
+                steps=0,
+                error=str(exc)[:200],
+            )
+            return False
+        if not steps:
+            self.events.emit(
+                EventType.PLANNER_CALLED,
+                session_id=self.session_id,
+                call=self._planner_calls,
+                steps=0,
+            )
+            return False
+        added = apply_steps(self.plan, steps)
+        self.events.emit(
+            EventType.PLANNER_CALLED,
+            session_id=self.session_id,
+            call=self._planner_calls,
+            steps=len(added),
+            titles=[t.title for t in added],
+            replan=bool(note),
+        )
+        self._append({"role": "user", "content": plan_message(added)})
+        return True
+
+    async def _track_step(self) -> bool:
+        """Per-step iteration budget (§4.1). Returns True when the plan text must refresh."""
+        active = self.plan.active
+        if active is None:
+            self._step_id = None
+            return False
+        if active.id != self._step_id:
+            self._step_id, self._step_iters = active.id, 1
+            self.events.emit(
+                EventType.STEP_STARTED,
+                session_id=self.session_id,
+                step=active.id,
+                title=active.title,
+                attempt=active.attempts + 1,
+            )
+            return False
+        self._step_iters += 1
+        if self._step_iters <= self.step_iterations:
+            return False
+        active.attempts += 1
+        self._step_iters = 0
+        self._guard("step_iteration_cap")
+        self.events.emit(
+            EventType.STEP_FAILED,
+            session_id=self.session_id,
+            step=active.id,
+            title=active.title,
+            attempt=active.attempts,
+            reason="iteration_cap",
+            cap=self.step_iterations,
+        )
+        note = (
+            f"Step {active.id} ({active.title}) did not finish within {self.step_iterations} "
+            f"iterations (attempt {active.attempts}). Re-plan the remaining work in smaller steps."
+        )
+        if await self._maybe_plan(note):
+            return True
+        if active.attempts >= 2 and self._escalate("STEP_STALLED"):
+            return False
+        self._append(
+            {
+                "role": "user",
+                "content": f"Step {active.id} is taking too long ({self.step_iterations} "
+                "iterations). Narrow it: do the single smallest change that moves it forward, "
+                "validate, and complete or fail the step with a reason.",
+            }
+        )
+        return False
+
+    async def _check_steps(self) -> bool:
+        """Run the validation of steps the model just marked complete (§4.1); on failure hand
+        the step back, and after the first failed attempt try best-of-N candidates (§4.2)."""
+        changed = False
+        for task in list(self.plan.tasks):
+            if (
+                task.status != TaskStatus.COMPLETED
+                or not task.validation
+                or task.id in self._verified_steps
+            ):
+                continue
+            result = await self.tools.execute(
+                ToolCall(
+                    id=f"step-{task.id}-v{task.attempts + 1}",
+                    name="shell",
+                    arguments={"command": task.validation},
+                )
+            )
+            if result.ok:
+                self._verified_steps.add(task.id)
+                self.events.emit(
+                    EventType.STEP_COMPLETED,
+                    session_id=self.session_id,
+                    step=task.id,
+                    title=task.title,
+                    attempt=task.attempts + 1,
+                    validation=task.validation,
+                )
+                continue
+            task.attempts += 1
+            self.plan.update(task.id, status=TaskStatus.ACTIVE)
+            changed = True
+            tail = (result.output or "")[-1500:]
+            self.events.emit(
+                EventType.STEP_FAILED,
+                session_id=self.session_id,
+                step=task.id,
+                title=task.title,
+                attempt=task.attempts,
+                reason="validation_failed",
+                validation=task.validation,
+                tail=tail[-400:],
+            )
+            await self._trigger_skills(failure=tail)
+            if self.candidates is not None and self.best_of > 1 and task.attempts == 1:
+                outcome = await self._best_of(task, tail)
+                if outcome:
+                    continue
+            if task.attempts >= 2:
+                self._escalate("STEP_FAILED")
+            self._append(
+                {
+                    "role": "user",
+                    "content": f"Step {task.id} is not done: its validation `{task.validation}` "
+                    f"failed (attempt {task.attempts}):\n{tail}\nFix the cause, then complete "
+                    "the step again; or fail it with a reason if it cannot be done.",
+                }
+            )
+        return changed
+
+    async def _best_of(self, task: Task, tail: str) -> bool:
+        try:
+            outcome = await self.candidates(task, tail, self.best_of)
+        except Exception as exc:  # noqa: BLE001 — candidates are best effort
+            outcome = {"applied": False, "reason": str(exc)[:200]}
+        if not outcome or not outcome.get("applied"):
+            self.events.emit(
+                EventType.STEP_FAILED,
+                session_id=self.session_id,
+                step=task.id,
+                title=task.title,
+                attempt=task.attempts,
+                reason="best_of_exhausted",
+                detail=(outcome or {}).get("reason", ""),
+                candidates=(outcome or {}).get("candidates", []),
+            )
+            return False
+        for f in outcome.get("files") or []:
+            self.tools.changed_files.setdefault(f, []).append("")
+        self.plan.update(
+            task.id,
+            status=TaskStatus.COMPLETED,
+            evidence=f"best-of-{self.best_of}: candidate {outcome.get('winner')} passed "
+            f"`{task.validation}`",
+        )
+        self._verified_steps.add(task.id)
+        self.events.emit(
+            EventType.STEP_COMPLETED,
+            session_id=self.session_id,
+            step=task.id,
+            title=task.title,
+            attempt=task.attempts + 1,
+            via="best_of",
+            winner=outcome.get("winner"),
+            candidates=outcome.get("candidates", []),
+        )
+        nxt = next((t for t in self.plan.open if t.status == TaskStatus.PENDING), None)
+        if nxt and self.plan.active is None:
+            self.plan.update(nxt.id, status=TaskStatus.ACTIVE)
+        self._append(
+            {
+                "role": "user",
+                "content": f"Step {task.id} was finished by a parallel attempt: candidate "
+                f"{outcome.get('winner')} passed `{task.validation}` and its diff is now in the "
+                "working tree (files: " + ", ".join(outcome.get("files") or []) + "). Re-read "
+                "those files before touching them. Continue with the next step.",
+            }
+        )
+        return True
 
     async def _verify_before_surface(self, final_text: str) -> tuple[str, str] | None:
         """Independent review of the diff (spec §3.2). None = surface the run as COMPLETED;
@@ -550,9 +855,12 @@ class AgentRuntime:
             return None
         if verdict.verdict == "fix" and self._verify_rounds < self.verification_max_rounds:
             self._verify_rounds += 1
+            self._guard("verifier_fix_round")
             self.evaluator.nudges = 0  # the fix round gets a fresh evaluator budget
             return ("fix", verdict.feedback())
-        if self.verification_mode == "advisory":
+        if self.verification_mode == "advisory" or verdict.verdict == "fix":
+            # 'fix' means addressable findings, not a wrong change: once the author's round is
+            # used up the run surfaces with the findings attached rather than failing.
             return None
         first = verdict.findings[0]["issue"] if verdict.findings else "no details given"
         return ("fail", f"verifier rejected the change: {first}")
@@ -678,3 +986,49 @@ def regression_outcome(
     if _WAIVER.search(final_text or ""):
         return "waived"
     return "missing"
+
+
+_EXPLORE_TOOLS = {
+    "read_file",
+    "list_directory",
+    "glob",
+    "search_text",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "inspect_output",
+    "web_fetch",
+    "web_search",
+    "delegate",
+}
+_EDIT_TOOLS = {"write_file", "patch_file", "apply_patch", "delete_file"}
+_VALIDATE_TOOLS = {"run_tests", "shell", "background"}
+
+
+def infer_phase(tools: list[str]) -> str:
+    """Phase of the next model call from the tools it is reacting to (spec §6.2)."""
+    names = set(tools)
+    if names & _EDIT_TOOLS:
+        return "edit"
+    if names & _VALIDATE_TOOLS:
+        return "validate"
+    if "task" in names:
+        return "plan"
+    if names & _EXPLORE_TOOLS:
+        return "explore"
+    return "other"
+
+
+def _guard_name(reason: str) -> str:
+    r = reason.lower()
+    if "empty" in r or "json" in r:
+        return "empty_answer"
+    if "announced" in r:
+        return "announced_action"
+    if "regression test" in r:
+        return "regression_test_missing"
+    if "validation" in r:
+        return "unvalidated_change"
+    if "plan tasks" in r:
+        return "open_tasks"
+    return "evaluator_other"

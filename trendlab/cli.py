@@ -414,10 +414,101 @@ def bench_cmd(
     model: str = typer.Option(..., "--model", "-m", help="provider:model to benchmark."),
     fixture: str | None = typer.Option(None, help="Run one fixture (A..E) instead of all."),
     output: str = typer.Option("text", help="text | json"),
+    suite: bool = typer.Option(False, "--suite", help="Run the 50-task suite instead of A–E."),
+    tasks: str | None = typer.Option(
+        None, "--tasks", help="Suite: count (e.g. 10) or ids/prefixes."
+    ),
+    lang: str | None = typer.Option(None, "--lang", help="Suite: python | typescript | go."),
+    profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
+    compare: list[str] | None = typer.Option(
+        None,
+        "--compare",
+        help="Two model@profile values (e.g. deepseek:deepseek-flash@harness and "
+        "anthropic:claude-sonnet-5@bare); the suite runs twice and deltas are printed.",
+    ),
+    sandbox: str | None = typer.Option(None, "--sandbox", help="off | on | docker (suite)."),
+    log: bool = typer.Option(
+        True, "--log/--no-log", help="Append suite results to docs/BENCH_LOG.md."
+    ),
 ) -> None:
-    """Run the autonomous coding benchmark fixtures against a model (spec §54)."""
-    from trendlab.benchmarks.runner import run_benchmarks
+    """Run the benchmark fixtures A–E, the 50-task suite, or a two-configuration comparison."""
+    from trendlab.benchmarks.runner import (
+        append_bench_log,
+        compare_summaries,
+        run_benchmarks,
+        run_suite,
+        summarize,
+    )
 
+    if suite or compare:
+        configs = compare if compare else [f"{model}@{profile}"]
+        if compare and len(configs) != 2:
+            raise typer.BadParameter("--compare needs exactly two model@profile values")
+        summaries = []
+        for spec in configs:
+            m, _, prof = spec.partition("@")
+            prof = prof or "harness"
+            console.print(f"[neon]suite[/neon] {m} · profile {prof} · {tasks or 'all'} tasks")
+
+            def show(r):
+                if r.get("skipped"):
+                    console.print(f"  [dim]{r['task']}: skipped ({r['skipped']})[/dim]")
+                    return
+                marks = " ".join(
+                    f"{k}={'✓' if r.get(k) else '✗'}"
+                    for k in (
+                        "located",
+                        "root_cause",
+                        "passes",
+                        "no_collateral",
+                        "regression_added",
+                    )
+                )
+                console.print(f"  {r['task']}: {marks} ${r['cost']:.3f} {r['wall_s']:.0f}s")
+
+            results = asyncio.run(
+                run_suite(
+                    m, profile=prof, selector=tasks, lang=lang, sandbox=sandbox, on_result=show
+                )
+            )
+            summary = {"config": spec, **summarize(results)}
+            summaries.append(summary)
+            if log:
+                append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
+        if output == "json":
+            typer.echo(json.dumps({"summaries": summaries}, indent=2))
+            return
+        cols = (
+            "config",
+            "tasks",
+            "located",
+            "root_cause",
+            "passes",
+            "no_collateral",
+            "regression_added",
+            "cost",
+            "tokens_lead",
+        )
+        t = Table(title="Suite summary")
+        for col in cols:
+            t.add_column(col)
+        for sm in summaries:
+            t.add_row(*(str(sm.get(c, "")) for c in cols))
+        console.print(t)
+        if len(summaries) == 2:
+            deltas = compare_summaries(summaries[0], summaries[1])
+            console.print(
+                "[neon]Δ (second − first):[/neon] "
+                + ", ".join(f"{k} {v:+}" for k, v in deltas.items())
+            )
+            if log:
+                append_bench_log(
+                    Path("docs/BENCH_LOG.md"),
+                    "compare",
+                    [{"config": s["config"], **{k: s[k] for k in deltas}} for s in summaries],
+                    note="Δ: " + json.dumps(deltas),
+                )
+        return
     results = asyncio.run(run_benchmarks(model, fixture))
     if output == "json":
         typer.echo(json.dumps(results, indent=2))
@@ -535,6 +626,280 @@ def keys_cmd() -> None:
     probe()
 
 
+@app.command("stub")
+def stub_cmd(
+    spec: Path | None = typer.Option(None, "--spec", help="OpenAPI JSON/YAML or a recording JSON."),
+    port: int = typer.Option(8089, "--port"),
+    record: str | None = typer.Option(
+        None, "--record", help="Allow-listed host to proxy and record once."
+    ),
+    record_to: Path = typer.Option(Path(".trendlab/stubs/recorded.json"), "--record-to"),
+) -> None:
+    """Serve a local HTTP stub for tests that call external services (spec §8.5)."""
+    import time as _time
+
+    from trendlab.tools.stubs import StubServer
+
+    server = StubServer(
+        spec=spec, port=port, record_host=record, record_to=record_to if record else None
+    )
+    server.start()
+    console.print(
+        f"[ok]stub[/ok] listening on {server.url} · {len(server.routes)} routes"
+        + (f" · recording {record} → {record_to}" if record else "")
+        + " · Ctrl+C to stop"
+    )
+    try:
+        while True:
+            _time.sleep(1)
+    except KeyboardInterrupt:
+        server.stop()
+
+
+@app.command("replay")
+def replay_cmd(
+    session_id: str = typer.Argument(..., help="Stored session id (see `trendlab sessions`)."),
+    model: str | None = typer.Option(
+        None, "--model", "-m", help="Model for the replay (default: the session's)."
+    ),
+    max_prompts: int | None = typer.Option(None, "--max-prompts"),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Shadow replay: re-run a stored session's prompts against the current build (spec §8.6)."""
+    from trendlab.benchmarks.replay import replay_session
+    from trendlab.config.loader import load_config, trendlab_home
+    from trendlab.sessions.store import SessionStore
+
+    config = load_config()
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        report = asyncio.run(
+            replay_session(store, session_id, config=config, model=model, max_prompts=max_prompts)
+        )
+    finally:
+        store.close()
+    out_dir = trendlab_home() / "replays"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{session_id}.json").write_text(json.dumps(report, indent=1))
+    if output == "json" or "error" in report:
+        typer.echo(json.dumps(report, indent=2))
+        return
+    t = Table(title=f"Replay {session_id}")
+    t.add_column("metric")
+    t.add_column("before")
+    t.add_column("after")
+    for k in ("model", "tool_calls", "assistant_turns", "cost"):
+        t.add_row(k, str(report.get(f"{k}_before")), str(report.get(f"{k}_after")))
+    t.add_row("outcomes", "", ", ".join(report["outcomes"]))
+    t.add_row("shared tool prefix", "", str(report["tool_sequence_shared_prefix"]))
+    t.add_row("replayed / live calls", "", f"{report['replayed_results']} / {report['live_calls']}")
+    console.print(t)
+    console.print(f"[dim]saved {out_dir / (session_id + '.json')}[/dim]")
+
+
+engine_app = typer.Typer(
+    help="The local engine: inbox, watch, sleeptime pass, meta-loop (spec §7)."
+)
+app.add_typer(engine_app, name="engine")
+
+
+def _engine_projects(config, project: Path | None) -> list[Path]:
+    roots = [Path(p).expanduser() for p in config.engine.projects]
+    if project is not None:
+        roots.append(project)
+    return roots or [Path.cwd()]
+
+
+@engine_app.command("start")
+def engine_start(
+    project: Path | None = typer.Option(
+        None, "--project", "-C", help="Extra project root to watch."
+    ),
+    foreground: bool = typer.Option(False, "--foreground", help="Run in this terminal."),
+) -> None:
+    """Start the engine daemon (scheduler + inbox + socket)."""
+    import os
+    import subprocess
+    import sys
+
+    from trendlab.config.loader import load_config
+    from trendlab.engine.daemon import Engine, read_pid, socket_path
+
+    if read_pid():
+        console.print(f"[warning]engine already running[/warning] (pid {read_pid()})")
+        return
+    config = load_config()
+    projects = _engine_projects(config, project)
+    if not foreground:
+        log = trendlab_home() / "engine" / "engine.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        args = [sys.executable, "-m", "trendlab.cli", "engine", "start", "--foreground"]
+        if project is not None:
+            args += ["--project", str(project)]
+        with log.open("ab") as fh:
+            proc = subprocess.Popen(
+                args,
+                stdout=fh,
+                stderr=fh,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env={**os.environ, "TRENDLAB_TELEGRAM": "off"},
+            )
+        console.print(
+            f"[ok]engine started[/ok] pid {proc.pid} · socket {socket_path()} · log {log}"
+        )
+        return
+    asyncio.run(Engine(projects=projects, config=config).run())
+
+
+@engine_app.command("stop")
+def engine_stop() -> None:
+    """Stop the running engine."""
+    from trendlab.engine.daemon import client, read_pid
+
+    pid = read_pid()
+    if not pid:
+        console.print("[dim]engine is not running[/dim]")
+        return
+    asyncio.run(client("stop"))
+    console.print(f"[ok]stop requested[/ok] (pid {pid})")
+
+
+@engine_app.command("status")
+def engine_status() -> None:
+    """Show the engine's schedule state and inbox counts."""
+    from trendlab.engine.daemon import client, read_pid
+
+    resp = asyncio.run(client("status"))
+    if resp is None:
+        console.print(f"[dim]engine is not running[/dim] (pid file: {read_pid()})")
+        return
+    typer.echo(json.dumps(resp, indent=2))
+
+
+@engine_app.command("run")
+def engine_run(job: str = typer.Argument(..., help="watch | sleep | meta | digest")) -> None:
+    """Run one engine job now (through the daemon when it runs, else in-process)."""
+    from trendlab.config.loader import load_config
+    from trendlab.engine.daemon import Engine, client
+
+    resp = asyncio.run(client("run", job=job))
+    if resp is None:
+        config = load_config()
+        eng = Engine(projects=_engine_projects(config, None), config=config)
+        resp = asyncio.run(eng.run_job(job))
+        eng.inbox.close()
+    typer.echo(json.dumps(resp, indent=2, default=str))
+
+
+@app.command("watch")
+def watch_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
+    """Run the project's tests and file failures as inbox cards (spec §7.2)."""
+    from trendlab.config.loader import load_config
+    from trendlab.engine.daemon import inbox_path
+    from trendlab.engine.inbox import Inbox
+    from trendlab.engine.watch import watch_project
+
+    inbox = Inbox(inbox_path())
+    try:
+        issues = asyncio.run(watch_project(inbox, project.resolve(), load_config(project)))
+    finally:
+        inbox.close()
+    console.print(
+        f"[ok]watch[/ok] {len(issues)} issue(s) filed" if issues else "[ok]watch[/ok] tests green"
+    )
+
+
+@app.command("sleep")
+def sleep_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    no_branch: bool = typer.Option(
+        False, "--no-branch", help="Write files only; no review branch."
+    ),
+) -> None:
+    """Sleeptime pass: consolidate memory, propose instructions/skills, open a review branch."""
+    from trendlab.config.loader import load_config
+    from trendlab.engine.jobs import _caller
+    from trendlab.engine.sleep import sleeptime
+    from trendlab.sessions.store import SessionStore
+
+    config = load_config(project)
+    store = SessionStore(trendlab_home() / "sessions.db")
+    try:
+        res = asyncio.run(
+            sleeptime(
+                _caller(config, "summarizer"),
+                store=store,
+                project_root=project.resolve(),
+                model_ref=config.defaults.model,
+                branch=not no_branch,
+            )
+        )
+    finally:
+        store.close()
+    typer.echo(json.dumps(res, indent=2))
+
+
+@app.command("meta")
+def meta_cmd(
+    days: int = typer.Option(7, "--days"),
+    draft: bool = typer.Option(
+        False, "--draft", help="Draft a fix for the top harness card in a worktree of trendlab-cli."
+    ),
+) -> None:
+    """Meta-loop: screen the harness's own sessions and file cards against the harness."""
+    from trendlab.config.loader import load_config
+    from trendlab.engine.daemon import inbox_path
+    from trendlab.engine.inbox import Inbox
+    from trendlab.engine.jobs import meta_draft, meta_scan
+
+    config = load_config()
+    inbox = Inbox(inbox_path())
+    try:
+        res = asyncio.run(meta_scan(inbox, config, days=days))
+        if draft:
+            res["draft"] = asyncio.run(meta_draft(inbox, config))
+    finally:
+        inbox.close()
+    typer.echo(json.dumps(res, indent=2, default=str))
+
+
+@app.command("inbox")
+def inbox_cmd(
+    project: Path | None = typer.Option(None, "--project", "-C"),
+    all_: bool = typer.Option(False, "--all", help="Every project, every status."),
+) -> None:
+    """List inbox cards (use /inbox inside a session to act on them)."""
+    from trendlab.engine.daemon import inbox_path
+    from trendlab.engine.inbox import Inbox
+
+    inbox = Inbox(inbox_path())
+    try:
+        items = inbox.list(
+            None if all_ else str((project or Path.cwd()).resolve()),
+            status=None if all_ else "open",
+        )
+    finally:
+        inbox.close()
+    if not items:
+        console.print("[dim]inbox empty[/dim]")
+        return
+    t = Table(title="Inbox")
+    for col in ("id", "project", "status", "sev", "×", "title", "source"):
+        t.add_column(col)
+    for it in items:
+        t.add_row(
+            it["id"],
+            Path(it["project"]).name,
+            it["status"],
+            it["severity"],
+            str(it["occurrences"]),
+            it["title"][:70],
+            it["source"],
+        )
+    console.print(t)
+
+
 @app.command("doctor")
 def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
     """Check config, keys, providers, tools and remote settings; explain anything that is off."""
@@ -618,6 +983,18 @@ def doctor_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> N
                 if config.defaults.permission_mode == PermissionMode.AUTO
                 else ""
             ),
+        )
+    )
+    roles = {"planning", "verifier", "escalation", "screener", "summarizer"}
+    resolved = {config.routing.get(r, config.defaults.model) for r in roles}
+    rows.append(
+        (
+            ok if len(resolved) > 1 else warn,
+            "routing",
+            ", ".join(f"{r}={config.routing[r]}" for r in sorted(config.routing))
+            if len(resolved) > 1
+            else "every role resolves to one model; set [routing] planning/verifier/escalation "
+            "to a stronger model (trendlab init does this for DeepSeek)",
         )
     )
     ra = config.remote_approval
@@ -715,6 +1092,21 @@ def init_cmd(
         values["base_url"] = base_url
     update_global_config("providers", {provider: values})
     update_global_config("defaults", {"model": f"{provider}:{model}"})
+    if provider == "deepseek":
+        # Model cocktail (cheap-model spec §6.1): Flash leads, V4 Pro plans/verifies/escalates.
+        update_global_config(
+            "routing",
+            {
+                "planning": "deepseek:deepseek-v4-pro",
+                "verifier": "deepseek:deepseek-v4-pro",
+                "escalation": "deepseek:deepseek-v4-pro",
+                "screener": "deepseek:deepseek-flash",
+                "summarizer": "deepseek:deepseek-flash",
+            },
+        )
+        console.print(
+            "[ok]Routing[/ok] planning/verifier/escalation → V4 Pro; screener/summarizer → Flash"
+        )
     console.print(
         f"[ok]Configured[/ok] default model [neon]{provider}:{model}[/neon] "
         f"in {global_config_path()}"

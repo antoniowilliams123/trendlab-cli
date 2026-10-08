@@ -45,6 +45,8 @@ class LimitsConfig(BaseModel):
     parallel_tools: int = Field(default=6, ge=1, le=32)
     max_model_calls: int | None = None
     max_wall_clock_minutes: int | None = None
+    # Iterations one plan step may take before the attempt counts as failed (spec §4.1).
+    step_iterations: int = Field(default=12, ge=3, le=100)
     # Warn when session cost reaches this fraction of max_cost_usd.
     warn_at_fraction: float = Field(default=0.8, ge=0.0, le=1.0)
 
@@ -119,16 +121,18 @@ class HookConfig(BaseModel):
 class SandboxConfig(BaseModel):
     """OS sandbox for shell commands (bubblewrap). auto = use it when installed."""
 
-    mode: str = "auto"  # auto | on | off
+    mode: str = "auto"  # auto | on | off | docker
     allow_network: bool = False
+    # docker mode: shell commands run in this pinned image with the project mounted at /work.
+    docker_image: str = "python:3.12-slim"
     # Extra writable paths (e.g. a package cache). The project and /tmp are always writable.
     writable_paths: list[str] = Field(default_factory=lambda: ["~/.cache"])
 
     @field_validator("mode")
     @classmethod
     def _mode(cls, v: str) -> str:
-        if v not in {"auto", "on", "off"}:
-            raise ValueError("sandbox mode must be auto, on or off")
+        if v not in {"auto", "on", "off", "docker"}:
+            raise ValueError("sandbox mode must be auto, on, off or docker")
         return v
 
 
@@ -168,6 +172,50 @@ class VerificationConfig(BaseModel):
         if v not in {"inplace", "worktree"}:
             raise ValueError("verification.workspace must be inplace or worktree")
         return v
+
+
+class PromptsConfig(BaseModel):
+    """Per-model prompt layer (cheap-model spec §6.3)."""
+
+    drivers: bool = True  # merge packaged + owner + project model notes into the system prompt
+
+
+class PlannerConfig(BaseModel):
+    """One call to the planning role turns a non-trivial task into verifiable steps (§3.3)."""
+
+    enabled: bool = True
+    max_calls: int = Field(default=3, ge=1, le=6)  # initial plan + re-plans per run
+    min_prompt_chars: int = 200
+
+
+class AttemptsConfig(BaseModel):
+    """Best-of-N candidate patches when a step's validation fails (§4.2)."""
+
+    # "auto" = 3 for models under $1 per million input tokens (or local), else 1.
+    best_of: int | str = "auto"
+    cheap_price_per_m: float = 1.0
+
+    @field_validator("best_of")
+    @classmethod
+    def _best_of(cls, v: int | str) -> int | str:
+        if isinstance(v, str):
+            if v != "auto":
+                raise ValueError("attempts.best_of must be an integer or 'auto'")
+            return v
+        if not 1 <= v <= 6:
+            raise ValueError("attempts.best_of must be between 1 and 6")
+        return v
+
+
+class EngineConfig(BaseModel):
+    """The local engine daemon (cheap-model spec §7)."""
+
+    projects: list[str] = Field(default_factory=list)  # roots to watch / sleep over
+    watch_minutes: int = Field(default=60, ge=5)
+    sleep_at: str = "02:30"  # local time, once per day
+    meta_days: int = Field(default=1, ge=1)
+    digest_minutes: int = Field(default=180, ge=15)  # Telegram digest cadence
+    file_failed_runs: bool = True  # failed interactive runs and verifier fails become cards
 
 
 class PlanGateConfig(BaseModel):
@@ -323,6 +371,10 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = MemoryConfig()
     plan_gate: PlanGateConfig = PlanGateConfig()
     verification: VerificationConfig = VerificationConfig()
+    planner: PlannerConfig = PlannerConfig()
+    prompts: PromptsConfig = PromptsConfig()
+    engine: EngineConfig = EngineConfig()
+    attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()

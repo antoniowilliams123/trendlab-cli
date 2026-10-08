@@ -7,6 +7,20 @@ from dataclasses import dataclass, field
 from trendlab.config.schema import AppConfig
 from trendlab.providers.base import TokenUsage
 
+# Default phase per role; the lead's calls get a phase inferred from the tools it just used.
+ROLE_PHASE = {
+    "planner": "plan",
+    "planning": "plan",
+    "verifier": "verify",
+    "reviewer": "verify",
+    "summarizer": "summarise",
+    "screener": "summarise",
+    "candidate": "edit",
+    "explorer": "explore",
+    "debugger": "explore",
+    "tester": "validate",
+}
+
 
 @dataclass
 class ModelCallRecord:
@@ -18,6 +32,9 @@ class ModelCallRecord:
     latency_ms: int
     cost_usd: float
     local: bool
+    phase: str = "other"  # plan | explore | edit | validate | verify | summarise | other
+    step_id: str | None = None
+    attempt: int = 0
 
 
 @dataclass
@@ -51,6 +68,9 @@ class CostTracker:
         *,
         role: str = "default",
         local: bool = False,
+        phase: str | None = None,
+        step_id: str | None = None,
+        attempt: int = 0,
     ) -> ModelCallRecord:
         rec = ModelCallRecord(
             model_ref,
@@ -61,6 +81,9 @@ class CostTracker:
             latency_ms,
             self.price(model_ref, usage),
             local,
+            phase or ROLE_PHASE.get(role, "other"),
+            step_id,
+            attempt,
         )
         self.records.append(rec)
         return rec
@@ -80,6 +103,23 @@ class CostTracker:
     @property
     def model_calls(self) -> int:
         return len(self.records)
+
+    def by(self, key: str) -> dict[str, dict[str, float | int]]:
+        """Cost attribution (spec §6.2): key = role | phase | step | model."""
+        out: dict[str, dict] = {}
+        for r in self.records:
+            k = {
+                "role": r.role,
+                "phase": r.phase,
+                "step": r.step_id or "(no step)",
+                "model": r.model_ref,
+            }[key]
+            d = out.setdefault(k, {"calls": 0, "input": 0, "output": 0, "usd": 0.0})
+            d["calls"] += 1
+            d["input"] += r.input_tokens
+            d["output"] += r.output_tokens
+            d["usd"] += r.cost_usd
+        return out
 
     def by_model(self) -> dict[str, dict[str, float | int | bool]]:
         out: dict[str, dict] = {}

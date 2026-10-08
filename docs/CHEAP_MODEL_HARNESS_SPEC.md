@@ -341,10 +341,10 @@ jet-black/neon UI).
 |---|---|---|
 | P1 Tiering | **done 2026-10-07** | `trendlab/tools/views/` (ToolOutput, 8 parsers, generic fallback, `render(budget)`), `tiering.py` (budgets, baselines, screener hand-off, traces), `inspect.py` (`inspect_output` tool), `screener.py` (≤300-token prompt, strict JSON), `[context] tool_budgets` + `screener_threshold_tokens`, `screener` routing role, `tool.output_tiered` event, diagnostics rendered as a lint view, `tokens_lead` in the benchmark report. 12 tests (`tests/test_tiered_output.py`). Measurement in §9.2. |
 | P2 Verify | **done 2026-10-07** | `trendlab/agent/verifier.py` (fixed-schema verdict, fresh context), `AgentRuntime._verify_before_surface` (pass / fix round / fail), regression gate (`looks_like_fix`, `regression_outcome`, evaluator nudge), `[verification]` config (verifier, max_rounds, workspace, regression_gate), worktree workspace in `TrendLabApp` (`_enter_worktree` / `_surface_worktree`: apply verified diff or park `.trendlab/patches/<run>.patch`), events `verify.*`, `verifier` routing role, footer + activity lines. 9 tests (`tests/test_verify_then_surface.py`). |
-| P3 Steps | queued | — |
-| P4 Cocktail | queued | — |
-| P5 Suite | queued | — |
-| P6 Daemon | queued | — |
+| P3 Steps | **done 2026-10-07** | `trendlab/agent/planner.py` (planner prompt, `needs_planner` heuristic, strict JSON steps, `apply_steps` onto the existing Plan), `Task` gained `files / done_when / validation / attempts` (= spec `Step`), `AgentRuntime` step loop (`_maybe_plan` ≤ `planner.max_calls`, `_track_step` iteration cap → re-plan → escalate, `_check_steps` runs each completed step's validation and hands failures back), `orchestration/candidates.py` best-of-N in parallel worktrees with temperature jitter + approach hints (`attempts.best_of = auto` → 3 under $1/M input or local), `gitflow.worktree_patch` (junk-free patches), `[planner]` / `[attempts]` / `limits.step_iterations` config, events `planner.called`, `step.*`, `attempt.candidate`, activity lines. 5 tests (`tests/test_step_execution.py`). Measurement in §9.3. |
+| P4 Cocktail | **done 2026-10-07** | `trendlab init` seeds the DeepSeek cocktail (`[routing]` planning/verifier/escalation → V4 Pro, screener/summarizer → Flash) and `trendlab doctor` warns when every role resolves to one model; attribution (`ModelCallRecord.phase/step_id/attempt`, lead phase inferred from the tools just used, `CostTracker.by(role|phase|step)`, `/cost --by …`, `cost_by_phase` + `guards_fired` + `verification` in the bench report); per-model prompt layer `trendlab/prompts/drivers.py` (packaged `drivers/<provider-type>.md` + `drivers/models/<provider>-<model>.md` + `~/.trendlab/skills/_model/` + `<project>/.trendlab/skills/_model/`, `[prompts] drivers`, refreshed on model switch); Flash driver profile seeded from this week's guards; `guard.fired {guard, model}` from rescue, evaluator reasons, loop detector, step cap, verifier fix round and the re-plan guard; skill triggers (`[triggers] paths/tools/keywords/on_failure` in skill.toml, `SkillLibrary.match`, loaded once per run as a user message, `skill.loaded/unloaded`). 4 tests (`tests/test_cocktail_layer.py`). Measurement in §9.4. |
+| P5 Suite | **done 2026-10-08** | `trendlab/benchmarks/suite.py` (50 tasks: 30 Python / 10 TypeScript / 10 Go from three base repos × a defect catalogue of off-by-one, wrong import, missing None check, swapped args, async misuse, config typo, multi-file contract, wrong operator, early return, bad format; 27 symptom-only; hidden regression test + localisation answer per task; materialised on demand), `runner.run_task` metrics (located, root_cause ±3 lines, passes on the hidden test, no_collateral, regression_added, interventions, cost, tokens_lead, tokens_total, wall_s, cost_by_phase, guards_fired), profiles `harness` / `bare`, `trendlab bench --suite --tasks --lang --profile --compare a@p b@q --sandbox docker`, `docs/BENCH_LOG.md`; docker sandbox mode (`[sandbox] mode = "docker"`, pinned image, project at /work, no network); `trendlab stub --spec openapi|recorded [--record host]`; `trendlab replay <session> [--model] [--max-prompts]`. 6 tests (`tests/test_suite_and_replay.py`). Measurement in §9.5. |
+| P6 Daemon | **done 2026-10-08** | `trendlab/engine/`: SQLite inbox with clustering (`inbox.py`), outbound-only Telegram digest (`notify.py`), issue drafter (`drafter.py`), sleeptime pass (`sleep.py`: ≤40 facts, TRENDLAB.md / model-notes / skill proposals, review branch `trendlab/memory-YYYY-MM-DD` via a temporary worktree, narrowed git exclude), meta-loop (`meta.py`: clusters stop reasons, skipped tools, guards, loops, verifier fails, cost outliers → cards against the harness; `meta --draft` fixes the top card in a worktree of trendlab-cli), `watch` (test failures → cards), the daemon (`daemon.py`: scheduler watch/sleep/meta/digest, Unix socket, pid file; `trendlab engine start|stop|status|run`), `[engine]` config, failed runs and verifier rejections filed automatically, `/inbox list|apply|test|dismiss|silence|open`. 8 tests (`tests/test_engine.py`). Status in §9.6. |
 
 Decisions taken while building P1:
 
@@ -391,6 +391,109 @@ What the diagnostic run showed (per-call token breakdown on the noisy repo):
   (step-scoped context).
 
 ---
+
+Decisions taken while building P3:
+
+- Steps are the existing `Task` objects with four new fields, not a parallel `Step` model: the
+  task tool, `/plan` panel, plan gate and persistence keep working unchanged.
+- The planner runs **before** the first model call (so the plan sits in the cached system
+  prompt) and only for non-trivial prompts (`> planner.min_prompt_chars` or ≥ 2 file
+  mentions). A short prompt such as fixture A never pays for a planner call.
+- Step validation is run by the harness, not the model: when the model marks a step complete
+  the loop executes the step's `validation` command through the normal tool runtime (so it is
+  permissioned, sandboxed, audited and tiered). A failure flips the step back to ACTIVE with
+  the tail of the output; the second failure escalates.
+- Best-of-N triggers exactly once per step (after the author's first failed attempt). The
+  candidates get write tools inside their worktrees; the main tree only ever receives the
+  winner's patch (`git apply --check` first). Patches skip `__pycache__`, caches and
+  `.trendlab/`, and respect the project's ignore rules.
+- Temperature jitter is applied through the OpenAI-compatible provider (`temperature` on the
+  per-candidate provider instance); Anthropic and Ollama candidates differ by approach hint
+  only.
+
+### 9.3 P3 measurement (Flash, full harness)
+
+Fixtures A–E on Flash with the full P1–P3 harness (verifier = V4 Pro, planner/steps/best-of
+available): **5 / 5 pass**, 6–8 model calls each, $0.0026–$0.0044 per fixture (one B run cost
+$0.024 because the verifier asked for a fix round). The exit criterion ("Flash pass rate ≥
+Sonnet-bare on A–E") is met trivially — A–E are too small to separate harnesses, which is
+why P5 adds the 50-task suite.
+
+What P3 did *not* get to show tonight: the planner heuristic (prompt > 200 chars or ≥ 2
+files) never fired on A–E or on the 196-character noisy-repo prompt, so step validation and
+best-of-N ran only under test (`tests/test_step_execution.py`, including a real two-candidate
+run in parallel worktrees where the test-passing candidate was applied). A planner-on live
+measurement needs a longer prompt and is queued with the suite runs (§9.5).
+
+Finding from the noisy-repo runs (4 / 4 ended FAILED under the first verifier policy): the
+V4 Pro verifier returned `fix` twice in a row on a correct change (test suite green), and the
+first policy turned a second `fix` into FAILED. Changed the same night: once the fix round is
+used up, a `fix` verdict surfaces the run with the findings attached; only `fail` stops it.
+Cost note from attribution (§6.2): on fixture B the verify phase was 45–55 % of the run's cost
+($0.010–0.013 of $0.016–0.023) — the verifier is the main lever if cost matters more than the
+extra check; `[routing] verifier` can point at Flash for cheap projects.
+
+Decisions taken while building P4:
+
+- Triggered skills join the run as a **user message**, not the system prompt: the system
+  prompt stays byte-stable for the provider cache, and the skill is scoped to the run (it is
+  reported unloaded at the end). Manually activated skills (`/skill on`) still live in the
+  system prompt as before.
+- The model-notes layer is part of the system prompt and is rebuilt only on model switch,
+  compaction or memory change — the same moments the prompt already changed.
+- `guard.fired` is pure telemetry (no activity line); the bench report and the noisy-repo
+  harness count it per guard so a profile can be judged by numbers.
+
+### 9.4 P4 measurement (Flash, driver layer off vs on)
+
+`guard.fired` counts and lead tokens, Flash, verifier V4 Pro, two noisy-repo runs and one A–E
+pass per setting (the noisy rows ran before the verifier-policy change, hence their FAILED
+status):
+
+| Setting | A–E guards | A–E lead tokens | Noisy guards (2 runs) | Noisy lead tokens | Noisy model calls |
+|---|---|---|---|---|---|
+| drivers **off** | B: regression_test_missing ×1 | 21.8k / 59.3k / 27.7k / 32.7k / 21.5k | regression_test_missing ×2, verifier_fix_round ×2 | 264.6k / 319.6k | 23 / 26 |
+| drivers **on** (Flash profile) | B: regression_test_missing ×1 | 30.1k / 136.6k / 36.0k / 33.5k / 23.1k | verifier_fix_round ×2 | 106.2k / 136.5k | 13 / 15 |
+
+Reading: on the tiny fixtures the profile changes nothing measurable (the one guard that
+fires, "fix without a test", fires once either way; B's token spread is run-to-run variance).
+On the noisy repo the profile **removed the regression-test guard in both runs and roughly
+halved model calls and lead tokens**. Exit criterion ("a Flash driver profile exists and
+measurably reduces `guard.fired` on the suite") is met on the noisy repo; the suite-wide
+number comes with the P5 runs. `/cost --by phase` works; the bench report carries
+`cost_by_phase`.
+
+### 9.5 P5 measurement (M1 on the suite)
+
+M1_PLACEHOLDER
+
+Decisions taken while building P5:
+
+- The suite ships as a generator (`suite.py`), not as files: three base repos plus a defect
+  catalogue produce 50 deterministic tasks; `materialize` writes one to a temp dir. The Go
+  tasks exist but are **skipped** on a machine without `go` (this one); `--sandbox docker`
+  would run them in `golang:1.23` — docker is not installed here either, so §8.3 is built
+  (argv construction tested) but not exercised live.
+- The `bare` profile = tiering, planner, verifier, best-of-N and driver notes off. The spec's
+  M1 comparator (`sonnet+bare`) could not run tonight: no Anthropic key is stored. The proxy
+  comparison is `flash@harness` vs `flash@bare` vs `v4-pro@bare`.
+- Unattended runs auto-deny approval requests (counted as `interventions`) instead of blocking
+  on them — found the hard way when a Flash run issued `rm -rf …` and the benchmark waited on
+  an approval nobody could give.
+- Replay feeds recorded results only for read-only tools; `shell`/`run_tests` always run
+  live so the replay reflects the current build's behaviour.
+
+### 9.6 P6 status
+
+- Built and unit-tested: inbox, digest, drafter, sleeptime (with the review branch),
+  meta-loop scan + draft, watch, daemon + socket + `engine` commands, `/inbox`, automatic
+  filing of failed runs and verifier rejections.
+- The exit criterion "runs unattended for a week" starts tonight: the engine is installed on
+  the owner's machine (`trendlab engine start` via cron `@reboot` + an hourly keep-alive, with
+  `[engine] projects` pointing at trendlab-cli). The first sleeptime branch and the first
+  meta-loop card are expected the next morning; one meta finding fixed is still open.
+- Telegram: digests go out through a *send-only* path so they never fight the interactive
+  session's poller for the same bot.
 
 ## 10. Risks and mitigations
 

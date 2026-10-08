@@ -289,6 +289,13 @@ class TrendLabApp:
             self.config.routing.get("verifier") or self.config.routing.get("escalation")
         )
         self.agent.verification_mode = vcfg.verifier if has_verifier_model else "off"
+        if self.config.planner.enabled:
+            self.agent.planner = self._plan_steps
+            self.agent.planner_max_calls = self.config.planner.max_calls
+            self.agent.planner_min_chars = self.config.planner.min_prompt_chars
+        self.agent.step_iterations = self.config.limits.step_iterations
+        self.agent.best_of = self._best_of_for(self.model_ref)
+        self.agent.candidates = self._run_candidates
         self.agent.verification_max_rounds = vcfg.max_rounds
         self.agent.regression_gate = vcfg.regression_gate
         await self._start_extensions()
@@ -378,6 +385,8 @@ class TrendLabApp:
             from trendlab.extensions.skills import SkillLibrary
 
             self.skills = SkillLibrary(self.project_root, self.data_dir)
+            if self.agent is not None:
+                self.agent.skills = self.skills
         except ImportError:
             pass
         try:
@@ -485,9 +494,94 @@ class TrendLabApp:
         if self._run_checkpoint is not None and self.checkpoints is not None:
             self.checkpoints.seal(self._run_checkpoint["id"])
         self._save_state()
+        self._file_to_inbox(prompt, result)
         if self.hooks is not None:
             await self.hooks.run("task_complete", status=result.status)
         return result
+
+    def _file_to_inbox(self, prompt: str, result: RunResult) -> None:
+        """Failed runs and verifier rejections become inbox cards (cheap-model spec §7.2)."""
+        if not self.config.engine.file_failed_runs:
+            return
+        verdict = (result.verification or {}).get("verdict")
+        if result.status != "FAILED" and verdict != "fail":
+            return
+        try:
+            from trendlab.engine.daemon import inbox_path
+            from trendlab.engine.inbox import Inbox
+
+            inbox = Inbox(inbox_path())
+            try:
+                findings = (result.verification or {}).get("findings") or []
+                root_cause = findings[0].get("issue") if findings else (result.stop_reason or "")
+                inbox.record(
+                    project=str(self.project_root),
+                    title=("verifier rejected: " if verdict == "fail" else "run failed: ")
+                    + prompt.strip().splitlines()[0][:120],
+                    signature=f"{verdict or result.stop_reason}|{root_cause}",
+                    source="verifier" if verdict == "fail" else "run",
+                    root_cause=str(root_cause)[:400],
+                    impacted_files=list(result.changed_files)[:12],
+                    evidence=[f"session {self.session_id}"],
+                    severity="high" if verdict == "fail" else "med",
+                )
+            finally:
+                inbox.close()
+        except Exception:  # noqa: BLE001 — the inbox never breaks a run
+            pass
+
+    # -- step-scoped execution (cheap-model spec §3.3, §4) -----------------------------------------
+    async def _plan_steps(self, task_text: str, note: str = "") -> list[dict[str, Any]] | None:
+        """One call to the planning role → verifiable steps (≤ planner.max_calls per run)."""
+        from trendlab.agent.planner import build_messages, parse_steps
+
+        assert self.gateway is not None and self.costs is not None and self.context is not None
+        ref = resolve_role(self.config, "planning", self.model_ref)
+        task = (
+            task_text
+            if not note
+            else f"{task_text}\n\nRe-plan note: {note}\n\nCurrent plan:\n{self.plan.render()}"
+        )
+        ctx_text = (self.context.repo_map_text or "")[:4000]
+        messages = build_messages(
+            task, ctx_text, self.tools.ctx.validation_commands if self.tools else None
+        )
+        response, used = await self.gateway.complete(ref, messages, None)
+        self.costs.record(
+            used,
+            response.usage,
+            0,
+            role="planner",
+            local=self.gateway.provider(used).capabilities().local,
+        )
+        return parse_steps(response.text)
+
+    def _best_of_for(self, model_ref: str) -> int:
+        cfg = self.config.attempts
+        if isinstance(cfg.best_of, int):
+            return cfg.best_of
+        from trendlab.providers.base import TokenUsage
+
+        price = CostTracker(self.config).price(model_ref, TokenUsage(input_tokens=1_000_000))
+        local = bool(model_info(self.config, model_ref).local) or model_ref.startswith("ollama:")
+        return 3 if (local or price < cfg.cheap_price_per_m) else 1
+
+    async def _run_candidates(self, task, failure_tail: str, n: int) -> dict[str, Any]:
+        from trendlab.orchestration.candidates import CandidateRunner
+
+        assert self.tools is not None and self.costs is not None
+        runner = CandidateRunner(
+            config=self.config,
+            events=self.events,
+            session_id=self.session_id,
+            model_ref=self.model_ref,
+            registry=self.tools.registry,
+            engine=self.engine,
+            approvals=self.approvals,
+            costs=self.costs,
+            parent_ctx=self.tools.ctx,
+        )
+        return await runner.run_best_of(task, failure_tail, n)
 
     # -- verify-then-surface (cheap-model spec §3.2, §5) ------------------------------------------
     async def _verify_change(self, task_text: str, ev) -> Any:
@@ -580,10 +674,11 @@ class TrendLabApp:
         outcome, detail = "nothing", ""
         patch = ""
         try:
-            await run_git(wt, "add", "-A")
-            code, patch = await run_git(wt, "diff", "--cached", "--binary", "HEAD")
-            if code != 0:
-                patch = ""
+            from trendlab.orchestration.gitflow import worktree_patch
+
+            patch, _files = await worktree_patch(
+                wt, self.tools.ctx.ignore_rules if self.tools else None
+            )
         except Exception as exc:  # noqa: BLE001
             detail = str(exc)[:200]
         completed = self.agent.state.state == AgentState.COMPLETED
@@ -631,6 +726,10 @@ class TrendLabApp:
             if self.memory is None or self.memory.path.parent.parent != root:
                 self.memory = ProjectMemory(root, max_entries=self.config.memory.max_entries)
             base += self.memory.render_for_prompt()
+        if self.config.prompts.drivers:
+            from trendlab.prompts.drivers import driver_text
+
+            base += driver_text(self.config, self.model_ref, root, self.data_dir)
         return base
 
     def refresh_system_prompt(self) -> None:
@@ -1018,6 +1117,7 @@ class TrendLabApp:
         self.gateway.provider(model_ref)  # validates configuration eagerly
         self.model_ref = model_ref
         self.agent.set_model(model_ref)
+        self.refresh_system_prompt()  # the model notes layer follows the model
         if self.subagents is not None:
             self.subagents.session_model = model_ref
         info = model_info(self.config, model_ref)

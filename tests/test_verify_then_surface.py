@@ -140,6 +140,21 @@ async def test_fix_verdict_gives_author_one_round_then_pass(
     ]
 
 
+async def test_fix_after_rounds_exhausted_surfaces_with_findings(
+    project: Path, manager_factory, events
+):
+    finding = {"file": "src/x.py", "line": 1, "issue": "name it better", "severity": "low"}
+    provider = ScriptedProvider([WRITE, TEST, DONE, WRITE, TEST, ModelResponse(text="done again")])
+    agent, _ = make_agent(project, manager_factory(), events, provider, mode=PermissionMode.UNSAFE)
+    agent.verifier = _verifier(
+        [VerifierVerdict("fix", findings=[finding]), VerifierVerdict("fix", findings=[finding])]
+    )
+    agent.verification_mode = "required"
+    result = await agent.run("fix x")
+    assert result.status == "COMPLETED" and result.verification["verdict"] == "fix"
+    assert "verifier: fix (1)" in run_footer(result)
+
+
 async def test_fail_verdict_stops_required_but_not_advisory(project: Path, manager_factory, events):
     bad = VerifierVerdict(
         "fail",

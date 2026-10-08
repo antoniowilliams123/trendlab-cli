@@ -73,6 +73,31 @@ def ensure_excluded(root: Path) -> None:
         exclude.write_text(existing.rstrip("\n") + ("\n" if existing else "") + ".trendlab/\n")
 
 
+NARROW = [
+    "# TrendLab: state stays private, memory and skills are reviewable (sleeptime, §7.3)",
+    ".trendlab/*",
+    "!.trendlab/memory.md",
+    "!.trendlab/skills/",
+    "!.trendlab/permissions.toml",
+]
+
+
+def narrow_exclude(root: Path) -> None:
+    """Replace the blanket ``.trendlab/`` exclude with one that lets memory.md, skills and
+    the project permission rules be committed (the sleeptime branch needs them tracked)."""
+    git_path = root / ".git"
+    info_dir = git_path / "info" if git_path.is_dir() else None
+    if info_dir is None:
+        return
+    info_dir.mkdir(exist_ok=True)
+    exclude = info_dir / "exclude"
+    lines = exclude.read_text().splitlines() if exclude.exists() else []
+    if NARROW[1] in lines:
+        return
+    lines = [ln for ln in lines if ln.strip() != ".trendlab/"]
+    exclude.write_text("\n".join([*lines, *NARROW]) + "\n")
+
+
 async def current_diff(app) -> tuple[str, str]:
     """(stat, patch) of all uncommitted changes including untracked files."""
     ensure_excluded(app.project_root)
@@ -251,3 +276,34 @@ class WorktreeManager:
         if code != 0:
             raise RuntimeError(out.strip())
         return str(path)
+
+
+_JUNK = (
+    "__pycache__/",
+    ".trendlab/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "node_modules/",
+)
+
+
+async def worktree_patch(wt: Path, rules=None) -> tuple[str, list[str]]:
+    """Stage everything in ``wt`` and return (binary patch vs HEAD, files), skipping build junk
+    and anything the project's ignore rules exclude (worktrees have no .gitignore of their own
+    when the project never committed one)."""
+    await run_git(wt, "add", "-A")
+    code, names = await run_git(wt, "diff", "--cached", "--name-only", "HEAD")
+    if code != 0:
+        return "", []
+    keep: list[str] = []
+    for rel in (ln.strip() for ln in names.splitlines() if ln.strip()):
+        if any(part in rel for part in _JUNK) or rel.endswith((".pyc", ".pyo")):
+            continue
+        if rules is not None and rules.ignored(rel):
+            continue
+        keep.append(rel)
+    if not keep:
+        return "", []
+    code, patch = await run_git(wt, "diff", "--cached", "--binary", "HEAD", "--", *keep)
+    return (patch if code == 0 else ""), keep

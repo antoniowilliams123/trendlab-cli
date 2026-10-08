@@ -78,6 +78,14 @@ class EventType(StrEnum):
     VERIFY_VERDICT = "verify.verdict"  # pass | fix | fail with findings
     REGRESSION_GATE = "verify.regression_gate"  # fix-type task: test present / waived / missing
     WORKTREE_RUN = "verify.worktree"  # run executed in a throwaway worktree; applied or parked
+    PLANNER_CALLED = "planner.called"  # planning role produced / revised the step plan
+    STEP_STARTED = "step.started"
+    STEP_COMPLETED = "step.completed"  # validation passed (or no validation declared)
+    STEP_FAILED = "step.failed"  # validation failed or the iteration cap was hit
+    ATTEMPT_CANDIDATE = "attempt.candidate"  # one best-of-N candidate finished
+    GUARD_FIRED = "guard.fired"  # a weak-model guard (rescue, nudge, loop, cap…) kicked in
+    SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
+    SKILL_UNLOADED = "skill.unloaded"
     FILE_CHANGED = "file.changed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"

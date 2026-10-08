@@ -79,6 +79,33 @@ def format_event(event: Event) -> str | None:
             f"chars ({d.get('parser')}); full text kept for inspect_output[/]"
             + (f"\n    [{AMBER}]{escape(str(d.get('anomaly')))}[/]" if d.get("anomaly") else "")
         )
+    if t == EventType.PLANNER_CALLED:
+        n = d.get("steps") or 0
+        if not n:
+            return f"[{GREY}]▤ planner call {d.get('call')}: no usable plan[/]"
+        titles = "; ".join(str(x) for x in (d.get("titles") or [])[:4])
+        word = "re-planned" if d.get("replan") else "planned"
+        return f"[{MINT}]▤ {word} {n} steps[/] [{GREY}]{escape(_short(titles, 160))}[/]"
+    if t == EventType.STEP_STARTED:
+        return f"[{NEON_DIM}]▸ step {d.get('step')}[/] [{GREY}]{escape(_short(str(d.get('title')), 100))}[/]"
+    if t == EventType.STEP_COMPLETED:
+        via = " via best-of-N" if d.get("via") == "best_of" else ""
+        return f"[{NEON}]▪ step {d.get('step')} done{via} ✓[/]"
+    if t == EventType.STEP_FAILED:
+        why = {
+            "iteration_cap": f"hit the {d.get('cap')}-iteration cap",
+            "validation_failed": "validation failed",
+            "best_of_exhausted": "no parallel candidate passed",
+        }.get(str(d.get("reason")), str(d.get("reason")))
+        return f"[{AMBER}]▪ step {d.get('step')} attempt {d.get('attempt')}: {why}[/]"
+    if t == EventType.ATTEMPT_CANDIDATE:
+        mark = f"[{NEON}]passed[/]" if d.get("passed") else f"[{GREY}]failed[/]"
+        return (
+            f"  [{GREY}]⑂ candidate {d.get('n')}:[/] {mark} [{GREY}]{d.get('diff_lines')} diff lines"
+            f" · ${d.get('cost_usd', 0):.3f} · {d.get('elapsed_s', 0):.0f}s[/]"
+        )
+    if t == EventType.SKILL_LOADED:
+        return f"[{MINT}]◈ skill {escape(str(d.get('name')))} loaded[/] [{GREY}]({d.get('trigger')})[/]"
     if t == EventType.VERIFY_STARTED:
         return f"[{MINT}]⚖ verifying the change before reporting it done[/]"
     if t == EventType.VERIFY_VERDICT:

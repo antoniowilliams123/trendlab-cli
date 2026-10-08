@@ -92,6 +92,8 @@ class OpenAICompatibleProvider(ModelProvider):
                 c["reasoning_content"] = m["_reasoning_content"]
             clean.append(c)
         payload: dict[str, Any] = {"model": self.model, "messages": clean}
+        if getattr(self, "temperature", None) is not None:
+            payload["temperature"] = self.temperature
         if tools and self._caps.native_tools:
             payload["tools"] = tools
         if stream:
