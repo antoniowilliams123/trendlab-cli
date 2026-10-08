@@ -168,7 +168,14 @@ def parse_claude_code(path: Path) -> dict[str, Any]:
 def import_claude_code(store, path: Path, *, pricing=None) -> dict[str, Any]:
     """Write one transcript into ``store``. ``pricing`` is an optional
     callable(model, input_tokens, output_tokens, cached) -> usd."""
-    data = parse_claude_code(path)
+    return _write(
+        store, path, parse_claude_code(path), harness="claude-code", prefix="cc", pricing=pricing
+    )
+
+
+def _write(
+    store, path: Path, data: dict[str, Any], *, harness: str, prefix: str, pricing=None
+) -> dict[str, Any]:
     if not data["messages"]:
         return {"file": path.name, "skipped": "no messages"}
     conn = store._conn  # noqa: SLF001 — importer writes with source timestamps
@@ -182,7 +189,7 @@ def import_claude_code(store, path: Path, *, pricing=None) -> dict[str, Any]:
         if prev.get("size") == data["size"]:
             return {"file": path.name, "skipped": "already imported", "session": row["session_id"]}
         store.prune_session(row["session_id"])
-    sid = "cc" + uuid.uuid4().hex[:10]
+    sid = prefix + uuid.uuid4().hex[:10]
     with store._lock:  # noqa: SLF001
         conn.execute(
             "INSERT INTO sessions(id, project_path, machine, created_at, updated_at, status, model,"
@@ -194,7 +201,7 @@ def import_claude_code(store, path: Path, *, pricing=None) -> dict[str, Any]:
                 data["started"],
                 data["ended"],
                 data["model"],
-                "claude-code",
+                harness,
             ),
         )
         for msg in data["messages"]:
@@ -239,7 +246,7 @@ def import_claude_code(store, path: Path, *, pricing=None) -> dict[str, Any]:
                 SOURCE_KEY,
                 json.dumps(
                     {
-                        "harness": "claude-code",
+                        "harness": harness,
                         "source_id": data["source_id"],
                         "file": str(path),
                         "size": data["size"],
@@ -257,3 +264,113 @@ def import_claude_code(store, path: Path, *, pricing=None) -> dict[str, Any]:
         "model_calls": len(data["model_calls"]),
         "cost_usd": round(cost_total, 4),
     }
+
+
+def parse_chat_log(path: Path) -> dict[str, Any]:
+    """Any harness that logs OpenAI-style chat messages: a JSON file with ``messages`` (plus
+    optional ``model``/``project``/``usage``), or JSONL with one message per line."""
+    import hashlib
+    from datetime import UTC, datetime
+
+    raw = path.read_text(errors="replace")
+    meta: dict[str, Any] = {}
+    msgs: list[dict[str, Any]] = []
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            meta, msgs = obj, list(obj.get("messages") or [])
+        elif isinstance(obj, list):
+            msgs = obj
+    except ValueError:
+        for line in raw.splitlines():
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(m, dict) and "role" in m:
+                msgs.append(m)
+    stamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+    messages, events, names = [], [], {}
+    for m in msgs:
+        role = m.get("role")
+        if role not in {"system", "user", "assistant", "tool"}:
+            continue
+        msg = {
+            k: v
+            for k, v in m.items()
+            if k in {"role", "content", "tool_calls", "tool_call_id", "name"}
+        }
+        msg["_ts"] = stamp
+        messages.append(msg)
+        for tc in m.get("tool_calls") or []:
+            name = (tc.get("function") or {}).get("name", "")
+            names[tc.get("id", "")] = name
+            events.append(("tool.started", stamp, {"tool": name, "call_id": tc.get("id")}))
+        if role == "tool":
+            content = str(m.get("content") or "")
+            events.append(
+                (
+                    "tool.completed",
+                    stamp,
+                    {
+                        "tool": names.get(m.get("tool_call_id", ""), m.get("name", "")),
+                        "ok": not content.lower().startswith(("error", "traceback")),
+                    },
+                )
+            )
+    last = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
+    if last is not None:
+        events.append(("run.completed", stamp, {"text": _text_of(last.get("content"))[:3000]}))
+    usage = meta.get("usage") or {}
+    calls = []
+    if usage:
+        calls.append(
+            {
+                "ts": stamp,
+                "model": meta.get("model", "unknown"),
+                "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                "output_tokens": int(
+                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                ),
+                "cached": 0,
+            }
+        )
+    size = path.stat().st_size
+    return {
+        "messages": messages,
+        "events": events,
+        "model_calls": calls,
+        "source_id": hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:16],
+        "size": size,
+        "project": str(meta.get("project") or path.parent),
+        "model": str(meta.get("model") or "unknown"),
+        "started": stamp,
+        "ended": stamp,
+    }
+
+
+def import_chat_log(
+    store, path: Path, *, harness: str = "chat-log", pricing=None
+) -> dict[str, Any]:
+    return _write(store, path, parse_chat_log(path), harness=harness, prefix="ch", pricing=pricing)
+
+
+def detect_format(path: Path) -> str:
+    """claude-code transcripts carry ``type``/``message`` records; chat logs carry ``role``."""
+    head = path.read_text(errors="replace")[:4000]
+    for line in head.splitlines():
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            break
+        if isinstance(obj, dict) and "message" in obj and "type" in obj:
+            return "claude-code"
+        if isinstance(obj, dict) and "role" in obj:
+            return "chat"
+    try:
+        obj = json.loads(path.read_text(errors="replace"))
+        if isinstance(obj, dict | list):
+            return "chat"
+    except ValueError:
+        pass
+    return "claude-code"

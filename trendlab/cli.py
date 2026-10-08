@@ -2203,14 +2203,15 @@ def import_cmd(
         None, "--since-days", help="Only files modified recently."
     ),
 ) -> None:
-    """Import another harness's sessions so search, stats, trace and meta span both (U6)."""
+    """Import another harness's sessions (Claude Code transcripts, or any OpenAI-style chat log)
+    so search, stats, trace, rca and meta span them too (U6, U28)."""
     import time as _time
 
     from trendlab.config.loader import load_config
     from trendlab.providers.base import TokenUsage
     from trendlab.sessions.store import SessionStore
     from trendlab.telemetry.costs import CostTracker
-    from trendlab.telemetry.importers import import_claude_code
+    from trendlab.telemetry.importers import detect_format, import_chat_log, import_claude_code
 
     tracker = CostTracker(load_config())
 
@@ -2222,7 +2223,7 @@ def import_cmd(
     files: list[Path] = []
     for p in paths:
         p = p.expanduser()
-        files += sorted(p.rglob("*.jsonl")) if p.is_dir() else [p]
+        files += sorted([*p.rglob("*.jsonl"), *p.rglob("*.json")]) if p.is_dir() else [p]
     if since_days is not None:
         cutoff = _time.time() - since_days * 86400
         files = [f for f in files if f.stat().st_mtime >= cutoff]
@@ -2231,7 +2232,12 @@ def import_cmd(
     try:
         for f in files:
             try:
-                r = import_claude_code(store, f, pricing=price)
+                fmt = detect_format(f)
+                r = (
+                    import_claude_code(store, f, pricing=price)
+                    if fmt == "claude-code"
+                    else import_chat_log(store, f, pricing=price)
+                )
             except Exception as exc:  # noqa: BLE001 — one bad file never stops the batch
                 console.print(f"[warning]{f.name}: {exc}[/warning]")
                 continue
