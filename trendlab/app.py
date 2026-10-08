@@ -629,7 +629,13 @@ class TrendLabApp:
         after = before
         if steps and before:
             shown = json.dumps(
-                {"steps": [{k: v for k, v in st.items() if k != "_index"} for st in steps]}
+                {
+                    "design": steps[0].get("_design"),
+                    "steps": [
+                        {k: v for k, v in st.items() if k not in ("_index", "_design")}
+                        for st in steps
+                    ],
+                }
             )
             fixed, _ = await ask_json(call, repair_messages(messages, shown, before), parse_steps)
             if fixed:

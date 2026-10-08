@@ -109,6 +109,8 @@ async def test_task_tool_honours_dependencies(project: Path):
 def test_plan_lint_is_a_pre_implementation_review():
     steps = parse_steps(GRAPH)
     exists = {"src/model.py", "src/cli.py"}.__contains__
+    assert any("no design" in i for i in lint_plan(steps, exists=exists))  # 2 source files
+    steps[0]["_design"] = {"approach": "split model from cli", "interfaces": [], "reuse": []}
     assert lint_plan(steps, exists=exists, validation={"test": "pytest -q"}) == [
         "step 4 depends on step 9, which is not earlier"
     ]

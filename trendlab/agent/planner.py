@@ -18,7 +18,10 @@ plan step by step with file and shell tools. Produce the smallest plan that gets
 and proven.
 
 Answer with ONE JSON object and nothing else:
-{{"steps": [{{"title": "imperative, one line", "files": ["path", "..."],
+{{"design": {{"approach": "one or two sentences: how the change fits the existing code",
+             "interfaces": ["each function/class signature you will add or change"],
+             "reuse": ["existing functions or modules to build on instead of new code"]}},
+ "steps": [{{"title": "imperative, one line", "files": ["path", "..."],
             "done_when": "a condition another model can check",
             "validation": "a shell command that proves this step, or null",
             "depends_on": [numbers of earlier steps this step needs, e.g. 1]}}]}}
@@ -27,7 +30,9 @@ Rules: 2 to 6 steps; each step changes at most a few files; the last step is alw
 validation (tests/lint) when the project has one; never invent files that do not exist unless
 the step creates them; prefer the project's own test command when known. depends_on lists only
 earlier steps; leave it empty when a step does not need another (independent steps can run in
-any order).
+any order). Decide the design before the steps: "design" is required when the steps change two
+or more non-test files or add a function, class or module (otherwise it may be omitted). Keep
+interfaces to the ones the task needs; prefer reuse over new abstractions.
 
 ## Task
 {task}
@@ -99,7 +104,51 @@ def parse_steps(text: str) -> list[dict[str, Any]] | None:
                 "_index": n,
             }
         )
-    return steps[:6] or None
+    steps = steps[:6]
+    design = parse_design(obj.get("design"))
+    if steps and design:
+        steps[0]["_design"] = design
+    return steps or None
+
+
+def parse_design(raw: Any) -> dict[str, Any] | None:
+    """The plan's design block: approach, interfaces and reuse (None when absent or empty)."""
+    if not isinstance(raw, dict):
+        return None
+
+    def strs(v: Any) -> list[str]:
+        return [str(x).strip()[:200] for x in v or [] if isinstance(x, str) and x.strip()][:10]
+
+    design = {
+        "approach": str(raw.get("approach") or "").strip()[:600],
+        "interfaces": strs(raw.get("interfaces")),
+        "reuse": strs(raw.get("reuse")),
+    }
+    return design if design["approach"] or design["interfaces"] else None
+
+
+def needs_design(steps: list[dict[str, Any]]) -> bool:
+    """Two or more non-test files, or a step that creates something."""
+    files = {
+        f
+        for st in steps
+        for f in st.get("files") or []
+        if not re.search(r"(^|/)tests?/|(^|/)test_|\.test\.|_test\.", f)
+    }
+    return len(files) >= 2 or any(_CREATE.search(st.get("title", "")) for st in steps)
+
+
+def design_text(design: dict[str, Any] | None) -> str:
+    if not design:
+        return ""
+    lines = ["Design (decided before coding; keep to it or say why you change it):"]
+    if design.get("approach"):
+        lines.append("  approach: " + design["approach"])
+    if design.get("interfaces"):
+        lines.append("  interfaces: " + "; ".join(design["interfaces"]))
+    if design.get("reuse"):
+        lines.append("  reuse: " + "; ".join(design["reuse"]))
+    return "\n".join(lines)
 
 
 def apply_steps(plan: Plan, steps: list[dict[str, Any]]) -> list[Task]:
@@ -132,8 +181,10 @@ def step_brief(task: Task) -> str:
     return "\n".join(lines)
 
 
-def plan_message(tasks: list[Task]) -> str:
+def plan_message(tasks: list[Task], design: dict[str, Any] | None = None) -> str:
     body = "\n".join(step_brief(t) for t in tasks)
+    if design:
+        body = design_text(design) + "\n\n" + body
     first = tasks[0].id if tasks else ""
     return (
         "A step plan was prepared for this task. Work through it in order with the tools; mark "
@@ -176,6 +227,11 @@ def lint_plan(
             issues.append(f"step {i} has no done_when condition")
         if len(st.get("files") or []) > 5:
             issues.append(f"step {i} touches {len(st['files'])} files; split it")
+    if needs_design(steps) and not steps[0].get("_design"):
+        issues.append(
+            "the plan changes several files or adds code but has no design: state the approach, "
+            "the interfaces you will add or change, and what you reuse"
+        )
     if validation and not steps[-1].get("validation"):
         issues.append("the last step must run the project's validation")
     return issues

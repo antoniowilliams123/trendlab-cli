@@ -904,9 +904,11 @@ class AgentRuntime:
                 steps=0,
             )
             return False
+        design = steps[0].get("_design")
         added = apply_steps(self.plan, steps)
         self.events.emit(
             EventType.PLANNER_CALLED,
+            design=design,
             session_id=self.session_id,
             call=self._planner_calls,
             steps=len(added),
@@ -920,7 +922,7 @@ class AgentRuntime:
             replan=bool(note),
             reason=reason if note else "initial",
         )
-        self._append({"role": "user", "content": plan_message(added)})
+        self._append({"role": "user", "content": plan_message(added, design)})
         return True
 
     async def _track_step(self) -> bool:

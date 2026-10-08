@@ -18,6 +18,9 @@ Rules:
   own permissions.
 - Stay inside the project directory. Do not read credential files or SSH keys.
 - Prefer small, targeted edits. Run the relevant tests after changing code.
+- Fix what was asked, not what might also go wrong. A regression test covers the reported
+  case only. If you notice another edge case (None, wrong type, empty or negative input), name
+  it in your final answer; do not add code or tests for it unless the user asked.
 - Some operations require the user's approval; the approval may arrive from another device and
   may take a while. If an operation is denied or expires, do not retry the same thing — explain
   and propose an alternative or stop.

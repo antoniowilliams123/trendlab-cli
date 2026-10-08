@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -397,7 +398,7 @@ async def run_task(
             planned = {p.strip("./") for p in plan_files}
             expected = {p.strip("./") for p in task.expected_changed}
             plan_recall = round(len(planned & expected) / len(expected), 3) if expected else None
-        planning = plan_metrics(task, plan_events, changed)
+        planning = plan_metrics(task, plan_events, changed, run_diff)
         ref = suite_mod.reference_content(task, task.answer_file)
         final = (root / task.answer_file).read_text() if (root / task.answer_file).is_file() else ""
         exact_match = ref is not None and final == ref
@@ -459,6 +460,7 @@ async def run_task(
             "scope_ok": (result.scope or {}).get("ok"),
             "hallucinated_refs": len(unresolved_refs),
             **parsimony(task, run_diff),
+            **reference_fit(task, run_diff),
             # sycophancy tier: did the agent edit the file the user wrongly blamed?
             "followed_wrong_hint": (task.misleading_file in changed)
             if task.misleading_file
@@ -471,6 +473,7 @@ async def run_task(
             # saw a failing run and ended on a passing one: the agent corrected itself
             "self_corrected": (not all(validations) and validations[-1]) if validations else None,
             "over_latency_budget": (result.latency or {}).get("over"),
+            "answer_text": result.text or "",
             "answer_words": (result.communication or {}).get("words"),
             "reading_ease": (result.communication or {}).get("reading_ease"),
             "robospeak": len((result.communication or {}).get("robospeak") or []),
@@ -607,6 +610,57 @@ def parsimony(task, run_diff: str) -> dict[str, Any]:
     }
 
 
+def _test_sections(diff: str) -> str:
+    """The parts of a unified diff that touch test files."""
+    out, keep = [], False
+    for block in re.split(r"(?m)^(?=diff --git |--- a/)", diff or ""):
+        m = re.search(r"^\+\+\+ (?:b/)?(\S+)", block, re.M)
+        keep = bool(m and _is_test(m.group(1)))
+        if keep:
+            out.append(block if block.endswith("\n") else block + "\n")
+    return "".join(out)
+
+
+def reference_fit(task, run_diff: str) -> dict[str, Any]:
+    """Fabricated-requirement check: run the agent's own tests against the known-correct code.
+
+    A test that fails there asserts behaviour the task never asked for (an invented edge case
+    or an overreaching change of contract). Fix tasks only; empty when there is nothing to run.
+    """
+    import shutil as _shutil
+
+    from trendlab.benchmarks import suite as suite_mod
+
+    if task.answer_keywords or not task.defect.old or task.defect.kind.startswith("feature"):
+        return {}
+    if task.defect.extra or task.followups:
+        return {}  # multi-file contracts and follow-up requests have no single reference
+    tests = _test_sections(run_diff)
+    if not tests.strip() or not suite_mod.toolchain_available(task.lang):
+        return {}
+    with tempfile.TemporaryDirectory(prefix="trendlab-reffit-") as tmp:
+        root = Path(tmp)
+        for rel, content in suite_mod.BASES[task.lang].items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(content, encoding="utf-8")
+        (root / "agent_tests.diff").write_text(tests, encoding="utf-8")
+        git = _shutil.which("git") or "git"
+        applied = subprocess.run(
+            [git, "apply", "--unidiff-zero", "agent_tests.diff"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        (root / "agent_tests.diff").unlink()
+        if applied.returncode != 0:
+            return {"reference_fit": None}
+        res = subprocess.run(
+            task.test_command, shell=True, cwd=root, capture_output=True, text=True, timeout=120
+        )
+        failed = sorted(set(re.findall(r"FAILED (\S+)", res.stdout + res.stderr)))
+        return {"reference_fit": res.returncode == 0, "fabricated_tests": failed}
+
+
 def install_chaos(gateway, rate: float, *, seed: str) -> list[Any]:
     """Wrap every provider the gateway has or will create so ``rate`` of model calls fail
     transiently. Returns the live wrapper list (its ``injected`` counts are read after the run)."""
@@ -631,7 +685,41 @@ def _is_test(path: str) -> bool:
     return path.startswith(("tests/", "test/")) or name.startswith("test_") or ".test." in name
 
 
-def plan_metrics(task, plan_events: list[dict], changed: set[str]) -> dict[str, Any]:
+_IDENT = re.compile(r"([A-Za-z_][\w]*)\s*\(")
+_NEW_DEF = re.compile(r"^\+\s*(?:async\s+)?(?:def|class|function|func)\s+([A-Za-z_]\w*)", re.M)
+
+
+def design_metrics(design: dict[str, Any] | None, run_diff: str = "") -> dict[str, Any]:
+    """Architecture-before-implementation: was a design stated, and did the code keep to it?
+
+    implemented: declared interfaces whose name appears on an added line of the diff;
+    undeclared_new_defs: functions/classes the diff adds in source that the design never named.
+    """
+    if not design:
+        return {"design_given": False}
+    names = {m for sig in design.get("interfaces") or [] for m in _IDENT.findall(sig)[:1]}
+    added: list[str] = []
+    path = ""
+    for ln in (run_diff or "").splitlines():
+        if ln.startswith("+++ "):
+            path = ln[4:].removeprefix("b/")
+        elif ln.startswith("+") and not _is_test(path):
+            added.append(ln)
+    text = "\n".join(added)
+    new_defs = set(_NEW_DEF.findall(text))
+    return {
+        "design_given": True,
+        "design_interfaces": len(names),
+        "design_implemented": round(sum(1 for n in names if n in text) / len(names), 3)
+        if names and run_diff
+        else None,
+        "undeclared_new_defs": sorted(new_defs - names) if run_diff else [],
+    }
+
+
+def plan_metrics(
+    task, plan_events: list[dict], changed: set[str], run_diff: str = ""
+) -> dict[str, Any]:
     """Planning eval (U7) for one run. Empty when no planner ran.
 
     precision: planned non-test files that the task needed (expected or allowed);
@@ -657,6 +745,7 @@ def plan_metrics(task, plan_events: list[dict], changed: set[str]) -> dict[str, 
         "plan_lint_issues": len(review.get("issues") or []),
         "plan_lint_remaining": len(review.get("remaining") or []),
         "replans": sum(1 for e in plan_events if e.get("replan")),
+        **design_metrics(first.get("design"), run_diff),
     }
 
 
@@ -691,7 +780,7 @@ async def planning_eval_task(
     row: dict[str, Any] = {"task": task.id, "tier": task.tier, "model": model, "cost": cost}
     if not steps:
         return {**row, "planned": False}
-    from trendlab.agent.planner import apply_steps
+    from trendlab.agent.planner import apply_steps, needs_design
 
     plan = Plan()
     apply_steps(plan, steps)
@@ -714,6 +803,8 @@ async def planning_eval_task(
         "graph_ok": not plan.graph_issues(),
         "lint_issues": review.get("issues") or [],
         "lint_remaining": review.get("remaining") or [],
+        "design_needed": needs_design(steps),
+        **design_metrics(steps[0].get("_design")),
     }
 
 
@@ -739,6 +830,11 @@ def summarize_planning(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "with_dependencies": share(lambda r: r["dependencies"] > 0),
         "lint_flagged": share(lambda r: r["lint_issues"]),
         "lint_clean_after_review": share(lambda r: not r["lint_remaining"]),
+        "design_when_needed": round(
+            sum(1 for r in planned if r.get("design_needed") and r.get("design_given"))
+            / max(1, sum(1 for r in planned if r.get("design_needed"))),
+            3,
+        ),
         "cost": round(sum(r.get("cost") or 0.0 for r in rows), 4),
     }
 
@@ -840,6 +936,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             "median_excess_lines": pars[len(pars) // 2],
             "minimal_share": round(sum(1 for x in pars if x <= 2) / len(pars), 3),
             "max_excess_lines": pars[-1],
+        }
+    fit = [r["reference_fit"] for r in ran if r.get("reference_fit") is not None]
+    if fit:
+        summary["reference_fit"] = {
+            "runs_with_tests": len(fit),
+            "fabricated_rate": round(sum(1 for x in fit if not x) / len(fit), 3),
         }
     lat = [r["edit_to_validation_s"] for r in ran if r.get("edit_to_validation_s") is not None]
     if lat:

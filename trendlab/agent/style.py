@@ -44,6 +44,40 @@ SHOUTED = set(
     ERROR FAIL PASS DONE STOP ONLY MUST NEVER ASK THE IS IT IN ON OF AT BY PATH HOME GREEN
     RED""".split()
 )
+# technobabble: buzzwords that sound technical but say nothing a plain word would not
+JARGON = (
+    "synergy",
+    "synergies",
+    "paradigm",
+    "holistic",
+    "utilize",
+    "utilise",
+    "utilization",
+    "facilitate",
+    "operationalize",
+    "actionable",
+    "best-in-class",
+    "cutting-edge",
+    "next-generation",
+    "game-changer",
+    "mission-critical",
+    "low-hanging fruit",
+    "move the needle",
+    "value-add",
+    "circle back",
+    "deep dive",
+    "ecosystem",
+    "empower",
+    "streamline",
+    "world-class",
+    "state-of-the-art",
+)
+HEDGES = ("perhaps", "possibly", "it seems", "it appears", "i think", "i believe", "might be able")
+APOLOGIES = ("sorry", "apologize", "apologise", "my apologies")
+HYPE = ("perfect!", "amazing", "awesome", "fantastic", "excellent!", "incredible", "flawless")
+# simplified technical English: passive "is/was/were/been/be + past participle"
+_PASSIVE = re.compile(r"\b(?:is|are|was|were|be|been|being)\s+(?:\w+ly\s+)?(\w+ed|\w+en)\b", re.I)
+_NOT_PARTICIPLE = {"open", "even", "often", "seen"}
 _CODE = re.compile(r"```.*?```", re.S)
 _INLINE = re.compile(r"`[^`]*`")
 _ACRONYM = re.compile(r"\b[A-Z]{2,5}s?\b")  # 6+ letters: a shouted word
@@ -95,6 +129,14 @@ def measure(text: str) -> dict[str, Any]:
             and a.rstrip("s") not in defined
         }
     )
+
+    def hits(phrases):
+        return [p for p in phrases if re.search(r"(?<![\w-])" + re.escape(p) + r"(?![\w-])", low)]
+
+    lengths = [len(re.findall(r"[A-Za-z][A-Za-z'-]*", x)) for x in sentences]
+    passive = sum(
+        1 for x in sentences if any(m.lower() not in _NOT_PARTICIPLE for m in _PASSIVE.findall(x))
+    )
     return {
         "words": n_words,
         "sentences": len(sentences),
@@ -103,6 +145,18 @@ def measure(text: str) -> dict[str, Any]:
         "walls_of_text": walls,
         "robospeak": filler,
         "undefined_acronyms": acronyms,
+        "jargon": hits(JARGON),
+        "tone": {
+            "exclamations": prose.count("!"),
+            "hedges": hits(HEDGES),
+            "apologies": hits(APOLOGIES),
+            "hype": [p for p in HYPE if p in low],
+        },
+        "max_sentence_words": max(lengths, default=0),
+        "long_sentence_share": round(sum(1 for n in lengths if n > 25) / len(lengths), 3)
+        if lengths
+        else 0.0,
+        "passive_share": round(passive / len(sentences), 3) if sentences else 0.0,
     }
 
 
@@ -136,6 +190,20 @@ def check(metrics: dict[str, Any], cfg: Any) -> list[str]:
             )
         if metrics["walls_of_text"]:
             issues.append("break the long paragraph into short bullets")
+        if metrics.get("jargon"):
+            issues.append("replace buzzwords with plain words: " + ", ".join(metrics["jargon"][:5]))
+        if metrics.get("max_sentence_words", 0) > 35:
+            issues.append(f"one sentence runs {metrics['max_sentence_words']} words; split it")
+        if metrics.get("passive_share", 0) > 0.3:
+            issues.append("use active voice: say who does what")
+    tone = metrics.get("tone") or {}
+    if getattr(cfg, "tone", "") or getattr(cfg, "plain_language", False):
+        if tone.get("hype") or tone.get("exclamations", 0) > 1:
+            issues.append("keep a calm, factual tone: no hype words or exclamation marks")
+        if tone.get("apologies"):
+            issues.append("drop the apology; state what happened and what you did")
+        if len(tone.get("hedges") or []) > 2:
+            issues.append("state findings plainly; hedge only where you are really unsure")
     if metrics["robospeak"]:
         issues.append("drop filler phrases: " + ", ".join(f'"{p}"' for p in metrics["robospeak"]))
     return issues
@@ -151,7 +219,8 @@ def rules_text(cfg: Any) -> str:
     if getattr(cfg, "plain_language", False):
         lines.append(
             "- Plain language: sentences under 20 words, one idea each; spell out an "
-            "acronym the first time; short bullets instead of long paragraphs."
+            "acronym the first time; short bullets instead of long paragraphs; active voice; "
+            "plain words instead of buzzwords."
         )
     if getattr(cfg, "tone", ""):
         lines.append(f"- Tone: {cfg.tone}.")
