@@ -18,16 +18,23 @@ from trendlab.ui.attachments import image_count, text_of
 Summarizer = Callable[[list[dict[str, Any]]], Awaitable[str]]
 
 
-def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
+    return max(1, int(len(text) / chars_per_token))
 
 
-def message_tokens(m: dict[str, Any]) -> int:
+def message_tokens(m: dict[str, Any], chars_per_token: float = 4.0) -> int:
     content = m.get("content")
-    total = estimate_tokens(text_of(content)) + 1200 * image_count(content)
+    total = estimate_tokens(text_of(content), chars_per_token) + 1200 * image_count(content)
     for tc in m.get("tool_calls") or []:
-        total += estimate_tokens(tc["function"]["arguments"]) + 10
+        total += estimate_tokens(tc["function"]["arguments"], chars_per_token) + 10
     return total + 4
+
+
+def message_chars(m: dict[str, Any]) -> int:
+    n = len(text_of(m.get("content")))
+    for tc in m.get("tool_calls") or []:
+        n += len(tc["function"]["arguments"])
+    return n
 
 
 class ContextManager:
@@ -50,6 +57,8 @@ class ContextManager:
         self.repo_map_text: str = ""
         self.plan_text: str = ""
         self.summary: CompactionRecord | None = None
+        # learned from the provider's reported input tokens (U31); 4.0 until the first call
+        self.chars_per_token = 4.0
         self.messages: list[dict[str, Any]] = []  # conversation after the system prompt
         self.structured: dict[str, Any] = {}
         self.compactions = 0
@@ -78,7 +87,7 @@ class ContextManager:
         kept: list[dict[str, Any]] = []
         total = 0
         for m in reversed(self.messages):
-            t = message_tokens(m)
+            t = message_tokens(m, self.chars_per_token)
             if kept and total + t > budget:
                 break
             kept.append(m)
@@ -87,15 +96,17 @@ class ContextManager:
         return _align_to_boundary(kept, self.messages)
 
     def estimate(self) -> int:
-        return sum(message_tokens(m) for m in self.build())
+        return sum(message_tokens(m, self.chars_per_token) for m in self.build())
 
     def estimate_full(self) -> int:
         """Tokens if the whole retained history were sent (what compaction protects against)."""
         system = self.build()[0]
-        return message_tokens(system) + sum(message_tokens(m) for m in self.messages)
+        return message_tokens(system, self.chars_per_token) + sum(
+            message_tokens(m, self.chars_per_token) for m in self.messages
+        )
 
     def history_tokens(self) -> int:
-        return sum(message_tokens(m) for m in self.messages)
+        return sum(message_tokens(m, self.chars_per_token) for m in self.messages)
 
     def needs_compaction(self) -> bool:
         """Compact when the full prompt would cross the threshold *and* the conversation itself
@@ -115,7 +126,7 @@ class ContextManager:
         old, recent = self.messages[:cut], self.messages[cut:]
         if not old:
             return None
-        tokens_before = sum(message_tokens(m) for m in self.messages)
+        tokens_before = sum(message_tokens(m, self.chars_per_token) for m in self.messages)
         structured = dict(self.structured)
         if self.summary is not None:
             structured["previous_summary"] = self.summary.summary[:4000]
@@ -137,7 +148,9 @@ class ContextManager:
             source=source,
         )
         self.messages = recent
-        self.summary.tokens_after = sum(message_tokens(m) for m in self.build())
+        self.summary.tokens_after = sum(
+            message_tokens(m, self.chars_per_token) for m in self.build()
+        )
         self.compactions += 1
         self.events.emit(
             EventType.CONTEXT_COMPACTED,
@@ -176,3 +189,15 @@ def _align_to_boundary(
     start = len(all_msgs) - len(kept)
     start = _boundary_index(all_msgs, start)
     return all_msgs[start:]
+
+
+def calibrate(current: float, messages: list[dict[str, Any]], input_tokens: int) -> float:
+    """Update the chars-per-token estimate from one call's real usage (exponential average,
+    clamped to a sane range). Code and prose run ~3.8 chars/token, JSON and test logs ~3."""
+    if input_tokens < 200:
+        return current
+    chars = sum(message_chars(m) for m in messages)
+    if chars <= 0:
+        return current
+    observed = max(2.0, min(6.0, chars / input_tokens))
+    return round(0.7 * current + 0.3 * observed, 3)

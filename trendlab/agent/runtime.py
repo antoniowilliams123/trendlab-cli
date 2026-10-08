@@ -638,6 +638,12 @@ class AgentRuntime:
                 self.model_ref, messages, tools, role=self.role
             )
         latency = int((time.monotonic() - t0) * 1000)
+        if response.usage.input_tokens and hasattr(self.context, "chars_per_token"):
+            from trendlab.context.manager import calibrate
+
+            self.context.chars_per_token = calibrate(
+                self.context.chars_per_token, messages, response.usage.input_tokens
+            )
         caps = self.gateway.provider(used).capabilities()
         active = self.plan.active
         rec = self.costs.record(
