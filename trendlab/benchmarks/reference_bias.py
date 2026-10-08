@@ -62,8 +62,10 @@ async def probe(call, tasks, *, repeats: int = 3) -> dict[str, Any]:
         buggy, ref, alt = fixes(t)
         assert passes_hidden_test(t, ref) and passes_hidden_test(t, alt), t.id
         scores = {}
+        # both fixes ship the same regression test, so only the fix's wording differs
+        test_diff = _diff("", t.defect.hidden_test, "tests/test_regression.py")
         for label, fixed in (("reference", ref), ("alternative", alt)):
-            diff = _diff(buggy, fixed, t.defect.file)
+            diff = _diff(buggy, fixed, t.defect.file) + test_diff
             ok = 0
             for _ in range(repeats):
                 v = await verify(call, task=t.prompt, diff=diff, validation=None, plan="")

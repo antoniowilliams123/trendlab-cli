@@ -309,3 +309,33 @@ def test_cost_tracker_pricing_and_budget():
     assert t.should_warn() and not t.should_warn()  # warn exactly once
     t.record("openai:gpt", TokenUsage(input_tokens=1000, output_tokens=300), 100)
     assert t.over_budget() and t.model_calls == 4
+
+
+async def test_gateway_fails_over_to_the_local_model():
+    """Business continuity: a cloud outage hands the call to the configured local model."""
+    from trendlab.config.schema import AppConfig
+    from trendlab.providers.base import ModelResponse, ProviderError
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.providers.scripted import ScriptedProvider
+    from trendlab.telemetry.events import EventBus, EventRecorder, EventType
+
+    class Down(ScriptedProvider):
+        async def complete(self, messages, tools=None):
+            err = ProviderError("connection refused")
+            err.retryable = True
+            raise err
+
+    cfg = AppConfig()
+    cfg.retry.max_attempts = 1
+    cfg.fallback = {"cloud:m": ["ollama:local"]}
+    providers = {
+        "cloud:m": Down([]),
+        "ollama:local": ScriptedProvider([ModelResponse(text="local ok")]),
+    }
+    bus = EventBus()
+    rec = EventRecorder()
+    bus.subscribe(rec)
+    gw = ModelGateway(cfg, bus, "s", provider_factory=lambda ref: providers[ref])
+    response, used = await gw.complete("cloud:m", [{"role": "user", "content": "hi"}])
+    assert used == "ollama:local" and response.text == "local ok"
+    assert rec.of_type(EventType.PROVIDER_FALLBACK)[0].data["from_model"] == "cloud:m"
