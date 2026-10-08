@@ -165,6 +165,10 @@ A custom status line is any command that prints one line. It gets the session as
 (model, cost, context %, git branch, pending approvals…). `/statusline init` writes a starter
 script and turns it on; only your own config can set it.
 
+A repository's own `.trendlab/config.toml` cannot add hooks or MCP servers, change model
+providers or loosen permissions until you trust it: TrendLab lists those settings at startup
+and asks once (`trendlab trust` to review, `--revoke` to withdraw).
+
 ## Approve from your phone
 
 ```bash

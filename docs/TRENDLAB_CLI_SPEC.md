@@ -4937,6 +4937,16 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
 - Plain REPL streams new lines of commands running longer than 2 s (shell and run_tests).
 - Known, not changed: a project's `.trendlab/config.toml` can still add hooks and MCP servers.
 
+#### 2026-10-08 — untrusted repository settings are held until the user trusts them
+
+- A project's `.trendlab/config.toml` can no longer, on its own, add hooks or MCP servers,
+  change model providers (address or key), sandbox, after-edit check commands, notifications,
+  remote control, engine or status line settings, or the permission mode. These are listed at
+  startup and applied only after the user trusts that exact content (`trendlab trust`,
+  `--yes`, `--revoke`); a change to the file asks again. Without a terminal (`-p`, scripts)
+  TrendLab starts without them and says so. Ordinary settings (limits, routing, test commands,
+  governance…) apply as before. The home folder's config is the user's own and always applies.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

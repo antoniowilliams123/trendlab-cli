@@ -494,6 +494,8 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = NotificationsConfig()
     # Project validation commands: test_command, lint_command, typecheck_command, build_command.
     project: dict[str, str] = Field(default_factory=dict)
+    # Filled by the loader: risky project settings left out until the user trusts them.
+    untrusted_project: list[str] = Field(default_factory=list, exclude=True)
 
     def mcp_servers(self) -> dict[str, McpServerConfig]:
         return self.mcp.get("servers", {})

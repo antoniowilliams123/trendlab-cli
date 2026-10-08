@@ -154,6 +154,8 @@ def main_callback(
     except ConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
+    if config.untrusted_project:
+        config = _project_trust_gate(project, config, ask=prompt is None and sys.stdin.isatty())
     if max_cost is not None:
         config.limits.max_cost_usd = max_cost
     if allow_path:
@@ -3104,3 +3106,52 @@ def marketplace_remove(name: str) -> None:
     except PluginError as exc:
         _plugin_fail(exc)
     console.print(f"[ok]removed marketplace {name}[/ok]")
+
+
+def _project_trust_gate(project: Path, config, *, ask: bool):
+    """A repository's config wants settings that can run commands or move keys: list them and
+    ask once. Declined (or no terminal): start without them."""
+    from trendlab.config.loader import trust_project
+
+    err = Console(stderr=True)
+    err.print(
+        "[warning]This repository's .trendlab/config.toml asks for settings that can run "
+        "commands or send your keys elsewhere:[/warning]"
+    )
+    from rich.markup import escape as _esc
+
+    for line in config.untrusted_project:
+        err.print(f"  • {_esc(line)}")
+    if ask and typer.confirm("Trust this repository's settings?", default=False):
+        trust_project(project)
+        err.print("[ok]trusted[/ok] — asked again if that file changes (trendlab trust --revoke)")
+        return load_config(project)
+    err.print("[dim]starting without them — review later with: trendlab trust[/dim]")
+    return config
+
+
+@app.command("trust")
+def trust_cmd(
+    project: Path = typer.Option(Path("."), "--project", help="Repository root."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Trust without asking."),
+    revoke: bool = typer.Option(False, "--revoke", help="Withdraw trust from this repository."),
+) -> None:
+    """Review and trust (or revoke) a repository's risky settings: hooks, MCP servers, model
+    providers, sandbox, notifications, remote control, permission mode."""
+    from trendlab.config.loader import revoke_project, trust_project
+
+    if revoke:
+        done = revoke_project(project)
+        console.print("[ok]trust withdrawn[/ok]" if done else "[dim]it was not trusted[/dim]")
+        return
+    config = load_config(project)
+    if not config.untrusted_project:
+        console.print("[dim]nothing to trust here (no risky settings, or already trusted)[/dim]")
+        return
+    from rich.markup import escape as _esc
+
+    for line in config.untrusted_project:
+        console.print(f"  • {_esc(line)}")
+    if yes or typer.confirm("Trust these settings?", default=False):
+        trust_project(project)
+        console.print("[ok]trusted[/ok] — asked again if the file changes")

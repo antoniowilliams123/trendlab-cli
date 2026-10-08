@@ -24,11 +24,19 @@ def test_project_overrides_global(project: Path, _trendlab_home: Path):
     )
     (project / ".trendlab").mkdir()
     (project / ".trendlab" / "config.toml").write_text(
-        '[defaults]\npermission_mode = "auto_edit"\n'
+        '[defaults]\npermission_mode = "auto_edit"\n[limits]\nmax_iterations = 7\n'
     )
     cfg = load_config(project)
     assert cfg.defaults.model == "openai:gpt-x"
-    assert cfg.defaults.permission_mode == PermissionMode.AUTO_EDIT
+    assert cfg.limits.max_iterations == 7  # ordinary project settings apply
+    # a repository may not loosen the permission mode until the user trusts it
+    assert cfg.defaults.permission_mode == PermissionMode.ASK
+    assert cfg.untrusted_project == ["permission mode: auto_edit"]
+    from trendlab.config.loader import trust_project
+
+    trust_project(project)
+    cfg = load_config(project)
+    assert cfg.defaults.permission_mode == PermissionMode.AUTO_EDIT and not cfg.untrusted_project
     assert cfg.remote_approval.enabled and cfg.remote_approval.port == 9000
 
 
