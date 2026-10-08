@@ -156,5 +156,6 @@ def test_load_profile_for_stress_runs():
     assert lp["tasks"] == 5 and lp["wall_p50"] == 20.0 and lp["wall_max"] == 40.0
     assert lp["makespan_s"] == 43.0 and lp["tasks_per_min"] == round(5 / 43 * 60, 2)
     assert lp["crashed"] == 1 and lp["provider_errors"] == 0
+    assert lp["within_latency_budget"] is None  # rows from before the field existed
     assert load_profile([]) is None
     assert summarize(rows)["load"]["tasks"] == 5

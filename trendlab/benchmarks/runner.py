@@ -1082,10 +1082,14 @@ def load_profile(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         "provider_errors": sum(
             1 for r in rows if str(r.get("failure_code") or "").startswith("PROVIDER")
         ),
-        "within_latency_budget": round(
-            sum(1 for r in rows if r.get("over_latency_budget") is False)
-            / max(1, sum(1 for r in rows if r.get("over_latency_budget") is not None)),
-            3,
+        "within_latency_budget": (
+            round(
+                sum(1 for r in rows if r.get("over_latency_budget") is False)
+                / sum(1 for r in rows if r.get("over_latency_budget") is not None),
+                3,
+            )
+            if any(r.get("over_latency_budget") is not None for r in rows)
+            else None
         ),
     }
 
