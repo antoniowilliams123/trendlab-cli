@@ -138,6 +138,7 @@ class AgentRuntime:
         self._task_text = ""
         # Step-scoped execution (cheap-model spec §3.3, §4): attached by the app.
         self.router: Any = None  # async (prompt) -> Route; None = rule router (semantic routing)
+        self.retriever: Any = None  # (task_text) -> hints message; None = retrieval off
         self._route: Any = None
         self.planner: Any = None  # async (task_text, note) -> list[step dict] | None
         self.planner_max_calls = 3
@@ -271,11 +272,29 @@ class AgentRuntime:
         self._skills_loaded = set()
         await self._trigger_skills(task_text=self._task_text)
         saved = await self._apply_route()
+        self._inject_retrieval()
         try:
             return await self._run_loop(started)
         finally:
             for k, v in saved.items():
                 setattr(self, k, v)
+
+    def _inject_retrieval(self) -> None:
+        """Offer the code chunks most relevant to the request as hints, labelled as uncertain."""
+        if self.retriever is None:
+            return
+        try:
+            message, hits = self.retriever(self._task_text)
+        except Exception:  # noqa: BLE001 — retrieval is best effort
+            return
+        if message:
+            self._append({"role": "user", "content": message})
+            self.events.emit(
+                EventType.RETRIEVAL_INJECTED,
+                session_id=self.session_id,
+                hits=[f"{c.path}:{c.start}-{c.end}" for c, _s in hits],
+                scores=[s for _c, s in hits],
+            )
 
     async def _apply_route(self) -> dict[str, Any]:
         from trendlab.agent.router import rule_route, settings_for

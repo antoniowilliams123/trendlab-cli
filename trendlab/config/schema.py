@@ -81,6 +81,11 @@ class ContextConfig(BaseModel):
     )
     # Unparsed output larger than this (tokens) is handed to the screener model for tiering.
     screener_threshold_tokens: int = 3000
+    # Lexical retrieval: offer the top-k code chunks for the request as hints at run start.
+    # Off until a live A/B shows it pays (offline: defect file in top 3 for 81% of suite tasks).
+    retrieval: bool = False
+    retrieval_k: int = Field(default=3, ge=1, le=10)
+    retrieval_max_chars: int = Field(default=3000, ge=500)
 
 
 class GitConfig(BaseModel):

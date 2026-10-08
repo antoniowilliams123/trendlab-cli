@@ -1071,11 +1071,30 @@ def search_cmd(
     text: str = typer.Argument(..., help="Text to find in stored messages and events."),
     project: Path | None = typer.Option(None, "--project", "-C"),
     limit: int = typer.Option(30, "--limit"),
+    ranked: bool = typer.Option(False, "--ranked", help="Rank whole sessions by relevance."),
 ) -> None:
-    """Search past sessions (messages and events) for exact text (U6)."""
+    """Search past sessions: exact matches in messages and events, or --ranked by relevance."""
     from trendlab.sessions.store import SessionStore
 
     store = SessionStore(trendlab_home() / "sessions.db")
+    if ranked:
+        try:
+            top = store.ranked_search(text, str(project.resolve()) if project else None, limit)
+        finally:
+            store.close()
+        t = Table(title=f"Sessions most relevant to: {text}")
+        for col in ("score", "session", "updated", "project", "first prompt"):
+            t.add_column(col)
+        for h in top:
+            t.add_row(
+                str(h["score"]),
+                h["session_id"],
+                h["ts"][:16],
+                Path(h["project"] or "").name,
+                h["first_prompt"][:90],
+            )
+        console.print(t if top else "[dim]no matches[/dim]")
+        return
     try:
         hits = store.search(text, str(project.resolve()) if project else None, limit=limit)
     finally:

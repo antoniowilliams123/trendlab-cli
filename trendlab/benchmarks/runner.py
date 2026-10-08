@@ -133,6 +133,7 @@ PROFILES = {
     # the full cheap-model harness (tiering, planner, verifier, best-of-N, drivers)
     "harness": {},
     # bare = the harness features of this programme switched off; what a plain agent loop does
+    "harness+retrieval": {"context.retrieval": True},
     "bare": {
         "context.tool_budgets": {},
         "planner.enabled": False,

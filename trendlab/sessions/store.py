@@ -315,6 +315,39 @@ class SessionStore:
         out.sort(key=lambda r: r["ts"], reverse=True)
         return out[:limit]
 
+    def ranked_search(
+        self, text: str, project_path: str | None = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Sessions ranked by relevance (BM25 over each session's messages), not recency."""
+        from trendlab.context.retrieval import BM25, tokens
+
+        sessions = self.sessions(project_path, limit=2000)
+        docs, meta = [], []
+        for s in sessions:
+            body = []
+            for m in self.messages(s["id"]):
+                c = m.get("content")
+                if isinstance(c, str) and m.get("role") in {"user", "assistant"}:
+                    body.append(c[:2000])
+            if body:
+                docs.append(tokens(" ".join(body)[:20_000]))
+                meta.append((s, body[0]))
+        if not docs:
+            return []
+        scores = BM25(docs).scores(tokens(text))
+        ranked = sorted(zip(meta, scores, strict=True), key=lambda ms: -ms[1])
+        return [
+            {
+                "session_id": s["id"],
+                "ts": s["updated_at"],
+                "project": s["project_path"],
+                "score": round(score, 3),
+                "first_prompt": first[:160].replace("\n", " "),
+            }
+            for (s, first), score in ranked[:limit]
+            if score > 0
+        ]
+
     def prune(self, *, older_than_days: int, keep_latest: int = 50) -> dict[str, int]:
         """Retention (U6): delete sessions older than the window and their rows, always keeping
         the ``keep_latest`` most recent sessions."""

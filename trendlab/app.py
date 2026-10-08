@@ -294,6 +294,8 @@ class TrendLabApp:
         self.agent.scope_config = self.config.governance
         if self.config.routing.get("router"):
             self.agent.router = self._route_request
+        if self.config.context.retrieval:
+            self.agent.retriever = self._retrieve
         self.agent.test_strength = self._test_strength
         if self.config.planner.enabled:
             self.agent.planner = self._plan_steps
@@ -567,6 +569,14 @@ class TrendLabApp:
 
         steps, _ = await ask_json(call, messages, parse_steps)
         return steps
+
+    def _retrieve(self, task_text: str):
+        from trendlab.context.retrieval import hints_message, index_project, search
+
+        cfg = self.config.context
+        rules = self.tools.ctx.ignore_rules if self.tools else None
+        hits = search(index_project(self.project_root, rules), task_text, k=cfg.retrieval_k)
+        return hints_message(hits, cfg.retrieval_max_chars), hits
 
     async def _route_request(self, prompt: str):
         """Semantic routing: a cheap model classifies the request before the run."""
