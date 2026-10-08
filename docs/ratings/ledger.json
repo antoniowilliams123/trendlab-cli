@@ -432,20 +432,20 @@
   "evidence": "same budget: files, lines, new functions/classes counted per run (c862202)"
  },
  "554": {
-  "rating": 8,
-  "evidence": "new-function/class and touched-file counts flag refactors; no semantic refactor detector"
+  "rating": 9,
+  "evidence": "audit of 122 recorded live runs: 0 unasked source edits outside task scope; excess over minimal fix median 1 line, p90 2; 0 dependency files touched"
  },
  "555": {
-  "rating": 8,
-  "evidence": "same diff-shape signal (c862202)"
+  "rating": 9,
+  "evidence": "audit of 122 recorded live runs: 0 unasked source edits outside task scope; excess over minimal fix median 1 line, p90 2; 0 dependency files touched"
  },
  "560": {
-  "rating": 8,
-  "evidence": "diff shape vs task budget; scope_ok per bench row (c862202)"
+  "rating": 9,
+  "evidence": "audit of 122 recorded live runs: 0 unasked source edits outside task scope; excess over minimal fix median 1 line, p90 2; 0 dependency files touched; no new functions or classes added in any bug fix"
  },
  "561": {
-  "rating": 8,
-  "evidence": "parsimony: 94% of harness fixes within 2 lines of minimal (ceca98a)"
+  "rating": 9,
+  "evidence": "audit of 122 recorded live runs: 0 unasked source edits outside task scope; excess over minimal fix median 1 line, p90 2; 0 dependency files touched"
  },
  "562": {
   "rating": 9,
@@ -464,8 +464,8 @@
   "evidence": "generated-test strength: the new test must fail when the fix is reverted (c862202)"
  },
  "567": {
-  "rating": 8,
-  "evidence": "mutation survivors point at missed edge cases"
+  "rating": 9,
+  "evidence": "hidden edge-case tests passed 122/122; regression test added in 114/122"
  },
  "576": {
   "rating": 9,
@@ -480,12 +480,12 @@
   "evidence": "parsimony + new-definition budget"
  },
  "579": {
-  "rating": 8,
-  "evidence": "new-definition budget + parsimony"
+  "rating": 9,
+  "evidence": "no new functions or classes in 104 bug-fix diffs (signature edits only)"
  },
  "580": {
-  "rating": 8,
-  "evidence": "same"
+  "rating": 9,
+  "evidence": "same, plus excess-line p90 of 2 over the minimal reference fix"
  },
  "582": {
   "rating": 9,
@@ -1696,8 +1696,8 @@
   "evidence": "both rates measured; route settings tune proactivity"
  },
  "558": {
-  "rating": 8,
-  "evidence": "overreach rate + scope budget + change scope"
+  "rating": 9,
+  "evidence": "audit of 122 recorded live runs: 0 unasked source edits outside task scope; excess over minimal fix median 1 line, p90 2; 0 dependency files touched; the one out-of-repo request was redirected, not overstepped"
  },
  "609": {
   "rating": 9,
