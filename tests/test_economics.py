@@ -67,6 +67,7 @@ def test_ledger_roi_overhead_waste_and_cache(tmp_path: Path):
     assert app_row["wasted"] == 0.005  # the session whose only run failed
     assert app_row["cache_share"] == round(800 / 2400, 3)
     assert app_row["by_role"] == {"main": 0.011, "planner": 0.004}
+    assert app_row["p95_input_tokens"] == 900 and app_row["heavy_call_share"] == 0.0
     assert led["work_share"] == round(0.015 / 0.017, 3)
     assert any(r["project"] == "(benchmarks)" for r in led["projects"])
 

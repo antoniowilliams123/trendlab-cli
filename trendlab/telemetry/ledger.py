@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+HEAVY_CALL_TOKENS = 30_000  # a prompt above this is worth a look (context stuffing)
+
 BENCH_MARKERS = (
     "/trendlab-suite-",
     "/trendlab-plan-",
@@ -67,6 +69,8 @@ def ledger(store, days: int = 30, *, now: datetime | None = None) -> dict[str, A
             "by_role": defaultdict(float),
             "by_model": defaultdict(float),
             "sessions": set(),
+            "call_inputs": [],
+            "heavy_cost": 0.0,
             "runs": 0,
             "completed": 0,
             "failed": 0,
@@ -83,6 +87,10 @@ def ledger(store, days: int = 30, *, now: datetime | None = None) -> dict[str, A
         p["output_tokens"] += int(c["output_tokens"] or 0)
         p["cached_tokens"] += int(c["cached_input_tokens"] or 0)
         p["by_role"][c["role"] or "main"] += cost
+        inp = int(c["input_tokens"] or 0)
+        p["call_inputs"].append(inp)
+        if inp > HEAVY_CALL_TOKENS:
+            p["heavy_cost"] += cost
         p["by_model"][c["model"]] += cost
         p["sessions"].add(c["session_id"])
         session_cost[c["session_id"]] += cost
@@ -129,6 +137,13 @@ def ledger(store, days: int = 30, *, now: datetime | None = None) -> dict[str, A
                 "cache_share": round(p["cached_tokens"] / p["input_tokens"], 3)
                 if p["input_tokens"]
                 else None,
+                # token maxing: how much spend goes to very large prompts
+                "p95_input_tokens": sorted(p["call_inputs"])[
+                    int(0.95 * (len(p["call_inputs"]) - 1))
+                ]
+                if p["call_inputs"]
+                else None,
+                "heavy_call_share": round(p["heavy_cost"] / p["cost"], 3) if p["cost"] else None,
                 "by_role": {k: round(v, 4) for k, v in sorted(p["by_role"].items())},
                 "by_model": {k: round(v, 4) for k, v in sorted(p["by_model"].items())},
             }
