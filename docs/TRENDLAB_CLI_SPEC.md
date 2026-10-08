@@ -4893,6 +4893,15 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   `docs/OPERATING_MODEL.md`.
 - Ratings: mean 8.38; 219 terms below 9.
 
+- **U31** (`538633f`, `84a05f3`, `52a8317`, `3693acc`): `trendlab feedback`, read-only
+  `trendlab sql`, offline `trendlab selftest` (8/8 stages, ~9 s, $0); token estimates calibrate
+  to each model's chars-per-token (DeepSeek: code/prose 3.8, JSON 3.2, test logs 3.0 — len/4 was
+  6–26 % low); ledger large-prompt share (home sessions 34 % of spend on >30k prompts);
+  `[context] compact_above_tokens` (64k) because a 1M window never triggered compaction.
+- **Model comparison** (canary, harness): Flash 10/10 $0.091 355 s; v4-pro 10/10 $0.191 387 s;
+  local 25B on Ollama 1 of 2 finished, $0, ~21 min/task (too slow for agent loops here).
+- Ratings: mean 8.50; 195 terms below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

@@ -440,8 +440,8 @@
   "evidence": "gate and canary keep changes eval-driven"
  },
  "760": {
-  "rating": 8,
-  "evidence": "tiered output, cache share, quick review; tokens per run tracked"
+  "rating": 9,
+  "evidence": "calibrated budgets, compaction cap, tiered output, quick review"
  },
  "774": {
   "rating": 8,
@@ -590,6 +590,94 @@
  "857": {
   "rating": 8,
   "evidence": "cost per validated change and health trend together"
+ },
+ "795": {
+  "rating": 9,
+  "evidence": "Flash vs v4-pro vs local Ollama on the canary: pass, cost, wall time measured"
+ },
+ "796": {
+  "rating": 9,
+  "evidence": "cloud $0.091/$0.191 for 10 tasks vs local $0 at ~21 min/task"
+ },
+ "784": {
+  "rating": 8,
+  "evidence": "--counterfactual and --compare across profiles/models (244b518)"
+ },
+ "783": {
+  "rating": 8,
+  "evidence": "Pro planner measured at 3.5x Flash cost with no better plans (e1009ce)"
+ },
+ "800": {
+  "rating": 9,
+  "evidence": "the harness runs a local 25B model and local embeddings through Ollama"
+ },
+ "725": {
+  "rating": 7,
+  "evidence": "tier breakdown shows edges; small n per cell"
+ },
+ "735": {
+  "rating": 7,
+  "evidence": "canary saturates for cloud models; the gap shows only on the local model and hard tiers"
+ },
+ "737": {
+  "rating": 8,
+  "evidence": "bare vs harness measured per tier for Flash; harness vs model across three models"
+ },
+ "723": {
+  "rating": 8,
+  "evidence": "capability map per tier and defect kind (380a06e)"
+ },
+ "724": {
+  "rating": 8,
+  "evidence": "capability map shows where each profile fails (380a06e)"
+ },
+ "740": {
+  "rating": 8,
+  "evidence": "capability map (380a06e)"
+ },
+ "155": {
+  "rating": 6,
+  "evidence": "hard tier (cross-module, misleading symptoms) per model; not a reasoning benchmark"
+ },
+ "732": {
+  "rating": 6,
+  "evidence": "per-model scorecard on the canary"
+ },
+ "742": {
+  "rating": 6,
+  "evidence": "design critique eval found 15/15 planted flaws for Flash and v4-pro alike"
+ },
+ "743": {
+  "rating": 6,
+  "evidence": "same"
+ },
+ "744": {
+  "rating": 6,
+  "evidence": "performance lens in review; N+1 and stampede flaws found in the critique eval"
+ },
+ "426": {
+  "rating": 8,
+  "evidence": "chars-per-token learned per model from usage; len/4 undercounted 6-26% (84a05f3)"
+ },
+ "427": {
+  "rating": 7,
+  "evidence": "provider usage is the tokenizer of record; no local tokenizer"
+ },
+ "788": {
+  "rating": 8,
+  "evidence": "ledger: p95 input tokens and spend share above 30k; home sessions 34% (52a8317)"
+ },
+ "761": {
+  "rating": 8,
+  "evidence": "overhead and waste shares make inefficiency visible per project"
+ },
+ "749": {
+  "rating": 8,
+  "evidence": "cache share of input tokens per project"
+ },
+ "759": {
+  "rating": 8,
+  "evidence": "cache share, tokens and cost by role and model per project"
  },
  "460": {
   "rating": 9,
@@ -759,18 +847,6 @@
   "rating": 9,
   "evidence": "span tree + OTel export + prompt hash + served model (8649a00, 242a16c)"
  },
- "723": {
-  "rating": 8,
-  "evidence": "capability map per tier and defect kind (380a06e)"
- },
- "724": {
-  "rating": 8,
-  "evidence": "capability map shows where each profile fails (380a06e)"
- },
- "725": {
-  "rating": 7,
-  "evidence": "tier breakdown shows edges; small n per cell"
- },
  "726": {
   "rating": 8,
   "evidence": "holdout + leakage guard (ddf4977)"
@@ -803,10 +879,6 @@
   "rating": 9,
   "evidence": "paired harness vs bare comparisons with significance (3a17e49)"
  },
- "740": {
-  "rating": 8,
-  "evidence": "capability map (380a06e)"
- },
  "745": {
   "rating": 9,
   "evidence": "realistic tier: short prompts and questions like real use (2b3e3ae)"
@@ -826,10 +898,6 @@
  "764": {
   "rating": 9,
   "evidence": "cost ratio is part of the release gate (3a17e49)"
- },
- "784": {
-  "rating": 8,
-  "evidence": "--counterfactual and --compare across profiles/models (244b518)"
  },
  "820": {
   "rating": 8,
@@ -1043,18 +1111,6 @@
   "rating": 9,
   "evidence": "comparisons report USD per extra pass and per extra tested pass; planner Pro vs Flash measured (3614a6b, e1009ce)"
  },
- "749": {
-  "rating": 8,
-  "evidence": "cache share of input tokens per project"
- },
- "759": {
-  "rating": 8,
-  "evidence": "cache share, tokens and cost by role and model per project"
- },
- "761": {
-  "rating": 8,
-  "evidence": "overhead and waste shares make inefficiency visible per project"
- },
  "766": {
   "rating": 8,
   "evidence": "cost per validated change, overhead and cache economics per project"
@@ -1074,10 +1130,6 @@
  "775": {
   "rating": 9,
   "evidence": "ledger + stats + period-over-period change (3614a6b)"
- },
- "783": {
-  "rating": 8,
-  "evidence": "Pro planner measured at 3.5x Flash cost with no better plans (e1009ce)"
  },
  "790": {
   "rating": 9,
