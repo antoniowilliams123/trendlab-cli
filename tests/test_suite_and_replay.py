@@ -331,3 +331,17 @@ async def test_replay_feeds_recorded_results_and_reports(project: Path, _trendla
     )
     assert report["tools_after"] == {"list_directory": 1, "read_file": 1}
     assert isinstance(ReplayTools, type)
+
+
+def test_replay_copy_refuses_home_and_uses_tracked_files(tmp_path: Path):
+    from trendlab.benchmarks.replay import copy_project
+
+    assert "home directory" in copy_project(Path.home(), tmp_path / "x")
+    src = tmp_path / "src"
+    src.mkdir()
+    subprocess.run(["git", "-C", str(src), "init", "-q"], check=True)
+    (src / "a.py").write_text("x = 1\n")
+    (src / ".gitignore").write_text("big.bin\n")
+    (src / "big.bin").write_bytes(b"0" * 10)
+    assert copy_project(src, tmp_path / "dest") is None
+    assert (tmp_path / "dest/a.py").is_file() and not (tmp_path / "dest/big.bin").exists()
