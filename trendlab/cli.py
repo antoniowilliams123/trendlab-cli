@@ -500,6 +500,11 @@ def bench_cmd(
         "(vector modes use [context] embeddings or --embeddings).",
     ),
     embeddings: str | None = typer.Option(None, "--embeddings", help="provider:model"),
+    compaction_eval: str | None = typer.Option(
+        None,
+        "--compaction-eval",
+        help="Fact retention after context compaction, e.g. full,model,deterministic.",
+    ),
 ) -> None:
     """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
@@ -513,6 +518,37 @@ def bench_cmd(
         verify_suite_tasks,
     )
 
+    if compaction_eval:
+        from trendlab.benchmarks.compaction_eval import run as run_compaction
+        from trendlab.config.loader import load_config
+        from trendlab.telemetry.recorded import RecordedCaller
+
+        cfg = load_config()
+
+        async def _compaction():
+            summ = RecordedCaller(cfg, "summarizer", "(benchmarks)", model=model)
+            ans = RecordedCaller(cfg, "screener", "(benchmarks)", model=model)
+            try:
+                return [
+                    await run_compaction(summ, ans, method=m.strip())
+                    for m in compaction_eval.split(",")
+                    if m.strip()
+                ], round(summ.cost + ans.cost, 4)
+            finally:
+                await summ.close()
+                await ans.close()
+
+        results, cost = asyncio.run(_compaction())
+        if output == "json":
+            typer.echo(json.dumps({"results": results, "cost": cost}, indent=2))
+        else:
+            for r in results:
+                console.print(
+                    f"  {r['method']}: retention {r['retention']:.0%} of {r['facts']} facts · "
+                    f"context {r['compression']:.0%} of full · lost {r['lost'] or 'none'}"
+                )
+            console.print(f"  cost ${cost:.4f}")
+        return
     if retrieval_eval:
         from trendlab.benchmarks.runner import retrieval_eval as run_retrieval_eval
         from trendlab.benchmarks.runner import select_tasks

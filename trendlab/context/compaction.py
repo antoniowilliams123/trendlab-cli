@@ -4,6 +4,7 @@ free-form summary is a convenience, not the only record."""
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -68,25 +69,50 @@ def compaction_prompt(
     ]
 
 
+_HARNESS = (
+    "Before finishing",
+    "A step plan was prepared",
+    "Step ",
+    "Skill '",
+    "An independent review of your change",
+    "Time check:",
+    "Before you finish, rewrite",
+)
+_SIGNAL = re.compile(
+    r"(error|exception|traceback|assert|failed|failure|denied|\d+ (passed|failed))", re.I
+)
+
+
 def deterministic_summary(messages: list[dict[str, Any]], structured: dict[str, Any]) -> str:
-    """Fallback when no summarizer model is available: pull facts straight from the transcript."""
-    user_msgs = [text_of(m.get("content")) for m in messages if m.get("role") == "user"]
-    tool_msgs = [m for m in messages if m.get("role") == "tool"]
-    failures = [
-        m["content"][:200]
-        for m in tool_msgs
-        if isinstance(m.get("content"), str)
-        and m["content"]
-        .lower()
-        .startswith(("denied", "not executed", "patch failed", "conflict", "tool error"))
+    """Fallback when no summarizer model is available: keep, verbatim and bounded, what the
+    summarizer would — the user's words (decisions), the agent's own notes (findings, failed
+    approaches, next steps) and the error / test-result lines from tool output."""
+    users = [
+        text_of(m.get("content"))
+        for m in messages
+        if m.get("role") == "user" and not text_of(m.get("content")).startswith(_HARNESS)
     ]
+    notes = [
+        " ".join(text_of(m.get("content")).split())
+        for m in messages
+        if m.get("role") == "assistant" and len(text_of(m.get("content")).split()) >= 4
+    ]
+    signals: list[str] = []
+    for m in messages:
+        if m.get("role") != "tool" or not isinstance(m.get("content"), str):
+            continue
+        for line in m["content"].splitlines():
+            line = line.strip()
+            if line and _SIGNAL.search(line) and line[:200] not in signals:
+                signals.append(line[:200])
     lines = [
-        f"OBJECTIVE: {user_msgs[0][:500] if user_msgs else '(unknown)'}",
-        f"CURRENT STATUS: {len(messages)} messages compacted; see structured state",
+        f"OBJECTIVE: {users[0][:500] if users else '(unknown)'}",
+        "USER DECISIONS: " + (" | ".join(u[:300] for u in users[1:13]) or "none"),
+        "AGENT NOTES (findings, failed approaches, next steps): "
+        + (" | ".join(n[:300] for n in notes[-15:]) or "none"),
+        "ERRORS AND TEST RESULTS SEEN: " + (" | ".join(signals[-10:]) or "none"),
         f"FILES MODIFIED: {', '.join(structured.get('changed_files', [])) or 'none'}",
         f"VALIDATION RESULTS: {json.dumps(structured.get('validation_runs', [])[-3:])}",
-        f"FAILED APPROACHES: {' | '.join(failures[:5]) or 'none recorded'}",
         f"CURRENT PLAN: {structured.get('plan', '(none)')}",
-        "NEXT ACTION: continue the active plan task",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines)[:8000]
