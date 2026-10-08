@@ -420,6 +420,16 @@ def bench_cmd(
     ),
     lang: str | None = typer.Option(None, "--lang", help="Suite: python | typescript | go."),
     tier: str = typer.Option("base", "--tier", help="Suite: base | hard | all."),
+    runs: int = typer.Option(
+        1, "--runs", help="Repeat every task N times (pass@k, flakiness, intervals)."
+    ),
+    gate: bool = typer.Option(
+        False,
+        "--gate",
+        help="With --compare: exit 1 when the second config is significantly worse "
+        "or over the cost limit.",
+    ),
+    canary: bool = typer.Option(False, "--canary", help="Run the fixed 10-task canary set."),
     profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
     compare: list[str] | None = typer.Option(
         None,
@@ -434,18 +444,22 @@ def bench_cmd(
 ) -> None:
     """Run the benchmark fixtures A–E, the 50-task suite, or a two-configuration comparison."""
     from trendlab.benchmarks.runner import (
+        CANARY,
         append_bench_log,
-        compare_summaries,
+        compare_rows,
         run_benchmarks,
         run_suite,
         summarize,
     )
 
+    if canary:
+        suite, tasks, tier = True, CANARY, "all"
     if suite or compare:
         configs = compare if compare else [f"{model}@{profile}"]
         if compare and len(configs) != 2:
             raise typer.BadParameter("--compare needs exactly two model@profile values")
         summaries = []
+        all_rows: list[list[dict]] = []
         for spec in configs:
             m, _, prof = spec.partition("@")
             prof = prof or "harness"
@@ -476,10 +490,12 @@ def bench_cmd(
                     sandbox=sandbox,
                     on_result=show,
                     tier=tier,
+                    runs=runs,
                 )
             )
             summary = {"config": spec, **summarize(results)}
             summaries.append(summary)
+            all_rows.append(results)
             if log:
                 append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
         if output == "json":
@@ -488,13 +504,15 @@ def bench_cmd(
         cols = (
             "config",
             "tasks",
-            "located",
-            "root_cause",
             "passes",
+            "passes_ci95",
+            "pass_at_k",
+            "flaky_tasks",
             "no_collateral",
             "regression_added",
+            "tool_success_rate",
             "cost",
-            "tokens_lead",
+            "cost_per_task_ci95",
         )
         t = Table(title="Suite summary")
         for col in cols:
@@ -503,18 +521,38 @@ def bench_cmd(
             t.add_row(*(str(sm.get(c, "")) for c in cols))
         console.print(t)
         if len(summaries) == 2:
-            deltas = compare_summaries(summaries[0], summaries[1])
+            cmp = compare_rows(all_rows[0], all_rows[1])
+            deltas = cmp["deltas"]
+            pp = cmp["paired_passes"]
             console.print(
                 "[neon]Δ (second − first):[/neon] "
                 + ", ".join(f"{k} {v:+}" for k, v in deltas.items())
             )
+            console.print(
+                f"[neon]paired passes:[/neon] second wins {pp['b_wins']}, loses {pp['b_losses']}, "
+                f"ties {pp['ties']} of {pp['tasks']} tasks · exact sign test p={pp['p_value']} · "
+                f"cost ratio {cmp['cost_ratio']}×"
+            )
+            if pp["p_value"] > 0.05:
+                console.print("[dim]not a significant difference at this sample size[/dim]")
             if log:
                 append_bench_log(
                     Path("docs/BENCH_LOG.md"),
                     "compare",
                     [{"config": s["config"], **{k: s[k] for k in deltas}} for s in summaries],
-                    note="Δ: " + json.dumps(deltas),
+                    note="Δ: "
+                    + json.dumps(deltas)
+                    + " · paired: "
+                    + json.dumps(pp)
+                    + f" · cost ratio {cmp['cost_ratio']}",
                 )
+            if gate:
+                g = cmp["gate"]
+                if g["ok"]:
+                    console.print("[ok]gate passed[/ok]")
+                else:
+                    console.print("[danger]gate failed:[/danger] " + "; ".join(g["reasons"]))
+                    raise typer.Exit(code=1)
         return
     results = asyncio.run(run_benchmarks(model, fixture))
     if output == "json":

@@ -221,6 +221,9 @@ class EngineConfig(BaseModel):
     meta_days: int = Field(default=1, ge=1)
     digest_minutes: int = Field(default=180, ge=15)  # Telegram digest cadence
     file_failed_runs: bool = True  # failed interactive runs and verifier fails become cards
+    canary: bool = False  # nightly 10-task canary against the default model (U1/U3)
+    canary_at: str = "03:30"
+    canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
 
 
 class PlanGateConfig(BaseModel):

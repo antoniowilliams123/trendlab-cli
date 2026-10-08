@@ -91,6 +91,44 @@ async def meta_draft(inbox: Inbox, config, *, issue_id: str | None = None) -> di
     }
 
 
+async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, Any]:
+    """Nightly canary (U1/U3): the fixed 10-task set on the default model, compared with the
+    previous canary. A drop of ``canary_drop_alert`` tasks or more files a drift card."""
+    from trendlab.benchmarks.runner import CANARY, append_bench_log, run_suite, summarize
+    from trendlab.benchmarks.stats import paired_outcomes
+
+    model = config.defaults.model
+    rows = await run_suite(model, profile="harness", selector=CANARY, tier="all")
+    summary = summarize(rows)
+    prev_rows = state.get("canary_rows") or []
+    report: dict[str, Any] = {"model": model, "passes": summary["passes"], "cost": summary["cost"]}
+    if prev_rows:
+        paired = paired_outcomes(prev_rows, rows, "passes")
+        report["vs_previous"] = {k: paired[k] for k in ("b_wins", "b_losses", "p_value")}
+        if paired["b_losses"] >= config.engine.canary_drop_alert:
+            card = inbox.record(
+                project="harness:canary",
+                title=f"canary drop: {model} lost {paired['b_losses']} task(s) vs previous night",
+                signature=f"canary_drop|{model}",
+                source="canary",
+                root_cause=", ".join(paired["tasks_only_a_passes"]),
+                evidence=[f"p={paired['p_value']}", f"passes {summary['passes']}"],
+                severity="high",
+            )
+            report["card"] = card["id"]
+    state["canary_rows"] = [
+        {"task": r["task"], "passes": r.get("passes"), "skipped": r.get("skipped")} for r in rows
+    ]
+    state["canary_summary"] = summary
+    try:
+        append_bench_log(
+            Path.home() / ".trendlab" / "engine" / "CANARY_LOG.md", f"canary {model}", rows
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return report
+
+
 async def meta_scan(inbox: Inbox, config, *, days: int = 7) -> dict[str, Any]:
     store = SessionStore(trendlab_home() / "sessions.db")
     try:

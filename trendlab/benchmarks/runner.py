@@ -217,11 +217,21 @@ async def run_task(
         )
         interventions = 0
         guards: dict[str, int] = {}
+        tools: dict[str, dict[str, int]] = {}
 
         def count(e):
             nonlocal interventions
             if e.type == EventType.GUARD_FIRED:
                 guards[e.data.get("guard")] = guards.get(e.data.get("guard"), 0) + 1
+            if e.type in {EventType.TOOL_COMPLETED, EventType.TOOL_SKIPPED}:
+                name = str(e.data.get("tool"))
+                d = tools.setdefault(name, {"calls": 0, "failed": 0, "skipped": 0})
+                d["calls"] += 1
+                if e.type == EventType.TOOL_SKIPPED:
+                    d["skipped"] += 1
+                elif not e.data.get("ok", True) and name not in {"shell", "run_tests"}:
+                    # a non-zero exit from a command is a result, not a tool failure
+                    d["failed"] += 1
             if e.type == EventType.APPROVAL_REQUESTED:
                 interventions += 1
                 try:
@@ -281,6 +291,10 @@ async def run_task(
             "guards_fired": guards,
             "verification": (result.verification or {}).get("verdict"),
             "stop_reason": result.stop_reason,
+            "tool_calls": sum(d["calls"] for d in tools.values()),
+            "tool_failures": sum(d["failed"] + d["skipped"] for d in tools.values()),
+            "tools": tools,
+            "model_version": model,
         }
 
 
@@ -309,14 +323,18 @@ async def run_suite(
     sandbox: str | None = None,
     on_result=None,
     tier: str = "base",
+    runs: int = 1,
     **kw,
 ) -> list[dict[str, Any]]:
+    """``runs`` > 1 repeats every task so pass@k, flakiness and intervals mean something."""
     out = []
     for task in select_tasks(selector, lang, tier):
-        r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
-        out.append(r)
-        if on_result:
-            on_result(r)
+        for run in range(max(1, runs)):
+            r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
+            r["run"] = run + 1
+            out.append(r)
+            if on_result:
+                on_result(r)
     return out
 
 
@@ -338,6 +356,20 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         for k, v in (r.get("cost_by_phase") or {}).items():
             phases[k] = round(phases.get(k, 0.0) + v, 4)
     summary["cost_by_phase"] = phases
+    # U1: intervals, repeat-run stability and tool reliability
+    from trendlab.benchmarks.stats import bootstrap_ci, pass_at_k, wilson_interval
+
+    passes = sum(1 for r in ran if r.get("passes"))
+    summary["passes_ci95"] = wilson_interval(passes, len(ran))
+    summary["cost_per_task_ci95"] = bootstrap_ci([r.get("cost", 0.0) for r in ran])
+    summary.update(pass_at_k(ran))
+    calls = sum(r.get("tool_calls", 0) for r in ran)
+    fails = sum(r.get("tool_failures", 0) for r in ran)
+    summary["tool_calls"] = calls
+    summary["tool_success_rate"] = round((calls - fails) / calls, 3) if calls else 1.0
+    summary["error_rate"] = round(
+        sum(1 for r in ran if r.get("status") != "COMPLETED" or not r.get("passes")) / n, 3
+    )
     return summary
 
 
@@ -347,6 +379,28 @@ def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     for k in (*METRICS, "interventions", "cost", "tokens_lead", "wall_s"):
         deltas[k] = round((b.get(k) or 0) - (a.get(k) or 0), 4)
     return deltas
+
+
+def compare_rows(
+    a_rows: list[dict[str, Any]], b_rows: list[dict[str, Any]], *, max_cost_ratio: float = 1.5
+) -> dict[str, Any]:
+    """Paired comparison with a significance test and a release gate (U1)."""
+    from trendlab.benchmarks.stats import gate, paired_outcomes
+
+    sa, sb = summarize(a_rows), summarize(b_rows)
+    paired = paired_outcomes(a_rows, b_rows, "passes")
+    ratio = (sb["cost"] / sa["cost"]) if sa["cost"] else float("inf") if sb["cost"] else 1.0
+    return {
+        "deltas": compare_summaries(sa, sb),
+        "paired_passes": paired,
+        "cost_ratio": round(ratio, 3),
+        "gate": gate(paired, ratio, max_cost_ratio=max_cost_ratio),
+        "a": sa,
+        "b": sb,
+    }
+
+
+CANARY = "py01,py03,py05,py09,py13,py16,ts01,ts03,hd03,hd05"
 
 
 def append_bench_log(path: Path, title: str, rows: list[dict[str, Any]], note: str = "") -> None:

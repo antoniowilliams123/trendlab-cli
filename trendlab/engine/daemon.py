@@ -94,6 +94,14 @@ class Engine:
             )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
+        if job == "canary":
+            if not ecfg.canary:
+                return False
+            hour, minute = (int(x) for x in ecfg.canary_at.split(":")[:2])
+            stamp = now.strftime("%Y-%m-%d")
+            after = (now.hour, now.minute) >= (hour, minute)
+            recent = last is not None and (now.timestamp() - float(last)) < 20 * 3600
+            return not warm and after and not recent and self.state.get("canary_day") != stamp
         return False
 
     @staticmethod
@@ -121,6 +129,11 @@ class Engine:
                 result["meta"] = await meta_scan(self.inbox, self.config)
             elif job == "digest":
                 result["sent"] = await self.send_digest()
+            elif job == "canary":
+                from trendlab.engine.jobs import canary_run
+
+                self.state["canary_day"] = now.strftime("%Y-%m-%d")
+                result["canary"] = await canary_run(self.inbox, self.config, self.state)
         except Exception as exc:  # noqa: BLE001 — one job must never kill the engine
             result["error"] = f"{exc.__class__.__name__}: {exc}"[:300]
         self.state[f"last_{job}"] = time.time()
@@ -168,7 +181,7 @@ class Engine:
                 resp = {
                     "text": digest(self.inbox.list(status="open", limit=3), self.inbox.counts())
                 }
-            elif cmd == "run" and req.get("job") in {"watch", "sleep", "meta", "digest"}:
+            elif cmd == "run" and req.get("job") in {"watch", "sleep", "meta", "digest", "canary"}:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
                 resp = {"stopping": True}
@@ -196,7 +209,7 @@ class Engine:
         try:
             while not self._stop.is_set():
                 now = self.now()
-                for job in ("watch", "sleep", "meta", "digest"):
+                for job in ("watch", "sleep", "meta", "digest", "canary"):
                     if self.due(job, now):
                         await self.run_job(job)
                 try:
