@@ -52,7 +52,7 @@ def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     assert (
         select_tasks("3") == tasks[:3]
         and len(select_tasks(None, None, "hard")) == 8
-        and len(select_tasks(None, None, "all")) == 71
+        and len(select_tasks(None, None, "all")) == 76  # non-holdout, incl. 5 jailbreak
         and [t.id for t in select_tasks("py01,ts01")]
         == [
             "py01-off_by_one",
