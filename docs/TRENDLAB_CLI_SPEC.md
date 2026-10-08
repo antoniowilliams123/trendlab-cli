@@ -4947,6 +4947,17 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   TrendLab starts without them and says so. Ordinary settings (limits, routing, test commands,
   governance…) apply as before. The home folder's config is the user's own and always applies.
 
+#### 2026-10-08 — search and glob never freeze the UI
+
+- Found live: a session started in the home folder (500 GB of market data) ran search_text
+  without ripgrep; the pure-Python fallback read every file whole on the UI thread, freezing
+  the TUI (timer stuck, Esc dead) for 6+ minutes.
+- search_text and glob now walk in a worker thread with a stop flag (Esc cancels), a 20 s
+  deadline with advice to narrow the path, and ripgrep's limits (skip files over 2 MB and
+  binary/data extensions). ripgrep runs as an async subprocess. Same search on the real home
+  folder: 0.1 s; glob over it stops itself at ~26 s with the UI live throughout.
+- Starting in the home folder shows a one-line notice to cd into a project.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

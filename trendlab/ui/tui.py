@@ -692,6 +692,10 @@ class TrendLabTUI(App[None]):
             f"[bold {NEON}]{PRODUCT_NAME}[/] [{GREY}]v{__version__}[/] ready — "
             f"[{NEON_DIM}]type a task, or /help[/]"
         )
+        from trendlab.ui.activity import home_notice
+
+        if notice := home_notice(self.tl.project_root):
+            self.log_line(f"[#ffd21f]⚠ {notice}[/]")
         if self.tl.engine.unsafe:
             self.log_line(
                 "[bold black on #ffd21f] AUTO [/] [#ffd21f]runs without approval prompts · "

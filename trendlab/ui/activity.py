@@ -304,3 +304,20 @@ def run_footer(result) -> str:
             n = len(ver.get("findings") or [])
             parts.append(f"[{AMBER if v == 'fix' else RED}]verifier: {v} ({n})[/]")
     return "  ".join(parts)
+
+
+HOME_NOTICE = (
+    "you started in your home folder, so the whole of it is the project: searches can be slow "
+    "and miss the point. cd into a project folder (or name one: trendlab --project <path>)"
+)
+
+
+def home_notice(project_root) -> str:
+    """A one-line nudge when the project is the user's home folder ('' otherwise)."""
+    from pathlib import Path
+
+    try:
+        same = Path(project_root).resolve() == Path.home().resolve()
+    except OSError:
+        return ""
+    return HOME_NOTICE if same else ""

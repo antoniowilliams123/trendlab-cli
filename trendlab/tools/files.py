@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
 import shutil
-import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -31,6 +33,75 @@ def _sha256(data: bytes) -> str:
 
 def _is_binary(sample: bytes) -> bool:
     return b"\x00" in sample[:8000]
+
+
+# Searching a big tree (a home folder with data archives) must never freeze the UI or run for
+# minutes: the walk runs in a worker thread, checks a deadline and a stop flag as it goes, skips
+# big and binary files the way ripgrep does, and says when it stopped early.
+SEARCH_DEADLINE_S = 20.0
+MAX_SEARCH_BYTES = 2_000_000
+_SKIP_EXT = frozenset(
+    ".parquet .gz .zip .bz2 .xz .zst .7z .tar .pkl .pickle .npy .npz .h5 .hdf5 .feather "
+    ".arrow .db .sqlite .dbn .png .jpg .jpeg .gif .webp .pdf .mp4 .mov .mp3 .wav .so .dll "
+    ".exe .bin .whl .pyc .class .jar .iso .img".split()
+)
+
+
+def _iter_files(root: Path, project: Path, rules: IgnoreRules, stop: threading.Event):
+    """Files under ``root`` (depth first, sorted), pruning ignored directories, until stopped."""
+    stack = [root]
+    while stack and not stop.is_set():
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: p.name, reverse=True)
+        except (PermissionError, FileNotFoundError, NotADirectoryError, OSError):
+            continue
+        for entry in entries:
+            if stop.is_set():
+                return
+            try:
+                rel = entry.relative_to(project).as_posix()
+            except ValueError:
+                rel = entry.name
+            if entry.is_symlink():
+                continue
+            if entry.is_dir():
+                if not rules.ignored(rel, is_dir=True):
+                    stack.append(entry)
+            elif not rules.ignored(rel):
+                yield entry, rel
+
+
+async def _in_thread(fn, stop: threading.Event):
+    """Run ``fn`` in a worker thread; cancelling the run (Esc) sets ``stop`` so it ends soon."""
+    try:
+        return await asyncio.to_thread(fn)
+    except asyncio.CancelledError:
+        stop.set()
+        raise
+
+
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Glob → regex over project-relative paths: ** spans folders, * and ? stay in one."""
+    pat = pattern.strip().lstrip("./")
+    out, i = [], 0
+    while i < len(pat):
+        if pat.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pat.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pat[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pat[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pat[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
 
 
 def _perm_or_outside(
@@ -181,16 +252,35 @@ class GlobTool(Tool):
     async def run(self, args: GlobInput, ctx: ToolContext) -> ToolResult:
         root = ctx.project_root.resolve()
         rules = ctx.ignore_rules or IgnoreRules([])
-        hits = []
-        for p in sorted(root.glob(args.pattern)):
-            rel = p.relative_to(root).as_posix()
-            if p.is_symlink() or rules.ignored(rel, is_dir=p.is_dir()):
-                continue
-            hits.append(rel + ("/" if p.is_dir() else ""))
-            if len(hits) >= args.max_results:
-                break
+        regex = _glob_regex(args.pattern)
+        stop = threading.Event()
+        state = {"scanned": 0, "timed_out": False}
+
+        def work() -> list[str]:
+            hits: list[str] = []
+            deadline = time.monotonic() + SEARCH_DEADLINE_S
+            for _path, rel in _iter_files(root, root, rules, stop):
+                state["scanned"] += 1
+                if regex.match(rel):
+                    hits.append(rel)
+                    if len(hits) >= args.max_results:
+                        break
+                if time.monotonic() > deadline:
+                    state["timed_out"] = True
+                    break
+            return sorted(hits)
+
+        hits = await _in_thread(work, stop)
+        out = "\n".join(hits) or "no matches"
+        if state["timed_out"]:
+            out += (
+                f"\n... stopped after {SEARCH_DEADLINE_S:.0f}s ({state['scanned']} files looked "
+                "at): the project is very large; use a narrower pattern such as 'src/**/*.py'"
+            )
         return ToolResult(
-            ok=True, output="\n".join(hits) or "no matches", data={"count": len(hits)}
+            ok=True,
+            output=out,
+            data={"count": len(hits), "timed_out": state["timed_out"]},
         )
 
 
@@ -229,34 +319,57 @@ class SearchTextTool(Tool):
             return ToolResult(ok=False, output=f"invalid regex: {exc}")
         rg = shutil.which("rg")
         if rg and root.is_dir():
-            hits = _rg_search(rg, args, root, project)
+            hits = await _rg_search(rg, args, root, project)
             if hits is not None:
                 return _search_result(hits, args.max_results)
         rules = ctx.ignore_rules or IgnoreRules([])
-        files = [root] if root.is_file() else rules.walk(root)
-        hits: list[str] = []
-        for file in files:
-            rel = file.relative_to(project).as_posix()
-            if rules.ignored(rel):
-                continue
-            try:
-                raw = file.read_bytes()
+        stop = threading.Event()
+        state = {"scanned": 0, "timed_out": False}
+
+        def files():
+            if root.is_file():
+                yield root, root.relative_to(project).as_posix()
+            else:
+                yield from _iter_files(root, project, rules, stop)
+
+        def work() -> list[str]:
+            hits: list[str] = []
+            deadline = time.monotonic() + SEARCH_DEADLINE_S
+            for file, rel in files():
+                if time.monotonic() > deadline:
+                    state["timed_out"] = True
+                    break
+                if file.suffix.lower() in _SKIP_EXT:
+                    continue
+                try:
+                    if file.stat().st_size > MAX_SEARCH_BYTES:
+                        continue
+                    raw = file.read_bytes()
+                except OSError:
+                    continue
+                state["scanned"] += 1
                 if _is_binary(raw):
                     continue
                 text = raw.decode("utf-8", errors="replace")
-            except OSError:
-                continue
-            for n, line in enumerate(text.splitlines(), start=1):
-                if regex.search(line):
-                    hits.append(f"{rel}:{n}: {line.strip()[:200]}")
-                    if len(hits) > args.max_results:
-                        break
-            if len(hits) > args.max_results:
-                break
-        return _search_result(hits, args.max_results)
+                for n, line in enumerate(text.splitlines(), start=1):
+                    if regex.search(line):
+                        hits.append(f"{rel}:{n}: {line.strip()[:200]}")
+                        if len(hits) > args.max_results:
+                            return hits
+            return hits
+
+        hits = await _in_thread(work, stop)
+        result = _search_result(hits, args.max_results)
+        if state["timed_out"]:
+            result.output += (
+                f"\n... stopped after {SEARCH_DEADLINE_S:.0f}s ({state['scanned']} files "
+                "searched): the project is very large; pass path= to search one folder"
+            )
+            result.data["timed_out"] = True
+        return result
 
 
-def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) -> list[str] | None:
+async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) -> list[str] | None:
     cmd = [
         rg,
         "--no-heading",
@@ -274,13 +387,28 @@ def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) -> lis
         cmd += ["--glob", f"!{ex}"]
     cmd += ["-e", args.pattern, str(root)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)  # noqa: S603
-    except (OSError, subprocess.TimeoutExpired):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+    except OSError:
         return None
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=SEARCH_DEADLINE_S)
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return [
+            f"... search stopped after {SEARCH_DEADLINE_S:.0f}s: the project is very large; "
+            "pass path= to search one folder"
+        ]
     if proc.returncode not in {0, 1}:
         return None
     hits = []
-    for line in proc.stdout.splitlines():
+    for line in out.decode("utf-8", "replace").splitlines():
         path, _, rest = line.partition(":")
         try:
             rel = Path(path).resolve().relative_to(project).as_posix()

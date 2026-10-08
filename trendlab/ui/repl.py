@@ -101,6 +101,10 @@ class Repl:
         ]
         for row, extra in zip(BANNER, info, strict=True):
             self.console.print(f"[bold {NEON}]{row}[/]   {extra}")
+        from trendlab.ui.activity import home_notice
+
+        if notice := home_notice(self.app.project_root):
+            self.console.print(f"[#ffd21f]⚠ {notice}[/]")
         self.console.print()
 
     async def _prompt(self, text: str) -> None:
