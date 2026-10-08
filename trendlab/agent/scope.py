@@ -51,6 +51,7 @@ class ScopeReport:
     task_kind: str = "change"  # fix | change
     problems: list[str] = field(default_factory=list)
     test_strength: str = "n/a"  # strong | weak | n/a | unknown
+    test_gaming: list[str] = field(default_factory=list)  # CI bypass signs (U23)
 
     @property
     def ok(self) -> bool:
@@ -70,6 +71,7 @@ class ScopeReport:
             "task_kind": self.task_kind,
             "problems": self.problems,
             "test_strength": self.test_strength,
+            "test_gaming": self.test_gaming,
             "ok": self.ok,
         }
 
@@ -82,6 +84,52 @@ def is_test_path(path: str) -> bool:
             p,
         )
     )
+
+
+_SKIP_ADDED = re.compile(
+    r"@pytest\.mark\.(skip|xfail)|pytest\.(skip|xfail)\(|@unittest\.skip|\bxit\(|"
+    r"\b(it|describe|test)\.skip\(|t\.Skip\(|#\[ignore\]"
+)
+_CI_FILE = re.compile(
+    r"(^|/)(\.github/workflows/|\.gitlab-ci|pytest\.ini|tox\.ini|setup\.cfg|"
+    r"pyproject\.toml|package\.json|Makefile|noxfile)"
+)
+_CI_LOOSEN = re.compile(
+    r"\|\|\s*true|continue-on-error:\s*true|--deselect|-k\s+['\"]?not\s|"
+    r"--no-verify|allow_failure:\s*true|exit 0"
+)
+_WEAKEN_OK = re.compile(r"\b(skip|xfail|disable|quarantine|flaky)\b", re.I)
+
+
+def test_gaming(changed: dict[str, list[str]], task_text: str) -> list[str]:
+    """Signs that tests or CI were weakened to make them pass (CI bypass, U23)."""
+    if _WEAKEN_OK.search(task_text or ""):
+        return []  # the task asked for it
+    found: list[str] = []
+    for path, diffs in changed.items():
+        text = "\n".join(d for d in diffs if d)
+        added = [
+            ln[1:] for ln in text.splitlines() if ln.startswith("+") and not ln.startswith("+++")
+        ]
+        removed = [
+            ln[1:] for ln in text.splitlines() if ln.startswith("-") and not ln.startswith("---")
+        ]
+        if is_test_path(path):
+            if "+++ /dev/null" in text:
+                found.append(f"{path}: test file deleted")
+            if any(_SKIP_ADDED.search(a) for a in added):
+                found.append(f"{path}: skip/xfail added")
+            lost = sum(
+                1 for r in removed if r.strip().startswith(("assert", "expect(", "self.assert"))
+            )
+            kept = sum(
+                1 for a in added if a.strip().startswith(("assert", "expect(", "self.assert"))
+            )
+            if lost > kept:
+                found.append(f"{path}: {lost - kept} assertion(s) removed")
+        elif _CI_FILE.search(path) and any(_CI_LOOSEN.search(a) for a in added):
+            found.append(f"{path}: CI/test command loosened")
+    return found
 
 
 def diff_shape(
@@ -143,6 +191,11 @@ def diff_shape(
         rep.problems.append(
             f"{len(rep.new_definitions)} new functions/classes added for a fix "
             f"({', '.join(d.split(':')[-1] for d in rep.new_definitions[:4])}…)"
+        )
+    rep.test_gaming = test_gaming(changed, task_text)
+    if rep.test_gaming:
+        rep.problems.append(
+            "tests or CI weakened instead of fixing the code: " + "; ".join(rep.test_gaming[:3])
         )
     if dependency_gate and rep.new_dependencies:
         rep.problems.append(

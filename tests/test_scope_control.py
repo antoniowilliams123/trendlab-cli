@@ -157,3 +157,31 @@ async def test_weak_generated_test_is_detected(project: Path, _trendlab_home: Pa
     assert (project / "calc.py").read_text() == "def mul(a, b):\n    return a * b\n"
     assert result.scope and result.scope["test_strength"] in {"strong", "weak"}
     assert "weak" in run_footer(result) or result.scope["test_strength"] == "strong"
+
+
+def test_test_gaming_is_caught_unless_the_task_asks_for_it():
+    from trendlab.agent.scope import diff_shape, test_gaming
+
+    skip = {
+        "tests/test_x.py": [
+            "+++ b/tests/test_x.py\n+@pytest.mark.skip(reason='flaky')\n def test_a():"
+        ]
+    }
+    gone = {
+        "tests/test_x.py": [
+            "--- a/tests/test_x.py\n-    assert total == 90\n-    assert ok\n+    pass"
+        ]
+    }
+    deleted = {"tests/test_y.py": ["--- a/tests/test_y.py\n+++ /dev/null\n-def test_b(): assert 1"]}
+    ci = {
+        ".github/workflows/ci.yml": ["+++ b/.github/workflows/ci.yml\n+      run: pytest || true"]
+    }
+    swapped = {"tests/test_x.py": ["-    assert total == 30\n+    assert total == 90"]}
+    assert test_gaming(skip, "fix the total") == ["tests/test_x.py: skip/xfail added"]
+    assert test_gaming(gone, "fix the total") == ["tests/test_x.py: 2 assertion(s) removed"]
+    assert test_gaming(deleted, "fix it")[0].endswith("test file deleted")
+    assert test_gaming(ci, "fix ci")[0].endswith("CI/test command loosened")
+    assert test_gaming(swapped, "fix the total") == []  # an assertion changed, not removed
+    assert test_gaming(skip, "skip the flaky test until Monday") == []  # asked for
+    rep = diff_shape(gone, "fix the total")
+    assert not rep.ok and rep.test_gaming and "weakened" in rep.problems[-1]
