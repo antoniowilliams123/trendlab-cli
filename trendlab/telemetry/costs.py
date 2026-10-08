@@ -12,6 +12,7 @@ ROLE_PHASE = {
     "planner": "plan",
     "planning": "plan",
     "verifier": "verify",
+    "judge": "verify",
     "reviewer": "verify",
     "summarizer": "summarise",
     "screener": "summarise",
@@ -35,6 +36,8 @@ class ModelCallRecord:
     phase: str = "other"  # plan | explore | edit | validate | verify | summarise | other
     step_id: str | None = None
     attempt: int = 0
+    model_served: str = ""  # the model id the provider reports (version drift, U3)
+    prompt_hash: str = ""  # sha256[:12] of the system prompt in force (prompt drift, U3)
 
 
 @dataclass
@@ -71,6 +74,8 @@ class CostTracker:
         phase: str | None = None,
         step_id: str | None = None,
         attempt: int = 0,
+        model_served: str = "",
+        prompt_hash: str = "",
     ) -> ModelCallRecord:
         rec = ModelCallRecord(
             model_ref,
@@ -84,6 +89,8 @@ class CostTracker:
             phase or ROLE_PHASE.get(role, "other"),
             step_id,
             attempt,
+            model_served,
+            prompt_hash,
         )
         self.records.append(rec)
         return rec

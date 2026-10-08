@@ -51,8 +51,8 @@ def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     assert (root / task.defect.hidden_test_file).is_file()
     assert (
         select_tasks("3") == tasks[:3]
-        and len(select_tasks(None, None, "hard")) == 10
-        and len(select_tasks(None, None, "all")) == 60
+        and len(select_tasks(None, None, "hard")) == 8
+        and len(select_tasks(None, None, "all")) == 50
         and [t.id for t in select_tasks("py01,ts01")]
         == [
             "py01-off_by_one",
@@ -61,7 +61,7 @@ def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
     )
     assert (
         all(t.lang == "go" for t in select_tasks(None, "go"))
-        and len(select_tasks(None, "go")) == 10
+        and len(select_tasks(None, "go")) == 8
     )
 
 

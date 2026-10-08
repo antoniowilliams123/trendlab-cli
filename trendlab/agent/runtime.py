@@ -472,6 +472,8 @@ class AgentRuntime:
             phase=self._phase,
             step_id=active.id if active else None,
             attempt=(active.attempts + 1) if active else 0,
+            model_served=str((response.raw_metadata or {}).get("model") or ""),
+            prompt_hash=prompt_hash(self.context.system_prompt),
         )
         self._phase = "other"
         self.events.emit(
@@ -486,6 +488,8 @@ class AgentRuntime:
             cost_usd=round(rec.cost_usd, 6),
             tool_calls=len(response.tool_calls),
             privacy=caps.privacy_label,
+            model_served=rec.model_served,
+            prompt_hash=rec.prompt_hash,
         )
         self.events.emit(
             EventType.COST_UPDATED,
@@ -1130,3 +1134,10 @@ def _guard_name(reason: str) -> str:
     if "plan tasks" in r:
         return "open_tasks"
     return "evaluator_other"
+
+
+def prompt_hash(system_prompt: str) -> str:
+    """Short stable id of the system prompt in force (drift watch, U3)."""
+    import hashlib
+
+    return hashlib.sha256((system_prompt or "").encode("utf-8")).hexdigest()[:12]

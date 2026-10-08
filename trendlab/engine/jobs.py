@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from trendlab.benchmarks.runner import CANARY, append_bench_log, run_suite, summarize
 from trendlab.config.loader import trendlab_home
 from trendlab.engine.inbox import Inbox
 from trendlab.engine.meta import counter_summary, file_cards, scan
@@ -93,25 +94,47 @@ async def meta_draft(inbox: Inbox, config, *, issue_id: str | None = None) -> di
 
 async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, Any]:
     """Nightly canary (U1/U3): the fixed 10-task set on the default model, compared with the
-    previous canary. A drop of ``canary_drop_alert`` tasks or more files a drift card."""
-    from trendlab.benchmarks.runner import CANARY, append_bench_log, run_suite, summarize
+    previous canary. A drop of ``canary_drop_alert`` tasks or more files a drift card whose
+    root cause names what changed: the served model id, the system prompt, or neither."""
+    import json as _json
+    from datetime import datetime
+
     from trendlab.benchmarks.stats import paired_outcomes
 
     model = config.defaults.model
     rows = await run_suite(model, profile="harness", selector=CANARY, tier="all")
     summary = summarize(rows)
+    served = sorted({(r.get("model_served") or [""])[0] for r in rows if not r.get("skipped")})
+    phash = sorted({(r.get("prompt_hash") or [""])[0] for r in rows if not r.get("skipped")})
     prev_rows = state.get("canary_rows") or []
-    report: dict[str, Any] = {"model": model, "passes": summary["passes"], "cost": summary["cost"]}
+    prev_meta = state.get("canary_meta") or {}
+    report: dict[str, Any] = {
+        "model": model,
+        "model_served": served,
+        "prompt_hash": phash,
+        "passes": summary["passes"],
+        "cost": summary["cost"],
+    }
     if prev_rows:
         paired = paired_outcomes(prev_rows, rows, "passes")
         report["vs_previous"] = {k: paired[k] for k in ("b_wins", "b_losses", "p_value")}
+        hints = []
+        if prev_meta.get("model_served") and prev_meta["model_served"] != served:
+            hints.append(f"model version changed {prev_meta['model_served']} → {served}")
+        if prev_meta.get("prompt_hash") and prev_meta["prompt_hash"] != phash:
+            hints.append("system prompt changed")
+        if not hints:
+            hints.append("same model id and prompt: provider behaviour or flakiness")
+        report["cause_hints"] = hints
         if paired["b_losses"] >= config.engine.canary_drop_alert:
             card = inbox.record(
                 project="harness:canary",
                 title=f"canary drop: {model} lost {paired['b_losses']} task(s) vs previous night",
                 signature=f"canary_drop|{model}",
                 source="canary",
-                root_cause=", ".join(paired["tasks_only_a_passes"]),
+                root_cause="; ".join(hints)
+                + " · lost: "
+                + ", ".join(paired["tasks_only_a_passes"]),
                 evidence=[f"p={paired['p_value']}", f"passes {summary['passes']}"],
                 severity="high",
             )
@@ -120,10 +143,26 @@ async def canary_run(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, A
         {"task": r["task"], "passes": r.get("passes"), "skipped": r.get("skipped")} for r in rows
     ]
     state["canary_summary"] = summary
+    state["canary_meta"] = {"model_served": served, "prompt_hash": phash}
+    hist = trendlab_home() / "engine" / "canary_history.jsonl"
     try:
-        append_bench_log(
-            Path.home() / ".trendlab" / "engine" / "CANARY_LOG.md", f"canary {model}", rows
-        )
+        hist.parent.mkdir(parents=True, exist_ok=True)
+        with hist.open("a", encoding="utf-8") as fh:
+            fh.write(
+                _json.dumps(
+                    {
+                        "at": datetime.now().isoformat(timespec="seconds"),
+                        **report,
+                        "passes_ci95": summary.get("passes_ci95"),
+                        "cost_per_task_ci95": summary.get("cost_per_task_ci95"),
+                    }
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+    try:
+        append_bench_log(trendlab_home() / "engine" / "CANARY_LOG.md", f"canary {model}", rows)
     except Exception:  # noqa: BLE001
         pass
     return report

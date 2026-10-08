@@ -81,6 +81,7 @@ class CandidateRunner:
         self.costs = costs
         self.parent_ctx = parent_ctx
         self._factory = provider_factory or self._default_factory
+        self.judge: Any = None  # async (task, patch_a, patch_b) -> pairwise verdict (U2)
 
     def _default_factory(self, ref: str, k: int) -> ModelProvider:
         provider = create_provider(self.config, ref)
@@ -114,6 +115,24 @@ class CandidateRunner:
             key=lambda c: (c["diff_lines"], c["n"]),
         )
         applied = False
+        if len(passing) >= 2 and self.judge is not None:
+            # U2: a pairwise judge (asked both ways) decides between the two best; a position
+            # disagreement counts as a tie and the smaller diff keeps the win.
+            try:
+                verdict = await self.judge(task, passing[0]["patch"], passing[1]["patch"])
+            except Exception:  # noqa: BLE001
+                verdict = None
+            if verdict:
+                self.events.emit(
+                    EventType.JUDGE_PAIRWISE,
+                    session_id=self.session_id,
+                    step=task.id,
+                    winner=verdict.get("winner"),
+                    position_bias=verdict.get("position_bias"),
+                    orders=verdict.get("orders"),
+                )
+                if verdict.get("winner") == "b":
+                    passing[0], passing[1] = passing[1], passing[0]
         if passing:
             winner = passing[0]
             from trendlab.app import _git_apply

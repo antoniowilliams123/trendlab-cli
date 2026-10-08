@@ -4716,6 +4716,14 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   the pre-fix sources from the run checkpoint, runs the test command, and reports `weak` when
   the test still passes (`test_strength` in bench rows); `scope.checked` event,
   `scope_budget` guard.
+- **U3 Drift watch**: every model call records `model_served` (the id the provider
+  reports) and `prompt_hash` (sha256[:12] of the system prompt in force) on the cost record
+  and the `model.call_completed` event; bench rows carry both. Ten suite tasks are a
+  **holdout** (`HOLDOUT_IDS`, never selected for tuning; `bench --holdout` runs only them for
+  release gates). The nightly canary compares served model and prompt hash with the previous
+  night and writes cause hints into the drift card ("model version changed", "system prompt
+  changed", or "same model id and prompt: provider behaviour or flakiness"); history in
+  `~/.trendlab/engine/canary_history.jsonl`, shown by `trendlab drift`.
 
 
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)

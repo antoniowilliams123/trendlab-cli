@@ -23,10 +23,15 @@ below. Decide whether it should be surfaced to the user as done.
 
 Judge only what is in front of you: does the diff do what the task asked, is it minimal and
 safe, does the validation evidence support it, and (for a bug fix) is there a test that would
-catch the bug again.
+catch the bug again. Ignore length, formatting and writing style — a longer diff or a longer
+explanation is not a better one, and a terse correct change must pass.
+
+Score the rubric 0–2 each: correctness (does what was asked), minimality (nothing beyond the
+task), safety (no data loss, no secrets, no new deps), tests (a test proves it).
 
 Answer with ONE JSON object and nothing else:
 {{"verdict": "pass" | "fix" | "fail",
+ "rubric": {{"correctness": 0, "minimality": 0, "safety": 0, "tests": 0}},
  "findings": [{{"file": "path", "line": 0, "issue": "what is wrong",
                "severity": "high" | "med" | "low"}}],
  "regression_test": "present" | "missing" | "not_applicable"}}
@@ -57,6 +62,7 @@ class VerifierVerdict:
     regression_test: str = "not_applicable"
     raw: str = ""
     model: str = ""
+    rubric: dict[str, int] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -64,6 +70,7 @@ class VerifierVerdict:
             "findings": self.findings,
             "regression_test": self.regression_test,
             "model": self.model,
+            "rubric": self.rubric,
         }
 
     def feedback(self) -> str:
@@ -118,7 +125,14 @@ def parse_verdict(text: str) -> VerifierVerdict | None:
     reg = str(obj.get("regression_test") or "not_applicable").lower()
     if reg not in {"present", "missing", "not_applicable"}:
         reg = "not_applicable"
-    return VerifierVerdict(verdict=verdict, findings=findings, regression_test=reg, raw=text)
+    rubric: dict[str, int] = {}
+    for k in ("correctness", "minimality", "safety", "tests"):
+        v = (obj.get("rubric") or {}).get(k)
+        if isinstance(v, int | float):
+            rubric[k] = max(0, min(2, int(v)))
+    return VerifierVerdict(
+        verdict=verdict, findings=findings, regression_test=reg, raw=text, rubric=rubric
+    )
 
 
 def build_messages(

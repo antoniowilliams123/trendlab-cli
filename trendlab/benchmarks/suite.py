@@ -955,6 +955,7 @@ class Task:
     answer_line: int
     test_command: str
     tier: str = "base"  # base | hard
+    holdout: bool = False  # never used for tuning; release gates run on these (U3)
 
 
 def _line_of(base: dict[str, str], file: str, old: str) -> int:
@@ -1021,7 +1022,30 @@ def build_tasks() -> list[Task]:
     return base + hard
 
 
-TASKS: list[Task] = build_tasks()
+HOLDOUT_IDS = {
+    "py12",
+    "py18",
+    "py22",
+    "py27",
+    "ts05",
+    "ts08",
+    "go04",
+    "go09",
+    "hd02",
+    "hd06",
+}
+
+
+def _mark_holdout(tasks: list[Task]) -> list[Task]:
+    import dataclasses
+
+    return [
+        dataclasses.replace(t, holdout=True) if t.id.split("-")[0] in HOLDOUT_IDS else t
+        for t in tasks
+    ]
+
+
+TASKS: list[Task] = _mark_holdout(build_tasks())
 
 
 def get_task(task_id: str) -> Task:

@@ -585,7 +585,32 @@ class TrendLabApp:
             costs=self.costs,
             parent_ctx=self.tools.ctx,
         )
+        runner.judge = self._pairwise_judge
         return await runner.run_best_of(task, failure_tail, n)
+
+    async def _pairwise_judge(self, task, patch_a: str, patch_b: str) -> dict[str, Any]:
+        from trendlab.agent.judge import pairwise
+
+        assert self.gateway is not None and self.costs is not None
+        ref = (
+            self.config.routing.get("verifier")
+            or self.config.routing.get("escalation")
+            or self.model_ref
+        )
+
+        async def call(messages):
+            response, used = await self.gateway.complete(ref, messages, None)
+            self.costs.record(
+                used,
+                response.usage,
+                0,
+                role="judge",
+                local=self.gateway.provider(used).capabilities().local,
+            )
+            return response.text
+
+        brief = f"{task.title}. Done when: {task.done_when or 'validation passes'}"
+        return await pairwise(call, task=brief, a=patch_a, b=patch_b)
 
     # -- generated-test strength (uplift U5) ------------------------------------------------------
     async def _test_strength(self, changed: dict[str, list[str]]) -> str:
@@ -675,13 +700,44 @@ class TrendLabApp:
             )
             return response.text, used
 
-        return await verify(
-            call,
-            task=task_text,
-            diff=self._diff_for_review(ev.changed_files),
-            validation=ev.last_validation,
-            plan=self.plan.render() if hasattr(self.plan, "render") else "",
+        diff = self._diff_for_review(ev.changed_files)
+        plan = self.plan.render() if hasattr(self.plan, "render") else ""
+        verdict = await verify(
+            call, task=task_text, diff=diff, validation=ev.last_validation, plan=plan
         )
+        second = self.config.verification.second_opinion
+        if verdict is not None and second and second != ref:
+            # U2 judge agreement: a second verifier model on the same evidence
+            async def call2(messages):
+                response, used = await self.gateway.complete(second, messages, None)
+                self.costs.record(
+                    used,
+                    response.usage,
+                    0,
+                    role="verifier",
+                    local=self.gateway.provider(used).capabilities().local,
+                )
+                return response.text, used
+
+            try:
+                other = await verify(
+                    call2, task=task_text, diff=diff, validation=ev.last_validation, plan=plan
+                )
+            except Exception:  # noqa: BLE001
+                other = None
+            if other is not None:
+                self.events.emit(
+                    EventType.VERIFY_SECOND_OPINION,
+                    session_id=self.session_id,
+                    first=verdict.verdict,
+                    second=other.verdict,
+                    agree=verdict.verdict == other.verdict,
+                    models=[ref, second],
+                )
+                if other.verdict == "fail" and verdict.verdict != "fail":
+                    verdict.findings = other.findings or verdict.findings
+                    verdict.verdict = "fix" if verdict.verdict == "pass" else verdict.verdict
+        return verdict
 
     def _diff_for_review(self, files: list[str]) -> str:
         """The per-edit diffs the tools recorded this run; whole file when a diff is missing."""

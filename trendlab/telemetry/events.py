@@ -87,6 +87,8 @@ class EventType(StrEnum):
     TOOL_CIRCUIT_OPENED = "tool.circuit_opened"  # a tool paused after consecutive failures
     TOOL_POSTCONDITION_FAILED = "tool.postcondition_failed"  # an edit left a file unparsable
     SCOPE_CHECKED = "scope.checked"  # diff shape vs budget, dependency gate, test strength (U5)
+    JUDGE_PAIRWISE = "judge.pairwise"  # pairwise verdict asked both ways (U2)
+    VERIFY_SECOND_OPINION = "verify.second_opinion"  # two verifier models compared (U2)
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
     SKILL_UNLOADED = "skill.unloaded"
     FILE_CHANGED = "file.changed"

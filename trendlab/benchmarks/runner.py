@@ -297,14 +297,24 @@ async def run_task(
             "tool_failures": sum(d["failed"] + d["skipped"] for d in tools.values()),
             "tools": tools,
             "model_version": model,
+            "model_served": sorted({r.model_served for r in lead if r.model_served})[:1] or [""],
+            "prompt_hash": sorted({r.prompt_hash for r in lead if r.prompt_hash})[:1] or [""],
         }
 
 
-def select_tasks(selector: str | None = None, lang: str | None = None, tier: str = "base") -> list:
-    """``tier``: base (the 50), hard (the ten cross-module/state tasks) or all."""
+def select_tasks(
+    selector: str | None = None,
+    lang: str | None = None,
+    tier: str = "base",
+    *,
+    holdout: bool = False,
+) -> list:
+    """``tier``: base, hard or all. Holdout tasks (U3) are excluded unless ``holdout`` is True,
+    in which case only they are returned — tune on the rest, gate releases on these."""
     from trendlab.benchmarks.suite import TASKS
 
     tasks = [t for t in TASKS if not lang or t.lang == lang]
+    tasks = [t for t in tasks if t.holdout == holdout]
     if tier != "all":
         tasks = [t for t in tasks if t.tier == tier]
     if selector:
@@ -326,11 +336,12 @@ async def run_suite(
     on_result=None,
     tier: str = "base",
     runs: int = 1,
+    holdout: bool = False,
     **kw,
 ) -> list[dict[str, Any]]:
     """``runs`` > 1 repeats every task so pass@k, flakiness and intervals mean something."""
     out = []
-    for task in select_tasks(selector, lang, tier):
+    for task in select_tasks(selector, lang, tier, holdout=holdout):
         for run in range(max(1, runs)):
             r = await run_task(task, model, profile=profile, sandbox=sandbox, **kw)
             r["run"] = run + 1
@@ -372,6 +383,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     summary["error_rate"] = round(
         sum(1 for r in ran if r.get("status") != "COMPLETED" or not r.get("passes")) / n, 3
     )
+    from trendlab.agent.judge import judge_accuracy
+
+    summary["judge"] = judge_accuracy(ran)  # U2: verifier verdicts vs hidden-test truth
     return summary
 
 

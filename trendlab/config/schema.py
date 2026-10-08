@@ -162,6 +162,9 @@ class VerificationConfig(BaseModel):
     # test does not need the stronger model's review. Either threshold met → review runs.
     min_diff_lines: int = Field(default=80, ge=0)
     min_files: int = Field(default=3, ge=1)
+    # U2: a second verifier model on the same evidence; disagreements are recorded
+    # (verify.second_opinion) and a second-opinion 'fail' downgrades a 'pass' to 'fix'.
+    second_opinion: str | None = None
 
     @field_validator("verifier")
     @classmethod

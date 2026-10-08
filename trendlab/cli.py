@@ -430,6 +430,9 @@ def bench_cmd(
         "or over the cost limit.",
     ),
     canary: bool = typer.Option(False, "--canary", help="Run the fixed 10-task canary set."),
+    holdout: bool = typer.Option(
+        False, "--holdout", help="Only the holdout tasks (release gate; never tune on these)."
+    ),
     profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
     compare: list[str] | None = typer.Option(
         None,
@@ -491,6 +494,7 @@ def bench_cmd(
                     on_result=show,
                     tier=tier,
                     runs=runs,
+                    holdout=holdout,
                 )
             )
             summary = {"config": spec, **summarize(results)}
@@ -941,6 +945,38 @@ def inbox_cmd(
             str(it["occurrences"]),
             it["title"][:70],
             it["source"],
+        )
+    console.print(t)
+
+
+@app.command("drift")
+def drift_cmd(last: int = typer.Option(14, "--last", help="Nights to show.")) -> None:
+    """Canary history: pass rate, cost, served model id and prompt hash per night (U3)."""
+    hist = trendlab_home() / "engine" / "canary_history.jsonl"
+    if not hist.is_file():
+        console.print(
+            "[dim]no canary history yet — enable [engine] canary = true or run "
+            "`trendlab engine run canary`[/dim]"
+        )
+        return
+    rows = [json.loads(ln) for ln in hist.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    t = Table(title="Canary drift")
+    for col in ("night", "model", "served", "prompt", "passes", "ci95", "cost", "vs prev", "hints"):
+        t.add_column(col)
+    for r in rows[-last:]:
+        vs = r.get("vs_previous") or {}
+        t.add_row(
+            str(r.get("at", ""))[:16],
+            str(r.get("model", "")),
+            ",".join(r.get("model_served") or []),
+            ",".join(r.get("prompt_hash") or []),
+            str(r.get("passes")),
+            str(r.get("passes_ci95")),
+            f"${r.get('cost', 0):.3f}",
+            f"+{vs.get('b_wins', 0)}/-{vs.get('b_losses', 0)} p={vs.get('p_value', '')}"
+            if vs
+            else "",
+            "; ".join(r.get("cause_hints") or [])[:60],
         )
     console.print(t)
 
