@@ -450,6 +450,7 @@ class SessionStore:
         breakers = 0
         q: Counter[str] = Counter()
         routes: Counter[str] = Counter()
+        answers: list[dict[str, Any]] = []
         for e in events:
             d = json.loads(e["data"]) if e["data"] else {}
             t = e["type"]
@@ -465,6 +466,9 @@ class SessionStore:
                 continue
             if t == "invariant.violated":
                 q["invariant_violations"] += 1
+                continue
+            if t == "communication.checked":
+                answers.append(d)
                 continue
             if t == "route.decided":
                 routes[str(d.get("kind"))] += 1
@@ -502,6 +506,7 @@ class SessionStore:
             "verifier_verdicts": dict(verdicts),
             "breakers_opened": breakers,
             "routes": dict(routes),
+            "communication": _communication(answers),
             "online_quality": {
                 # live runs scored from their own evidence (online evaluation)
                 "validated_rate": round(q["validated"] / q["completed_with_changes"], 3)
@@ -693,3 +698,19 @@ class SessionStore:
         d = dict(row)
         d["affected_files"] = json.loads(d["affected_files"] or "[]")
         return d
+
+
+def _communication(answers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Answer style over the period (U9): watch for communication drift between periods."""
+    if not answers:
+        return {}
+    words = sorted(int(a.get("words") or 0) for a in answers)
+    eases = [a["reading_ease"] for a in answers if a.get("reading_ease") is not None]
+    return {
+        "answers": len(answers),
+        "median_words": words[len(words) // 2],
+        "reading_ease": round(sum(eases) / len(eases), 1) if eases else None,
+        "robospeak_rate": round(sum(1 for a in answers if a.get("robospeak")) / len(answers), 3),
+        "constraint_breaks": sum(1 for a in answers if a.get("issues")),
+        "rewrites_requested": sum(1 for a in answers if a.get("rewrite_requested")),
+    }

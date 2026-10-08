@@ -325,9 +325,19 @@ class ToolRuntime:
                 )
         if tool.name in MUTATING_TOOLS and self.on_before_mutation is not None:
             from trendlab.agent.plan_gate import PlanRejected
+            from trendlab.agent.scope import ChangeScopeRefused
 
             try:
                 await self.on_before_mutation(list(perm.affected_files))
+            except ChangeScopeRefused as exc:
+                return self._skip(
+                    ToolCall(id="", name=tool.name, arguments={}),
+                    "outside_change_scope",
+                    f"REFUSED: {', '.join(exc.files)} is outside the change scope the user set "
+                    f"({', '.join(exc.allow)}). Do not edit it; work within the allowed paths, or "
+                    "say in your answer why the task needs it.",
+                    detail=", ".join(exc.files),
+                )
             except PlanRejected as exc:
                 return self._skip(
                     ToolCall(id="", name=tool.name, arguments={}),

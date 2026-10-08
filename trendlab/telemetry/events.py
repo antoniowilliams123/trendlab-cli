@@ -101,6 +101,8 @@ class EventType(StrEnum):
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
     SKILL_UNLOADED = "skill.unloaded"
     FILE_CHANGED = "file.changed"
+    COMMUNICATION_CHECKED = "communication.checked"
+    TURN_COMMITTED = "turn.committed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"
     PERMISSION_DECIDED = "permission.decided"

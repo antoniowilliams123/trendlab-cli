@@ -62,6 +62,7 @@ class RunResult:
     plan: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
     scope: dict[str, Any] | None = None  # diff shape, budget and test strength (uplift U5)
+    communication: dict[str, Any] | None = None  # answer metrics and issues (uplift U9)
     unsupported_claims: list[str] = field(default_factory=list)  # claims the evidence contradicts
 
     def to_json(self) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class RunResult:
             "status": self.status,
             "verification": self.verification,
             "scope": self.scope,
+            "communication": self.communication,
             "unsupported_claims": self.unsupported_claims,
             "text": self.text,
             "report": self.report,
@@ -134,6 +136,8 @@ class AgentRuntime:
         self.scope_config: Any = None  # GovernanceConfig (U5); None = scope check off
         self.test_strength: Any = None  # async (changed_files) -> strong | weak | unknown
         self._scope_nudged = False
+        self._style_nudged = False
+        self._communication: dict[str, Any] | None = None
         self._scope: dict[str, Any] | None = None
         self.regression_gate = False
         self._verify_rounds = 0
@@ -272,6 +276,8 @@ class AgentRuntime:
         if hasattr(self.tools, "tainted"):
             self.tools.tainted = []
         self._scope_nudged = False
+        self._style_nudged = False
+        self._communication: dict[str, Any] | None = None
         self._scope = None
         self._step_id, self._step_iters = None, 0
         self._verified_steps = set()
@@ -448,6 +454,10 @@ class AgentRuntime:
                     self._guard(_guard_name(reason))
                 if verdict.accept:
                     nudge = await self._scope_check(response.text)
+                    if nudge:
+                        self._append({"role": "user", "content": nudge})
+                        continue
+                    nudge = self._communication_check(response.text)
                     if nudge:
                         self._append({"role": "user", "content": nudge})
                         continue
@@ -963,6 +973,31 @@ class AgentRuntime:
         )
         return True
 
+    def _communication_check(self, final_text: str) -> str | None:
+        """U9: measure every final answer; when the user set communication rules and the answer
+        breaks them, ask once for a rewrite of the answer only."""
+        from trendlab.agent.style import check, measure, nudge
+
+        metrics = measure(final_text)
+        issues = check(metrics, self.scope_config)
+        enforce = bool(
+            issues
+            and not self._style_nudged
+            and getattr(self.scope_config, "communication_nudge", True)
+        )
+        self._communication = {**metrics, "issues": issues, "nudged": self._style_nudged}
+        self.events.emit(
+            EventType.COMMUNICATION_CHECKED,
+            session_id=self.session_id,
+            **metrics,
+            issues=issues,
+            rewrite_requested=enforce,
+        )
+        if not enforce:
+            return None
+        self._style_nudged = True
+        return nudge(issues)
+
     async def _scope_check(self, final_text: str) -> str | None:
         """U5: diff shape vs budget, dependency gate, generated-test strength. One nudge per run;
         the report always lands on the RunResult."""
@@ -1149,6 +1184,7 @@ class AgentRuntime:
             unsupported_claims=claims,
             verification=self._verification,
             scope=self._scope,
+            communication=self._communication,
             status=status.value,
             text=text,
             report=report,

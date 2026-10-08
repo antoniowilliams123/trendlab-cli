@@ -123,6 +123,11 @@ def main_callback(
     worktree: str | None = typer.Option(
         None, "--worktree", help="Create a throwaway git worktree with this name and work there."
     ),
+    allow_path: list[str] = typer.Option(
+        [],
+        "--allow-path",
+        help="Change scope for this session: edits outside these globs are refused (repeatable).",
+    ),
     telegram: bool = typer.Option(
         False, "--telegram", help="Remote control from your Telegram chat for this session."
     ),
@@ -148,6 +153,8 @@ def main_callback(
         raise typer.Exit(2) from exc
     if max_cost is not None:
         config.limits.max_cost_usd = max_cost
+    if allow_path:
+        config.governance.change_allow = list(allow_path)
     if auto_edit:
         mode = PermissionMode.AUTO_EDIT
     if safe:
@@ -1117,6 +1124,38 @@ def rca_cmd(
                 console.print(f"  {label.replace('_', ' ')}: " + escape("; ".join(r[label])))
 
 
+@app.command("turns")
+def turns_cmd(
+    session_id: str = typer.Argument("latest", help="Session id, or 'latest' for this project."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    patch: bool = typer.Option(False, "--patch", help="Show full diffs, not just file stats."),
+) -> None:
+    """Turn-level review: one commit per completed turn on trendlab/turns/<session> (needs
+    [governance] commit_per_turn = true)."""
+    from trendlab.sessions.store import SessionStore
+    from trendlab.sessions.turns import branch_for, list_turns
+
+    root = project.resolve()
+    if session_id == "latest":
+        store = SessionStore(trendlab_home() / "sessions.db")
+        try:
+            latest = store.latest_session(str(root))
+        finally:
+            store.close()
+        if latest is None:
+            console.print("[dim]no session for this project[/dim]")
+            raise typer.Exit(code=1)
+        session_id = latest["id"]
+    log = list_turns(root, session_id, patch=patch)
+    if not log:
+        console.print(
+            f"[dim]no turn commits on {branch_for(session_id)} (turn commits are off unless "
+            "[governance] commit_per_turn = true)[/dim]"
+        )
+        return
+    typer.echo(log)
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
@@ -1337,6 +1376,13 @@ def stats_cmd(
         console.print(f"  tool breakers opened: {st['breakers_opened']}")
     if st.get("routes"):
         console.print("  routes: " + ", ".join(f"{k} ×{v}" for k, v in st["routes"].items()))
+    if st.get("communication"):
+        c = st["communication"]
+        console.print(
+            f"  answers: {c['answers']} · median {c['median_words']} words · reading ease "
+            f"{c['reading_ease']} · filler in {c['robospeak_rate']:.0%} · "
+            f"{c['constraint_breaks']} broke a set rule"
+        )
     oq = st.get("online_quality") or {}
     console.print(
         "  [neon]online quality[/neon]: "

@@ -503,10 +503,31 @@ class TrendLabApp:
         if self._run_checkpoint is not None and self.checkpoints is not None:
             self.checkpoints.seal(self._run_checkpoint["id"])
         self._save_state()
+        self._commit_turn(prompt, result)
         self._file_to_inbox(prompt, result)
         if self.hooks is not None:
             await self.hooks.run("task_complete", status=result.status)
         return result
+
+    def _commit_turn(self, prompt: str, result: RunResult) -> None:
+        """U9 prompt-level commits: snapshot the turn on trendlab/turns/<session>."""
+        if not self.config.governance.commit_per_turn or not result.changed_files:
+            return
+        from trendlab.sessions.turns import commit_turn
+
+        self._turns = getattr(self, "_turns", 0) + 1
+        try:
+            info = commit_turn(
+                self.project_root,
+                self.session_id,
+                prompt=prompt if isinstance(prompt, str) else str(prompt),
+                result=result,
+                turn=self._turns,
+            )
+        except Exception as exc:  # noqa: BLE001 — a turn commit must never fail the run
+            info = {"error": str(exc)[:200]}
+        if info:
+            self.events.emit(EventType.TURN_COMMITTED, session_id=self.session_id, **info)
 
     def _file_to_inbox(self, prompt: str, result: RunResult) -> None:
         """Failed runs and verifier rejections become inbox cards (cheap-model spec §7.2)."""
@@ -908,6 +929,13 @@ class TrendLabApp:
         )
 
     async def _before_mutation(self, files: list[str]) -> None:
+        allow = self.config.governance.change_allow
+        if allow:
+            from trendlab.agent.scope import ChangeScopeRefused, outside_scope
+
+            outside = outside_scope(files, allow, self.project_root)
+            if outside:
+                raise ChangeScopeRefused(outside, allow)
         if self.plan_gate is not None:
             await self.plan_gate.check(files)  # raises PlanRejected → mutation refused
         await self._checkpoint_before_mutation(files)
@@ -923,6 +951,9 @@ class TrendLabApp:
             from trendlab.prompts.drivers import driver_text
 
             base += driver_text(self.config, self.model_ref, root, self.data_dir)
+        from trendlab.agent.style import rules_text
+
+        base += rules_text(self.config.governance)  # U9: stated before, checked after
         return base
 
     def refresh_system_prompt(self) -> None:

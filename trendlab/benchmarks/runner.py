@@ -439,6 +439,10 @@ async def run_task(
             "verification": (result.verification or {}).get("verdict"),
             "stop_reason": result.stop_reason,
             "scope_ok": (result.scope or {}).get("ok"),
+            "answer_words": (result.communication or {}).get("words"),
+            "reading_ease": (result.communication or {}).get("reading_ease"),
+            "robospeak": len((result.communication or {}).get("robospeak") or []),
+            "undefined_acronyms": len((result.communication or {}).get("undefined_acronyms") or []),
             "test_strength": (result.scope or {}).get("test_strength"),
             "tool_calls": sum(d["calls"] for d in tools.values()),
             "tool_failures": sum(d["failed"] + d["skipped"] for d in tools.values()),
@@ -735,6 +739,19 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     )
     recalls = [r["plan_recall"] for r in ran if r.get("plan_recall") is not None]
     summary["plan_recall"] = round(sum(recalls) / len(recalls), 3) if recalls else None
+    spoken = [r for r in ran if r.get("answer_words") is not None]
+    if spoken:
+        words = sorted(r["answer_words"] for r in spoken)
+        eases = [r["reading_ease"] for r in spoken if r.get("reading_ease") is not None]
+        summary["communication"] = {
+            "answers": len(spoken),
+            "median_words": words[len(words) // 2],
+            "reading_ease": round(sum(eases) / len(eases), 1) if eases else None,
+            "robospeak_rate": round(sum(1 for r in spoken if r.get("robospeak")) / len(spoken), 3),
+            "undefined_acronym_rate": round(
+                sum(1 for r in spoken if r.get("undefined_acronyms")) / len(spoken), 3
+            ),
+        }
     planned = [r for r in ran if r.get("plan_steps")]
     if planned:
 

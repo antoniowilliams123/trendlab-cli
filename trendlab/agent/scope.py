@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 DEP_FILES = {
@@ -157,3 +158,36 @@ def scope_nudge(rep: ScopeReport) -> str:
         + ". Either trim the change back to what the task needs (remove collateral edits, "
         "unrequested helpers or dependencies) or state in one line why each is required."
     )
+
+
+class ChangeScopeRefused(Exception):
+    """An edit outside ``[governance] change_allow`` (U9 change-scope constraint)."""
+
+    def __init__(self, files: list[str], allow: list[str]) -> None:
+        super().__init__(", ".join(files))
+        self.files = files
+        self.allow = allow
+
+
+def outside_scope(files: list[str], allow: list[str], root: Path | None = None) -> list[str]:
+    """Files (relative or absolute under ``root``) that match none of the ``allow`` globs."""
+    if not allow:
+        return []
+    from fnmatch import fnmatch
+
+    out = []
+    for f in files:
+        rel = f
+        if root is not None:
+            try:
+                rel = (
+                    str(Path(f).resolve().relative_to(root.resolve()))
+                    if Path(f).is_absolute()
+                    else f
+                )
+            except ValueError:
+                rel = f
+        rel = rel.replace("\\", "/").lstrip("./")
+        if not any(fnmatch(rel, g) or fnmatch(rel, g.rstrip("/") + "/*") for g in allow):
+            out.append(rel)
+    return out

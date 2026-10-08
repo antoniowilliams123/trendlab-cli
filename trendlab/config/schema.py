@@ -245,7 +245,8 @@ class SessionsConfig(BaseModel):
 
 
 class GovernanceConfig(BaseModel):
-    """Scope, bloat and dependency control (uplift U5)."""
+    """Scope, bloat and dependency control (U5); communication, change scope, turn commits
+    (U9)."""
 
     scope_check: bool = True
     max_files_fix: int = Field(default=4, ge=1)
@@ -253,6 +254,16 @@ class GovernanceConfig(BaseModel):
     max_new_definitions_fix: int = Field(default=3, ge=0)
     dependency_gate: bool = True  # a dependency the task did not ask for must be justified
     test_strength_check: bool = True  # a new test must fail without the fix
+    # communication constraints (U9): measured on every answer, enforced when set
+    max_answer_words: int = Field(default=0, ge=0)  # 0 = no limit
+    plain_language: bool = False  # short sentences, acronyms spelled out, no walls of text
+    tone: str = ""  # e.g. "neutral and direct"
+    communication_nudge: bool = True  # one rewrite round when a set constraint is broken
+    # change-scope constraint: edits outside these globs are refused ([] = anywhere)
+    change_allow: list[str] = Field(default_factory=list)
+    # prompt-level commits: each completed turn with changes becomes a commit on the side
+    # branch trendlab/turns/<session>; the working branch, index and HEAD are never touched
+    commit_per_turn: bool = False
 
 
 class PlanGateConfig(BaseModel):
