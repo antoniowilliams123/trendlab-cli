@@ -89,6 +89,20 @@ CODE_EXT = {
 }
 
 
+def stem(word: str) -> str:
+    """Light suffix stripping so "reserving", "reserved", "reserves" and "reserve" all meet."""
+    base = word
+    for suffix, keep in (("ing", 4), ("ed", 4), ("es", 4), ("s", 4)):
+        if word.endswith(suffix) and len(word) - len(suffix) >= keep:
+            base = word[: -len(suffix)]
+            if suffix in {"ing", "ed"} and len(base) > 2 and base[-1] == base[-2]:
+                base = base[:-1]  # "stopped" → "stop"
+            break
+    if base.endswith("e") and len(base) > 4:
+        base = base[:-1]  # "reserve" → "reserv", the same stem as "reserving"
+    return base
+
+
 def tokens(text: str, *, code: bool = False) -> list[str]:
     stop = _STOP | _CODE_STOP if code else _STOP
     out = []
@@ -96,7 +110,7 @@ def tokens(text: str, *, code: bool = False) -> list[str]:
         parts = [p.lower() for p in _SPLIT.findall(word)] or [word.lower()]
         for p in parts:
             if len(p) > 1 and p not in stop:
-                out.append(p)
+                out.append(stem(p))
     return out
 
 
@@ -117,7 +131,28 @@ def chunk_file(rel: str, text: str, window: int = 40) -> list[Chunk]:
             for node in tree.body:
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                     s, e = node.lineno, getattr(node, "end_lineno", node.lineno) or node.lineno
-                    out.append(Chunk(rel, s, e, "\n".join(lines[s - 1 : e])))
+                    methods = (
+                        [
+                            m
+                            for m in node.body
+                            if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)
+                        ]
+                        if isinstance(node, ast.ClassDef)
+                        else []
+                    )
+                    if len(methods) < 2:
+                        out.append(Chunk(rel, s, e, "\n".join(lines[s - 1 : e])))
+                        continue
+                    # a class with several methods: one chunk per method, each led by the class
+                    # line for context, so a long class does not drown in BM25 length norms
+                    head = lines[s - 1]
+                    first = methods[0].lineno
+                    if first - 1 >= s:
+                        out.append(Chunk(rel, s, first - 1, "\n".join(lines[s - 1 : first - 1])))
+                    for m in methods:
+                        ms, me = m.lineno, getattr(m, "end_lineno", m.lineno) or m.lineno
+                        body = "\n".join(lines[ms - 1 : me])
+                        out.append(Chunk(rel, ms, me, f"{head}\n{body}"))
             if out:
                 head_end = min(c.start for c in out) - 1
                 if head_end > 0:

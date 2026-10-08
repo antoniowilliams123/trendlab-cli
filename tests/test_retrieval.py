@@ -27,12 +27,15 @@ from .test_agent_runtime import make_agent
 def test_tokens_split_identifiers():
     assert tokens("busiest_hours loadOrders HTTPServer") == [
         "busiest",
-        "hours",
+        "hour",
         "load",
-        "orders",
+        "order",
         "http",
         "server",
     ]
+    # light stemming: a requirement's "reserving" meets the code's "reserve"
+    assert tokens("reserving reserved reserves reserve") == ["reserv"] * 4
+    assert set(tokens("stopped stopping")) == {"stop"}
     assert "fix" in tokens("fix the bug") and "fix" not in tokens("fix the bug", code=True)
 
 

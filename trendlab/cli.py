@@ -1585,6 +1585,103 @@ def critique_cmd(
         )
 
 
+@app.command("spec")
+def spec_cmd(
+    spec: Path | None = typer.Argument(None, help="Specification file (markdown or text)."),
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    model: str | None = typer.Option(None, "--model", "-m"),
+    eval_: bool = typer.Option(
+        False, "--eval", help="Score the checker on a built-in spec with known answers."
+    ),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Specification traceability (U19): each requirement → implemented / partial / missing,
+    tested or not, with verified path:line evidence; drift against the previous check."""
+    import tempfile
+
+    from rich.markup import escape
+
+    from trendlab.agent.spec import (
+        SHOP_SPEC,
+        SHOP_TRUTH,
+        check,
+        drift,
+        extract,
+        state_path,
+    )
+    from trendlab.config.loader import load_config
+    from trendlab.telemetry.recorded import RecordedCaller
+
+    config = load_config()
+    ref = model or config.routing.get("verifier", config.defaults.model)
+
+    async def go(root: Path, text: str, where: str):
+        call = RecordedCaller(config, "spec", where, model=ref)
+        try:
+            reqs = await extract(call, text)
+            res = await check(call, root, reqs)
+            res["cost"] = round(call.cost, 4)
+            return res
+        finally:
+            await call.close()
+
+    if eval_:
+        from trendlab.benchmarks import suite as suite_mod
+
+        with tempfile.TemporaryDirectory(prefix="trendlab-suite-spec-") as tmp:
+            root = Path(tmp) / "repo"
+            suite_mod.materialize(suite_mod.get_task("py01-off_by_one"), root)
+            (root / "shop/util.py").write_text(suite_mod.PY_BASE["shop/util.py"])  # no defect
+            res = asyncio.run(go(root, SHOP_SPEC, "(benchmarks)"))
+        got = {r["id"]: r["status"] for r in res["results"]}
+        right = [i for i, st in SHOP_TRUTH.items() if got.get(i) == st]
+        res["accuracy"] = round(len(right) / len(SHOP_TRUTH), 3)
+        res["wrong"] = {
+            i: {"expected": st, "got": got.get(i)}
+            for i, st in SHOP_TRUTH.items()
+            if got.get(i) != st
+        }
+        if output == "json":
+            typer.echo(json.dumps(res, indent=2))
+        else:
+            console.print(
+                f"[neon]spec eval[/neon] {ref}: accuracy {res['accuracy']:.0%} on "
+                f"{len(SHOP_TRUTH)} requirements · evidence verified "
+                f"{res['evidence_verified_share']:.0%} · ${res['cost']:.4f} · wrong: {res['wrong']}"
+            )
+        return
+    if spec is None:
+        raise typer.BadParameter("give a spec file, or --eval")
+    root = project.resolve()
+    prev = None
+    try:
+        prev = json.loads(state_path(root).read_text())
+    except (OSError, ValueError):
+        pass
+    res = asyncio.run(go(root, spec.read_text(), str(root)))
+    res["drift"] = drift(prev, res)
+    state_path(root).parent.mkdir(parents=True, exist_ok=True)
+    state_path(root).write_text(json.dumps(res, indent=1))
+    if output == "json":
+        typer.echo(json.dumps(res, indent=2))
+        return
+    console.print(
+        f"[neon]spec[/neon] {spec.name}: {res['implemented']}/{res['requirements']} implemented, "
+        f"{res['partial']} partial, {len(res['missing'])} missing · tested "
+        f"{res['tested_share']:.0%} · evidence verified {res['evidence_verified_share']:.0%} · "
+        f"${res['cost']:.4f}"
+    )
+    for r in res["results"]:
+        mark = {"implemented": "✓", "partial": "~", "missing": "✗"}[r["status"]]
+        console.print(
+            f"  {mark} {r['id']} {escape(r['text'][:80])}"
+            + (" [tested]" if r["tested"] else "")
+            + (f" — {escape(r['note'][:80])}" if r["status"] != "implemented" else "")
+        )
+    for d in res["drift"]:
+        console.print(f"  [danger]drift[/danger] {d['id']}: {d['was']} → {d['now']}")
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
