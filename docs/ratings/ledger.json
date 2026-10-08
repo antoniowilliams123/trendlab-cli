@@ -1,0 +1,718 @@
+{
+ "52": {
+  "rating": 9,
+  "evidence": "git tools hidden outside repos, run_tests offered only with a test command (2b3e3ae, 777f673); live dashboard tool success rose once misrouted calls stopped"
+ },
+ "53": {
+  "rating": 8,
+  "evidence": "selection is shaped by tool visibility rules and the route; no learned policy"
+ },
+ "55": {
+  "rating": 9,
+  "evidence": "ask_json: JSON mode on OpenAI-compatible and Ollama, schema-checked parse with one repair round (777f673, tests)"
+ },
+ "56": {
+  "rating": 9,
+  "evidence": "pydantic output models for verifier, router, judge, red-team via ask_json (777f673)"
+ },
+ "57": {
+  "rating": 9,
+  "evidence": "every structured reply validated against its model; invalid → repair → explicit unusable (test_judge_quality)"
+ },
+ "59": {
+  "rating": 8,
+  "evidence": "runtime invariants + edit postconditions enforce contracts; tool schemas not versioned"
+ },
+ "60": {
+  "rating": 8,
+  "evidence": "postconditions per edit tool (hash change, syntax parse) (93a1ae0)"
+ },
+ "61": {
+  "rating": 8,
+  "evidence": "read-before-edit precondition measured per run (read_before_edit metric)"
+ },
+ "62": {
+  "rating": 9,
+  "evidence": "edit postconditions: file hash and syntax parse, TOOL_POSTCONDITION_FAILED event, tests (93a1ae0)"
+ },
+ "63": {
+  "rating": 9,
+  "evidence": "runtime invariants checked after every THINKING step, INVARIANT_VIOLATED event, tests (777f673)"
+ },
+ "64": {
+  "rating": 9,
+  "evidence": "same invariant checker; violations recorded on the run and in the bench row (777f673)"
+ },
+ "74": {
+  "rating": 9,
+  "evidence": "ToolHealth circuit breaker: opens after consecutive failures with a readable reason, TOOL_CIRCUIT_OPENED, test_tool_health (93a1ae0)"
+ },
+ "76": {
+  "rating": 9,
+  "evidence": "idempotent write/patch: unchanged content is a no-op, no FILE_CHANGED, no postcondition rerun (777f673, tests)"
+ },
+ "79": {
+  "rating": 9,
+  "evidence": "router picks a route and its settings (planner/verifier gating, safety floor); 95% rules / 98% model on a 40-prompt held-out set (2d7cd45)"
+ },
+ "80": {
+  "rating": 9,
+  "evidence": "Flash router model: 98% held-out accuracy, Brier 0.04, ~$0.0002 per call, never routes risky work below the floor (2d7cd45)"
+ },
+ "81": {
+  "rating": 8,
+  "evidence": "intent classified by a model, not keywords; no embedding index by design"
+ },
+ "93": {
+  "rating": 9,
+  "evidence": "spans, trace tree, OpenTelemetry export, session search, stats, retention, dashboard (8649a00, 2b3e3ae)"
+ },
+ "95": {
+  "rating": 9,
+  "evidence": "trendlab trace renders the span tree per session; test_observability_depth (8649a00)"
+ },
+ "96": {
+  "rating": 9,
+  "evidence": "span id + parent id + duration on every event; SPAN_STARTED/ENDED (8649a00)"
+ },
+ "100": {
+  "rating": 9,
+  "evidence": "per-span durations, wall-time CI per task in bench (8649a00, 3a17e49)"
+ },
+ "102": {
+  "rating": 9,
+  "evidence": "81-task suite across 6 tiers, SUITE_VERSION stamped, --verify-suite self-check (244b518)"
+ },
+ "103": {
+  "rating": 9,
+  "evidence": "hidden tests + reference answers + holdout ids per task (380a06e, ddf4977)"
+ },
+ "107": {
+  "rating": 9,
+  "evidence": "hidden tests written outside the agent's view decide pass/fail"
+ },
+ "108": {
+  "rating": 9,
+  "evidence": "hidden tests and reference content are the ground truth for verifier precision/recall"
+ },
+ "109": {
+  "rating": 9,
+  "evidence": "reference_content per task; exact_match and ref_similarity per row (380a06e)"
+ },
+ "110": {
+  "rating": 9,
+  "evidence": "verifier rubric: correctness, minimality, safety, tests 0-2 (242a16c)"
+ },
+ "111": {
+  "rating": 9,
+  "evidence": "bench --scorecard (380a06e)"
+ },
+ "112": {
+  "rating": 9,
+  "evidence": "verifier scored against hidden tests: precision, recall, false-pass rate (380a06e)"
+ },
+ "113": {
+  "rating": 9,
+  "evidence": "verifier + pairwise judge + second opinion, all measured against ground truth (242a16c)"
+ },
+ "114": {
+  "rating": 9,
+  "evidence": "pairwise judge with position swap; inconsistent orders → tie (test_judge_quality)"
+ },
+ "115": {
+  "rating": 9,
+  "evidence": "pointwise verdict with rubric and confidence (242a16c)"
+ },
+ "116": {
+  "rating": 9,
+  "evidence": "rubric in the verifier schema, mean rubric in summaries (242a16c, 380a06e)"
+ },
+ "117": {
+  "rating": 9,
+  "evidence": "exact_match vs reference per row (380a06e)"
+ },
+ "118": {
+  "rating": 8,
+  "evidence": "ref_similarity (sequence ratio) per row; lexical, not semantic"
+ },
+ "121": {
+  "rating": 9,
+  "evidence": "pass rate with Wilson interval (3a17e49)"
+ },
+ "122": {
+  "rating": 9,
+  "evidence": "completion with interval and pass@k (3a17e49)"
+ },
+ "123": {
+  "rating": 9,
+  "evidence": "per-tool success rate in every bench summary and in the dashboard (3a17e49, 93a1ae0)"
+ },
+ "124": {
+  "rating": 8,
+  "evidence": "unsupported-claims detector (negation-aware) gives a hallucination rate per row; not yet checked against human labels (380a06e, 004f295)"
+ },
+ "125": {
+  "rating": 9,
+  "evidence": "error_rate in every summary (3a17e49)"
+ },
+ "126": {
+  "rating": 9,
+  "evidence": "classifier_metrics on verifier, router and injection scanner (380a06e)"
+ },
+ "127": {
+  "rating": 9,
+  "evidence": "same; scanner held-out recall 87%, router recall per route (004f295)"
+ },
+ "128": {
+  "rating": 9,
+  "evidence": "F1 reported with precision/recall (380a06e)"
+ },
+ "129": {
+  "rating": 9,
+  "evidence": "false-pass and false-flag rates for the verifier; scanner FP 0.035% on real text (004f295)"
+ },
+ "130": {
+  "rating": 9,
+  "evidence": "false-negative rate reported for scanner and verifier (380a06e)"
+ },
+ "131": {
+  "rating": 9,
+  "evidence": "ECE on verifier confidence and router (380a06e)"
+ },
+ "132": {
+  "rating": 9,
+  "evidence": "Brier score on verifier and router (router 0.04) (380a06e, 2d7cd45)"
+ },
+ "133": {
+  "rating": 9,
+  "evidence": "[verification] min_confidence 0.5: low-confidence passes are not surfaced as passes (244b518)"
+ },
+ "134": {
+  "rating": 9,
+  "evidence": "bench --gate: significance + cost-ratio thresholds (3a17e49)"
+ },
+ "136": {
+  "rating": 9,
+  "evidence": "nightly canary with cause hints, history file, Telegram alert on drop (242a16c, 2b3e3ae)"
+ },
+ "137": {
+  "rating": 9,
+  "evidence": "canary flags cost and wall-time regressions as well as pass drops (2b3e3ae)"
+ },
+ "138": {
+  "rating": 9,
+  "evidence": "canary pass-rate drop alert with interval (242a16c)"
+ },
+ "139": {
+  "rating": 8,
+  "evidence": "SUITE_VERSION stamped on rows; history comparable only within a version"
+ },
+ "140": {
+  "rating": 8,
+  "evidence": "profile_sessions + total-variation distance over real sessions; drift --periods (2b3e3ae, 244b518)"
+ },
+ "141": {
+  "rating": 9,
+  "evidence": "prompt_hash on every record; drift report flags changes (242a16c)"
+ },
+ "142": {
+  "rating": 9,
+  "evidence": "served model version stamped on every record and cost row (242a16c)"
+ },
+ "143": {
+  "rating": 8,
+  "evidence": "shift report showed the suite did not match real work; realistic tier added to close it (2b3e3ae)"
+ },
+ "144": {
+  "rating": 9,
+  "evidence": "adversarial tier ad01-ad05 live: harness 5/5 safe and fixed (cc36a93)"
+ },
+ "145": {
+  "rating": 9,
+  "evidence": "red-team generator; agent resisted 15/15 generated attacks; scanner held-out recall 87% after 3 rounds (244b518, 004f295)"
+ },
+ "146": {
+  "rating": 8,
+  "evidence": "bench --concurrency runs candidates in parallel; no sustained stress run recorded"
+ },
+ "147": {
+  "rating": 6,
+  "evidence": "concurrency flag only; no load profile"
+ },
+ "149": {
+  "rating": 7,
+  "evidence": "generated-test strength check (fails when the fix is reverted) (c862202); no edge-case coverage metric"
+ },
+ "150": {
+  "rating": 9,
+  "evidence": "long tier lh01-lh04 live: bare 4/4, harness 4/4, harness read-before-edit 4/4 vs 3/4 (2026-10-08)"
+ },
+ "151": {
+  "rating": 9,
+  "evidence": "multiturn tier mt01-mt04 live: both 4/4, follow-ups scripted per task (2026-10-08)"
+ },
+ "152": {
+  "rating": 9,
+  "evidence": "read_before_edit, validated_after_edit, tool success per row (cc36a93)"
+ },
+ "153": {
+  "rating": 8,
+  "evidence": "retrieval recall@3 81% offline (91% symptom-only) (e625908); live A/B in progress"
+ },
+ "154": {
+  "rating": 5,
+  "evidence": "plan_recall vs reference steps exists; planning package U7 not done"
+ },
+ "156": {
+  "rating": 9,
+  "evidence": "safe + violations per row, forbid checks (exists/absent/unchanged/no_command) (cc36a93)"
+ },
+ "158": {
+  "rating": 9,
+  "evidence": "--runs N, pass@k, flaky tasks list, interval (3a17e49)"
+ },
+ "159": {
+  "rating": 9,
+  "evidence": "wall-time per task with bootstrap interval (3a17e49)"
+ },
+ "160": {
+  "rating": 9,
+  "evidence": "cost per task with interval; cost ratio in the gate (3a17e49)"
+ },
+ "161": {
+  "rating": 8,
+  "evidence": "trendlab label: blind human labelling of runs (ddf4977)"
+ },
+ "162": {
+  "rating": 8,
+  "evidence": "label hides profile/model from the labeller (ddf4977)"
+ },
+ "163": {
+  "rating": 8,
+  "evidence": "Cohen's kappa between human labels and the verifier (ddf4977)"
+ },
+ "164": {
+  "rating": 9,
+  "evidence": "second-opinion verifier with agreement events (242a16c)"
+ },
+ "165": {
+  "rating": 8,
+  "evidence": "judge-bias probe: padded and restyled diffs must not flip verdicts (ddf4977)"
+ },
+ "166": {
+  "rating": 8,
+  "evidence": "same probe, reported per judge model"
+ },
+ "167": {
+  "rating": 9,
+  "evidence": "position swap on every pairwise call (test_judge_quality)"
+ },
+ "168": {
+  "rating": 8,
+  "evidence": "pad_diff probe measures verbosity bias (ddf4977)"
+ },
+ "169": {
+  "rating": 8,
+  "evidence": "restyle_diff probe measures style bias (ddf4977)"
+ },
+ "171": {
+  "rating": 9,
+  "evidence": "leakage guard on every row: hidden-test text must not appear in the prompt (ddf4977)"
+ },
+ "172": {
+  "rating": 9,
+  "evidence": "same guard; holdout ids never used for tuning (ddf4977)"
+ },
+ "173": {
+  "rating": 6,
+  "evidence": "prompt-side leakage guarded; model training contamination cannot be checked from a harness"
+ },
+ "174": {
+  "rating": 9,
+  "evidence": "injection scanner on fetched/read content + taint gating that forces approval (cc36a93, 004f295)"
+ },
+ "175": {
+  "rating": 9,
+  "evidence": "indirect injection in files/tool output scanned; adversarial tier live 5/5 (cc36a93)"
+ },
+ "176": {
+  "rating": 7,
+  "evidence": "red-team attacks resisted; no dedicated jailbreak corpus"
+ },
+ "178": {
+  "rating": 8,
+  "evidence": "test-tampering bait task ad04 + 'unchanged' forbid checks (cc36a93)"
+ },
+ "179": {
+  "rating": 8,
+  "evidence": "hidden tests the agent cannot see; scope checks catch gaming by deletion"
+ },
+ "180": {
+  "rating": 8,
+  "evidence": "agent cannot see or edit the grader; tampering bait measured"
+ },
+ "181": {
+  "rating": 9,
+  "evidence": "holdout split; router overfit caught (100% suite vs 68% held-out) and corrected (2d7cd45)"
+ },
+ "182": {
+  "rating": 9,
+  "evidence": "HOLDOUT_IDS + --holdout; router held-out set in tests/data (2d7cd45)"
+ },
+ "183": {
+  "rating": 9,
+  "evidence": "engine nightly canary (10 fixed tasks) at 03:30 (3a17e49, 242a16c)"
+ },
+ "185": {
+  "rating": 8,
+  "evidence": "online quality from live sessions: 94.7% validated-after-edit rate (244b518)"
+ },
+ "187": {
+  "rating": 9,
+  "evidence": "bench --compare with exact paired sign test and intervals (3a17e49)"
+ },
+ "188": {
+  "rating": 9,
+  "evidence": "gate compares challenger to champion on the same tasks (3a17e49)"
+ },
+ "189": {
+  "rating": 9,
+  "evidence": "nightly canary + history (3a17e49)"
+ },
+ "190": {
+  "rating": 9,
+  "evidence": "bench --gate exits non-zero on a significant drop or cost blow-out (3a17e49)"
+ },
+ "191": {
+  "rating": 9,
+  "evidence": "same gate used as the release check (3a17e49)"
+ },
+ "196": {
+  "rating": 8,
+  "evidence": "bench --counterfactual reruns failed tasks under another profile (244b518)"
+ },
+ "197": {
+  "rating": 9,
+  "evidence": "7 ablations + dotted overrides + --ablation (244b518)"
+ },
+ "198": {
+  "rating": 8,
+  "evidence": "bench --sweep over a config key (244b518)"
+ },
+ "199": {
+  "rating": 9,
+  "evidence": "Wilson and bootstrap intervals in every summary (3a17e49)"
+ },
+ "200": {
+  "rating": 9,
+  "evidence": "exact paired sign test in --compare (3a17e49)"
+ },
+ "460": {
+  "rating": 9,
+  "evidence": "injection scanner + taint gating; held-out recall 87%, real-text FP 0.035% (cc36a93, 004f295)"
+ },
+ "455": {
+  "rating": 7,
+  "evidence": "red-team generator enumerates goals x locations (244b518); no written threat model"
+ },
+ "504": {
+  "rating": 9,
+  "evidence": "nightly canary + online quality on live sessions (3a17e49, 244b518)"
+ },
+ "549": {
+  "rating": 9,
+  "evidence": "no_collateral metric + regression gate per run (3a17e49, c862202)"
+ },
+ "552": {
+  "rating": 9,
+  "evidence": "diff-shape budget from the task, scope nudge when exceeded (c862202)"
+ },
+ "553": {
+  "rating": 9,
+  "evidence": "same budget: files, lines, new functions/classes counted per run (c862202)"
+ },
+ "554": {
+  "rating": 8,
+  "evidence": "new-function/class and touched-file counts flag refactors; no semantic refactor detector"
+ },
+ "555": {
+  "rating": 8,
+  "evidence": "same diff-shape signal (c862202)"
+ },
+ "560": {
+  "rating": 8,
+  "evidence": "diff shape vs task budget; scope_ok per bench row (c862202)"
+ },
+ "561": {
+  "rating": 7,
+  "evidence": "caught only when it breaks the line/file budget"
+ },
+ "562": {
+  "rating": 9,
+  "evidence": "new-file count in the scope budget; extraneous files nudged (c862202)"
+ },
+ "563": {
+  "rating": 9,
+  "evidence": "dependency gate: new dependencies need approval (c862202)"
+ },
+ "564": {
+  "rating": 9,
+  "evidence": "same gate on manifests (c862202)"
+ },
+ "565": {
+  "rating": 9,
+  "evidence": "generated-test strength: the new test must fail when the fix is reverted (c862202)"
+ },
+ "567": {
+  "rating": 6,
+  "evidence": "test-strength check only; no edge-case enumeration"
+ },
+ "576": {
+  "rating": 8,
+  "evidence": "diff-shape budget + nudge (c862202)"
+ },
+ "577": {
+  "rating": 8,
+  "evidence": "same (c862202)"
+ },
+ "578": {
+  "rating": 8,
+  "evidence": "same (c862202)"
+ },
+ "579": {
+  "rating": 7,
+  "evidence": "new class/function counts only"
+ },
+ "580": {
+  "rating": 7,
+  "evidence": "same signal; no design-level check"
+ },
+ "582": {
+  "rating": 9,
+  "evidence": "verifier confidence floor: unverified passes are not surfaced as passes (244b518)"
+ },
+ "590": {
+  "rating": 8,
+  "evidence": "--runs N exposes flaky tasks and pass@k (3a17e49)"
+ },
+ "591": {
+  "rating": 8,
+  "evidence": "same, plus invariants on every step (777f673)"
+ },
+ "592": {
+  "rating": 8,
+  "evidence": "same (3a17e49)"
+ },
+ "593": {
+  "rating": 8,
+  "evidence": "canary history + gate stops a fix that breaks another task (3a17e49)"
+ },
+ "594": {
+  "rating": 8,
+  "evidence": "canary with cause hints flags recurrence (2b3e3ae)"
+ },
+ "596": {
+  "rating": 9,
+  "evidence": "nightly canary with cause hints and Telegram alert (242a16c, 2b3e3ae)"
+ },
+ "694": {
+  "rating": 9,
+  "evidence": "every run stored with spans; search, stats, export from one store (8649a00)"
+ },
+ "695": {
+  "rating": 8,
+  "evidence": "Claude Code sessions import into the same store (8649a00)"
+ },
+ "696": {
+  "rating": 8,
+  "evidence": "cross-harness import (Claude Code) + one dashboard (8649a00, 2b3e3ae)"
+ },
+ "697": {
+  "rating": 8,
+  "evidence": "served model and provider stamped per record (242a16c)"
+ },
+ "698": {
+  "rating": 9,
+  "evidence": "trendlab search, exact and --ranked (8649a00, e625908)"
+ },
+ "699": {
+  "rating": 6,
+  "evidence": "ranked lexical (BM25) search, not semantic by design (e625908)"
+ },
+ "700": {
+  "rating": 9,
+  "evidence": "trendlab search exact match over messages and events (8649a00)"
+ },
+ "703": {
+  "rating": 9,
+  "evidence": "[sessions] retention + prune job in the engine (8649a00)"
+ },
+ "704": {
+  "rating": 9,
+  "evidence": "same, configurable days, test (8649a00)"
+ },
+ "705": {
+  "rating": 9,
+  "evidence": "stats: routes, tool success, online quality (8649a00, 244b518)"
+ },
+ "706": {
+  "rating": 9,
+  "evidence": "same (8649a00)"
+ },
+ "707": {
+  "rating": 9,
+  "evidence": "trendlab dashboard: HTML report from the store (2b3e3ae)"
+ },
+ "708": {
+  "rating": 8,
+  "evidence": "one HTML dashboard for runs, costs, tools, routes"
+ },
+ "709": {
+  "rating": 8,
+  "evidence": "retention, prune and export (8649a00, 2b3e3ae)"
+ },
+ "714": {
+  "rating": 8,
+  "evidence": "importer maps Claude Code transcripts to TrendLab events (8649a00)"
+ },
+ "716": {
+  "rating": 8,
+  "evidence": "one event schema for native and imported sessions"
+ },
+ "717": {
+  "rating": 8,
+  "evidence": "same; OTel-style export (8649a00)"
+ },
+ "718": {
+  "rating": 6,
+  "evidence": "JSONL/OTel export only; no warehouse"
+ },
+ "719": {
+  "rating": 9,
+  "evidence": "search + ranked search over the store (8649a00, e625908)"
+ },
+ "720": {
+  "rating": 9,
+  "evidence": "trace tree + search (8649a00)"
+ },
+ "721": {
+  "rating": 9,
+  "evidence": "same (8649a00)"
+ },
+ "722": {
+  "rating": 9,
+  "evidence": "span tree + OTel export + prompt hash + served model (8649a00, 242a16c)"
+ },
+ "723": {
+  "rating": 8,
+  "evidence": "capability map per tier and defect kind (380a06e)"
+ },
+ "724": {
+  "rating": 8,
+  "evidence": "capability map shows where each profile fails (380a06e)"
+ },
+ "725": {
+  "rating": 7,
+  "evidence": "tier breakdown shows edges; small n per cell"
+ },
+ "726": {
+  "rating": 8,
+  "evidence": "holdout + leakage guard (ddf4977)"
+ },
+ "727": {
+  "rating": 9,
+  "evidence": "router overfit caught on held-out data and corrected (2d7cd45)"
+ },
+ "728": {
+  "rating": 8,
+  "evidence": "holdout and online quality keep the suite honest"
+ },
+ "729": {
+  "rating": 8,
+  "evidence": "distribution shift report vs real sessions (2b3e3ae)"
+ },
+ "730": {
+  "rating": 8,
+  "evidence": "same (2b3e3ae)"
+ },
+ "731": {
+  "rating": 8,
+  "evidence": "scorecard carries intervals and holdout numbers (380a06e)"
+ },
+ "734": {
+  "rating": 9,
+  "evidence": "realistic tier built from real-session distribution + online quality (2b3e3ae, 244b518)"
+ },
+ "736": {
+  "rating": 9,
+  "evidence": "paired harness vs bare comparisons with significance (3a17e49)"
+ },
+ "738": {
+  "rating": 7,
+  "evidence": "gate and canary keep changes eval-driven"
+ },
+ "740": {
+  "rating": 8,
+  "evidence": "capability map (380a06e)"
+ },
+ "745": {
+  "rating": 9,
+  "evidence": "realistic tier: short prompts and questions like real use (2b3e3ae)"
+ },
+ "746": {
+  "rating": 8,
+  "evidence": "red-team attacks generated across goals and locations (244b518)"
+ },
+ "747": {
+  "rating": 9,
+  "evidence": "online quality from live sessions; replay of real sessions (244b518)"
+ },
+ "762": {
+  "rating": 9,
+  "evidence": "router gates planner and verifier by route; Flash review for small changes (2d7cd45)"
+ },
+ "764": {
+  "rating": 9,
+  "evidence": "cost ratio is part of the release gate (3a17e49)"
+ },
+ "784": {
+  "rating": 8,
+  "evidence": "--counterfactual and --compare across profiles/models (244b518)"
+ },
+ "820": {
+  "rating": 6,
+  "evidence": "imports another harness's sessions; tools still TrendLab-native"
+ },
+ "821": {
+  "rating": 6,
+  "evidence": "same"
+ },
+ "823": {
+  "rating": 7,
+  "evidence": "session import from another harness (8649a00)"
+ },
+ "842": {
+  "rating": 8,
+  "evidence": "scope budget + dependency gate + test strength (c862202)"
+ },
+ "843": {
+  "rating": 8,
+  "evidence": "same, measured per bench row"
+ },
+ "844": {
+  "rating": 8,
+  "evidence": "same"
+ },
+ "853": {
+  "rating": 9,
+  "evidence": "spans and stats were built before routing and retrieval were tuned"
+ },
+ "854": {
+  "rating": 9,
+  "evidence": "router shipped only after held-out measurement (2d7cd45)"
+ },
+ "855": {
+  "rating": 9,
+  "evidence": "release gate with intervals (3a17e49)"
+ }
+}
