@@ -440,6 +440,7 @@ async def run_task(
             "verification": (result.verification or {}).get("verdict"),
             "stop_reason": result.stop_reason,
             "scope_ok": (result.scope or {}).get("ok"),
+            "over_latency_budget": (result.latency or {}).get("over"),
             "answer_words": (result.communication or {}).get("words"),
             "reading_ease": (result.communication or {}).get("reading_ease"),
             "robospeak": len((result.communication or {}).get("robospeak") or []),
@@ -1080,6 +1081,11 @@ def load_profile(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         "crashed": sum(1 for r in rows if r.get("status") == "CRASHED"),
         "provider_errors": sum(
             1 for r in rows if str(r.get("failure_code") or "").startswith("PROVIDER")
+        ),
+        "within_latency_budget": round(
+            sum(1 for r in rows if r.get("over_latency_budget") is False)
+            / max(1, sum(1 for r in rows if r.get("over_latency_budget") is not None)),
+            3,
         ),
     }
 

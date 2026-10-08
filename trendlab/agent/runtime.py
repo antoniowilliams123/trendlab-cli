@@ -63,6 +63,7 @@ class RunResult:
     verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
     scope: dict[str, Any] | None = None  # diff shape, budget and test strength (uplift U5)
     communication: dict[str, Any] | None = None  # answer metrics and issues (uplift U9)
+    latency: dict[str, Any] | None = None  # route latency budget and whether it was exceeded
     unsupported_claims: list[str] = field(default_factory=list)  # claims the evidence contradicts
 
     def to_json(self) -> dict[str, Any]:
@@ -71,6 +72,7 @@ class RunResult:
             "verification": self.verification,
             "scope": self.scope,
             "communication": self.communication,
+            "latency": self.latency,
             "unsupported_claims": self.unsupported_claims,
             "text": self.text,
             "report": self.report,
@@ -139,6 +141,7 @@ class AgentRuntime:
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
+        self._latency_nudged = False
         self._scope: dict[str, Any] | None = None
         self.regression_gate = False
         self._verify_rounds = 0
@@ -284,6 +287,7 @@ class AgentRuntime:
         self._style_nudged = False
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
+        self._latency_nudged = False
         self._scope = None
         self._step_id, self._step_iters = None, 0
         self._verified_steps = set()
@@ -360,6 +364,7 @@ class AgentRuntime:
                 if self._cancel.is_set():
                     stop_reason, status = "canceled by user", AgentState.CANCELED
                     break
+                self._latency_check(started)
                 self.iterations += 1
                 self._drain_steering()
                 if await self._track_step():
@@ -511,6 +516,36 @@ class AgentRuntime:
         for name in sorted(self._skills_loaded):
             self.events.emit(EventType.SKILL_UNLOADED, session_id=self.session_id, name=name)
         return self._finish(status, text, stop_reason, started)
+
+    def latency_budget(self) -> float | None:
+        budgets = getattr(self.limits, "latency_budget_s", None) or {}
+        kind = getattr(self._route, "kind", None) or "small_fix"
+        return budgets.get(kind)
+
+    def _latency_check(self, started: float) -> None:
+        """Soft latency budget: once over it, ask once for the smallest complete result."""
+        budget = self.latency_budget()
+        if not budget or self._latency_nudged:
+            return
+        elapsed = time.monotonic() - started
+        if elapsed <= budget:
+            return
+        self._latency_nudged = True
+        self.events.emit(
+            EventType.BUDGET_WARNING,
+            session_id=self.session_id,
+            kind="latency",
+            elapsed_s=round(elapsed, 1),
+            budget_s=budget,
+        )
+        self._append(
+            {
+                "role": "user",
+                "content": f"Time check: this task has taken {elapsed:.0f}s against a budget of "
+                f"{budget:.0f}s for this kind of request. Finish the smallest complete version "
+                "now: validate it and report what is done and what is left.",
+            }
+        )
 
     def _limit_hit(self, started: float) -> str | None:
         if self.iterations >= self.limits.max_iterations:
@@ -1206,6 +1241,7 @@ class AgentRuntime:
             verification=self._verification,
             scope=self._scope,
             communication=self._communication,
+            latency={"budget_s": self.latency_budget(), "over": self._latency_nudged},
             status=status.value,
             text=text,
             report=report,

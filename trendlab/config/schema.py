@@ -49,6 +49,11 @@ class LimitsConfig(BaseModel):
     step_iterations: int = Field(default=12, ge=3, le=100)
     # Warn when session cost reaches this fraction of max_cost_usd.
     warn_at_fraction: float = Field(default=0.8, ge=0.0, le=1.0)
+    # Latency budget per route, seconds (U14): past it the agent is told once to wrap up with
+    # the smallest complete result. A soft budget; max_wall_clock_minutes is the hard stop.
+    latency_budget_s: dict[str, float] = Field(
+        default_factory=lambda: {"question": 90, "small_fix": 300, "feature": 900, "risky": 900}
+    )
 
 
 class ContextConfig(BaseModel):

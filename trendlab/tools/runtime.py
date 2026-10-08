@@ -107,6 +107,25 @@ class ToolRuntime:
             return "no test command is known for this project; run the tests with shell"
         return None
 
+    def _fallback_call(self, call: ToolCall) -> ToolCall | None:
+        """A call that does the same job with another tool, when one exists."""
+        if call.name == "run_tests":
+            kind = str(call.arguments.get("kind") or "test")
+            cmd = (self.ctx.validation_commands or {}).get(kind)
+            if cmd:
+                extra = str(call.arguments.get("extra_args") or "").strip()
+                return ToolCall(
+                    id=f"{call.id}-fallback",
+                    name="shell",
+                    arguments={"command": f"{cmd} {extra}".strip()},
+                )
+        if call.name == "list_directory":
+            path = str(call.arguments.get("path") or ".").rstrip("/")
+            return ToolCall(
+                id=f"{call.id}-fallback", name="glob", arguments={"pattern": f"{path}/*"}
+            )
+        return None
+
     def visible_schemas(self) -> list[dict[str, Any]]:
         return [
             t.schema()
@@ -152,6 +171,23 @@ class ToolRuntime:
             self.health.record(
                 tool.name, ok=False, failed=False, skipped=True, ms=0, error="circuit open"
             )
+            fallback = self._fallback_call(call)
+            if fallback is not None and not self.health.blocked(fallback.name):
+                # automatic tool fallback (U4): the same job through a working tool
+                self.events.emit(
+                    EventType.RECOVERY,
+                    session_id=self.ctx.session_id,
+                    failure="TOOL_CIRCUIT_OPEN",
+                    action="tool_fallback",
+                    tool=call.name,
+                    fallback=fallback.name,
+                )
+                result = await self._execute(fallback)
+                result.output = (
+                    f"[{call.name} is paused; ran it through {fallback.name} instead]\n"
+                    + (result.output or "")
+                )
+                return result
             return self._skip(call, "circuit_open", f"PAUSED: {paused}", detail=tool.name)
         try:
             args = tool.parse(call.arguments)

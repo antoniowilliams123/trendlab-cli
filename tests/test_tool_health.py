@@ -121,3 +121,78 @@ async def test_git_tools_hidden_outside_a_repository(
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     rt.ctx.project_root = repo / "sub"  # a subdirectory of a repo still counts
     assert "git_status" in {s["function"]["name"] for s in rt.visible_schemas()}
+
+
+async def test_paused_run_tests_falls_back_to_shell(
+    project: Path, manager_factory, events, recorder
+):
+    import time
+
+    from trendlab.config.schema import PermissionMode
+    from trendlab.permissions.engine import PermissionEngine
+    from trendlab.providers.base import ToolCall
+    from trendlab.telemetry.events import EventType
+    from trendlab.tools.base import ToolContext
+    from trendlab.tools.registry import default_registry
+    from trendlab.tools.runtime import ToolRuntime
+
+    mgr = manager_factory()
+    rt = ToolRuntime(
+        default_registry(),
+        PermissionEngine(PermissionMode.UNSAFE),
+        mgr,
+        events,
+        ToolContext(
+            project_root=project,
+            session_id=mgr.session_id,
+            validation_commands={"test": "python3 -c 'print(\"suite ok\")'"},
+        ),
+    )
+    s = rt.health._s("run_tests")
+    s.open_until, s.consecutive_failures, s.last_error = time.monotonic() + 60, 3, "boom"
+    r = await rt.execute(ToolCall(id="t", name="run_tests", arguments={"kind": "test"}))
+    assert r.ok and r.output.startswith("[run_tests is paused; ran it through shell instead]")
+    assert "suite ok" in r.output
+    rec = [e.data for e in recorder.of_type(EventType.RECOVERY)]
+    assert rec and rec[-1]["action"] == "tool_fallback" and rec[-1]["fallback"] == "shell"
+    # no fallback exists for this tool: it is skipped with the readable reason
+    s2 = rt.health._s("web_fetch")
+    s2.open_until, s2.consecutive_failures, s2.last_error = time.monotonic() + 60, 3, "x"
+    r2 = await rt.execute(ToolCall(id="w", name="web_fetch", arguments={"url": "https://e.com"}))
+    assert not r2.ok and "PAUSED" in r2.output
+
+
+async def test_latency_budget_nudges_once(project: Path, manager_factory, events, recorder):
+    from trendlab.config.schema import AppConfig, PermissionMode
+    from trendlab.providers.base import ModelResponse, ToolCall
+    from trendlab.providers.scripted import ScriptedProvider
+    from trendlab.telemetry.events import EventType
+
+    from .test_agent_runtime import make_agent
+
+    cfg = AppConfig()
+    cfg.limits.latency_budget_s = {"question": 0.000001, "small_fix": 0.000001}
+    reads = [
+        ModelResponse(
+            tool_calls=[ToolCall(id=str(i), name="read_file", arguments={"path": "src/app.py"})]
+        )
+        for i in range(3)
+    ]
+    agent, _ = make_agent(
+        project,
+        manager_factory(),
+        events,
+        ScriptedProvider([*reads, ModelResponse(text="TIMEOUT is 30.")]),
+        mode=PermissionMode.UNSAFE,
+        config=cfg,
+    )
+    result = await agent.run("what is the timeout?")
+    warns = [
+        e.data
+        for e in recorder.of_type(EventType.BUDGET_WARNING)
+        if e.data.get("kind") == "latency"
+    ]
+    assert len(warns) == 1 and warns[0]["budget_s"] == 0.000001
+    nudges = [m for m in agent.messages if "Time check:" in str(m.get("content"))]
+    assert len(nudges) == 1
+    assert result.latency == {"budget_s": 0.000001, "over": True}
