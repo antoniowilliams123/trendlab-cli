@@ -4902,6 +4902,15 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   local 25B on Ollama 1 of 2 finished, $0, ~21 min/task (too slow for agent loops here).
 - Ratings: mean 8.50; 195 terms below 9.
 
+#### 2026-10-08 — live measurements, ratings part 12 (mean 8.59)
+
+- Judge bias on the v4-pro verifier: 0/8 verdict changes under padding, 0/8 under restyling.
+- Drift, suite vs 30 days of real sessions: kind distance 0.23, length distance 0.42.
+- Bubblewrap sandbox: home read-only, /tmp private, network blocked, project writable.
+- Sensitivity sweep on verifier gating: same pass rate, cost $0.056 → $0.031.
+- Load curve: best throughput at concurrency 8 (16.1 tasks/min); 16 degrades; no crashes.
+- 12 terms raised to 9; 154 remain below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is
