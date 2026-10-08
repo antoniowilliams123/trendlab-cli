@@ -175,4 +175,4 @@ async def test_hard_design_set_is_selectable():
         return '{"points": []}'
 
     res = await critique_eval({"a": silent}, hard=True)
-    assert res["designs"] == len(HARD_DESIGNS) and res["flaws"] == 8 and res["recall"]["a"] == 0.0
+    assert res["designs"] == len(HARD_DESIGNS) and res["flaws"] == 7 and res["recall"]["a"] == 0.0
