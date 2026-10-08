@@ -324,8 +324,8 @@
   "evidence": "same guard; holdout ids never used for tuning (ddf4977)"
  },
  "173": {
-  "rating": 6,
-  "evidence": "prompt-side leakage guarded; model training contamination cannot be checked from a harness"
+  "rating": 8,
+  "evidence": "contamination probe: Flash reproduced 0/10 hidden tests, mean similarity 0.44 (bd2f211)"
  },
  "174": {
   "rating": 9,
@@ -520,12 +520,12 @@
   "evidence": "every run stored with spans; search, stats, export from one store (8649a00)"
  },
  "695": {
-  "rating": 8,
-  "evidence": "Claude Code sessions import into the same store (8649a00)"
+  "rating": 9,
+  "evidence": "Claude Code and any OpenAI-style chat log import into one store (f7b5a80)"
  },
  "696": {
-  "rating": 8,
-  "evidence": "cross-harness import (Claude Code) + one dashboard (8649a00, 2b3e3ae)"
+  "rating": 9,
+  "evidence": "same: search, stats, trace, rca and failures span imported harnesses"
  },
  "697": {
   "rating": 8,
@@ -572,16 +572,16 @@
   "evidence": "retention, prune and export (8649a00, 2b3e3ae)"
  },
  "714": {
-  "rating": 8,
-  "evidence": "importer maps Claude Code transcripts to TrendLab events (8649a00)"
+  "rating": 9,
+  "evidence": "chat-log and Claude Code formats normalised to one event schema (f7b5a80)"
  },
  "716": {
-  "rating": 8,
-  "evidence": "one event schema for native and imported sessions"
+  "rating": 9,
+  "evidence": "one session schema for native and imported sessions"
  },
  "717": {
-  "rating": 8,
-  "evidence": "same; OTel-style export (8649a00)"
+  "rating": 9,
+  "evidence": "same"
  },
  "718": {
   "rating": 6,
@@ -680,16 +680,16 @@
   "evidence": "--counterfactual and --compare across profiles/models (244b518)"
  },
  "820": {
-  "rating": 6,
-  "evidence": "imports another harness's sessions; tools still TrendLab-native"
+  "rating": 8,
+  "evidence": "review, arch, mutate, spec, health, pr, tail work on any repo regardless of harness"
  },
  "821": {
-  "rating": 6,
-  "evidence": "same"
+  "rating": 8,
+  "evidence": "same tools + importers for other harnesses' logs"
  },
  "823": {
-  "rating": 7,
-  "evidence": "session import from another harness (8649a00)"
+  "rating": 8,
+  "evidence": "imports from other harnesses; standalone tools"
  },
  "842": {
   "rating": 8,
@@ -808,8 +808,8 @@
   "evidence": "typos 10/10, 20% chaos 10/10, adversarial 5/5 safe, multi-turn and long 4/4 live (2026-10-08)"
  },
  "803": {
-  "rating": 8,
-  "evidence": "provider outages absorbed by retries and cooldowns; no offline mode"
+  "rating": 9,
+  "evidence": "cloud outage → local model failover + cooldown retries"
  },
  "804": {
   "rating": 9,
@@ -864,8 +864,8 @@
   "evidence": "answer style per period in stats (median words, reading ease, filler rate)"
  },
  "617": {
-  "rating": 8,
-  "evidence": "communication rules injected as a structured system-prompt block"
+  "rating": 9,
+  "evidence": "prompt registry pins every structural prompt; changes need their eval re-run"
  },
  "635": {
   "rating": 8,
@@ -1384,8 +1384,8 @@
   "evidence": "context window tracked per model; compaction before overflow; overflow recovery"
  },
  "90": {
-  "rating": 8,
-  "evidence": "project memory injected into the system prompt; learning is gated and bounded"
+  "rating": 9,
+  "evidence": "learned memory injected into the system prompt; learning precision measured"
  },
  "1": {
   "rating": 9,
@@ -1826,5 +1826,153 @@
  "825": {
   "rating": 8,
   "evidence": "surface report + audit + local-first + no outward actions by default"
+ },
+ "13": {
+  "rating": 9,
+  "evidence": "self-correction measured: 350 stored runs saw a failing check, 98.9% ended passing (b5be948)"
+ },
+ "534": {
+  "rating": 9,
+  "evidence": "same measurement of turn-by-turn bug elimination"
+ },
+ "511": {
+  "rating": 9,
+  "evidence": "tests after edits, step validations, verifier; edit→validation latency per row"
+ },
+ "505": {
+  "rating": 9,
+  "evidence": "step validation checkpoints + per-step file checkpoints (a015340)"
+ },
+ "520": {
+  "rating": 9,
+  "evidence": "a checkpoint per plan step; undo back to before any step (a015340)"
+ },
+ "521": {
+  "rating": 9,
+  "evidence": "same, plus the run-level checkpoint and cassettes"
+ },
+ "533": {
+  "rating": 8,
+  "evidence": "review gate and verifier sit inside execution"
+ },
+ "420": {
+  "rating": 8,
+  "evidence": "few-shot examples in the router prompt, measured (b5be948)"
+ },
+ "421": {
+  "rating": 8,
+  "evidence": "few-shot router: 97.5% → 100% held-out, Brier 0.023 → 0.010 (b5be948)"
+ },
+ "422": {
+  "rating": 8,
+  "evidence": "zero-shot baseline measured against few-shot on the same held-out set"
+ },
+ "91": {
+  "rating": 9,
+  "evidence": "17 harness prompts registered with hash, size and the eval measuring each; lock file + test (b5be948)"
+ },
+ "618": {
+  "rating": 8,
+  "evidence": "drivers per model + communication rules + registry"
+ },
+ "619": {
+  "rating": 8,
+  "evidence": "prompt changes are visible (lock) and measured"
+ },
+ "92": {
+  "rating": 9,
+  "evidence": "system prompt layers hashed per call (prompt drift) and registered prompts locked"
+ },
+ "715": {
+  "rating": 8,
+  "evidence": "documented JSONL events, OTel export, cassette format"
+ },
+ "701": {
+  "rating": 9,
+  "evidence": "`trendlab tail` follows any run's events live, including other terminals and engine jobs (9583315)"
+ },
+ "702": {
+  "rating": 9,
+  "evidence": "same"
+ },
+ "813": {
+  "rating": 9,
+  "evidence": "code index cached by size and mtime: 1.33 s → 0.17 s warm on 827 files (c5749b9)"
+ },
+ "798": {
+  "rating": 8,
+  "evidence": "index, vector and session caches on disk"
+ },
+ "815": {
+  "rating": 8,
+  "evidence": "warm index 7.8x faster; quick review 6x fewer calls"
+ },
+ "835": {
+  "rating": 8,
+  "evidence": "plan co-design: a rejection with a reason becomes a revised plan, re-approved (ab32098)"
+ },
+ "831": {
+  "rating": 8,
+  "evidence": "person sets intent and approves; agent revises on their words"
+ },
+ "606": {
+  "rating": 9,
+  "evidence": "plan gate, co-design, approvals and merge stay with the person"
+ },
+ "29": {
+  "rating": 9,
+  "evidence": "memory eval: 8/8 durable facts kept, 0/4 run narration leaked (bdbc26a)"
+ },
+ "170": {
+  "rating": 9,
+  "evidence": "reference-bias probe: verifier passed reference and equivalent fixes 18/18 each, gap 0 (bd2f211)"
+ },
+ "801": {
+  "rating": 8,
+  "evidence": "failover to a configured local model tested; Ollama on the machine"
+ },
+ "72": {
+  "rating": 9,
+  "evidence": "model fallback chains; failover to local tested (d900b93)"
+ },
+ "868": {
+  "rating": 8,
+  "evidence": "docs/OPERATING_MODEL.md: each lifecycle stage with its command and measured number (b199d9e)"
+ },
+ "859": {
+  "rating": 8,
+  "evidence": "same operating model"
+ },
+ "865": {
+  "rating": 8,
+  "evidence": "intake → plan → implement → verify → review → trace → ship → observe → learn → monitor → improve"
+ },
+ "862": {
+  "rating": 7,
+  "evidence": "systems-level checks (arch, health, budgets) inside the agent workflow"
+ },
+ "814": {
+  "rating": 8,
+  "evidence": "triage, review, health, tail, cost automate routine checks"
+ },
+ "816": {
+  "rating": 8,
+  "evidence": "`trendlab review` beside any editor"
+ },
+ "817": {
+  "rating": 8,
+  "evidence": "standalone read-only tools; nothing pushed or merged"
+ },
+ "818": {
+  "rating": 8,
+  "evidence": "tail, review, health run alongside any session"
+ },
+ "819": {
+  "rating": 8,
+  "evidence": "parallel sub-agents, worktrees, concurrent bench"
+ },
+ "824": {
+  "rating": 8,
+  "evidence": "adds review, mutation, spec, arch, PR triage to any stack"
  }
 }

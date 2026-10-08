@@ -4880,6 +4880,19 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   `trendlab audit` (OSV; this repo 55 packages, 0 known vulnerabilities).
 - Ratings: mean 8.23; 242 terms below 9.
 
+- **U28** (`b5be948`, `f7b5a80`, `a015340`): self-correction rate (350 stored runs saw a failing
+  check, 98.9 % ended passing); few-shot router (97.5 % → 100 % held-out, Brier 0.023 → 0.010);
+  prompt registry (`trendlab prompts`, 17 prompts, `docs/prompts.lock.json`); chat-log import
+  from any harness; a checkpoint per plan step with `/undo step T-n`.
+- **U29** (`9583315`, `c5749b9`): `trendlab tail` (live events of any run); code-index cache
+  (1.33 s → 0.17 s warm on 827 files).
+- **U30** (`ab32098`, `bdbc26a`, `bd2f211`, `d900b93`): plan co-design (a denial with a reason
+  becomes a revised plan, re-approved); memory eval (8/8 durable kept, 0/4 narration leaked);
+  contamination probe (Flash reproduced 0/10 hidden tests); reference-bias probe (Pro verifier
+  passed reference and equivalent fixes 18/18 each); cloud → local failover test;
+  `docs/OPERATING_MODEL.md`.
+- Ratings: mean 8.38; 219 terms below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is
