@@ -20,6 +20,7 @@ from trendlab.providers.base import ToolCall
 from trendlab.security.scan import find_secrets
 from trendlab.telemetry.events import EventBus, EventType
 from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, ToolResult
+from trendlab.tools.health import RESULT_TOOLS, postcondition
 from trendlab.tools.registry import ToolRegistry
 
 StateHook = Callable[[str], None]
@@ -51,6 +52,9 @@ class ToolRuntime:
         self.screener: Any = None  # async (text, meta) -> ToolOutput | None
         self.screener_threshold_tokens: int = 3000
         self.baselines: Any = None  # trendlab.tools.views.tiering.Baselines
+        from trendlab.tools.health import ToolHealth
+
+        self.health = ToolHealth()  # per-tool counters + circuit breaker (uplift U4)
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -84,6 +88,12 @@ class ToolRuntime:
                 "unknown_tool",
                 f"unknown tool: {call.name}; available: " + ", ".join(self.registry.names()),
             )
+        paused = self.health.blocked(tool.name)
+        if paused:
+            self.health.record(
+                tool.name, ok=False, failed=False, skipped=True, ms=0, error="circuit open"
+            )
+            return self._skip(call, "circuit_open", f"PAUSED: {paused}", detail=tool.name)
         try:
             args = tool.parse(call.arguments)
         except ValidationError as exc:
@@ -292,6 +302,60 @@ class ToolRuntime:
             result = ToolResult(ok=False, output=f"tool error: {exc.__class__.__name__}: {exc}")
         finally:
             self.ctx.progress = None
+        duration_ms = int((time.monotonic() - call_started) * 1000)
+        error_text = (result.output or "")[:200] if not result.ok else ""
+        tool_error = (
+            (not result.ok)
+            and (tool.name not in RESULT_TOOLS or result.data.get("timed_out") is True)
+            and (
+                error_text.startswith(
+                    ("tool error", "timed out", "network error", "command timed out")
+                )
+                or result.data.get("timed_out") is True
+                or tool.name not in RESULT_TOOLS
+                and not error_text.startswith(
+                    ("not a file", "DENIED", "BLOCKED", "invalid", "refused", "no ")
+                )
+            )
+        )
+        opened = self.health.record(
+            tool.name,
+            ok=result.ok,
+            failed=bool(tool_error),
+            skipped=False,
+            ms=duration_ms,
+            error=error_text,
+            timed_out=bool(result.data.get("timed_out")),
+        )
+        if opened:
+            self.events.emit(
+                EventType.TOOL_CIRCUIT_OPENED,
+                session_id=self.ctx.session_id,
+                tool=tool.name,
+                failures=self.health.stats[tool.name].consecutive_failures,
+                cooldown_s=self.health.cooldown_s,
+                last_error=error_text,
+            )
+        if result.ok and tool.name in MUTATING_TOOLS:
+            problems = []
+            for f in perm.affected_files:
+                problem = postcondition(self.ctx.project_root / f)
+                if problem:
+                    problems.append(problem)
+            if problems:
+                result.output = (
+                    f"{result.output}\n\nPOSTCONDITION FAILED — the file no longer parses: "
+                    + "; ".join(problems)
+                    + ". Fix it before doing anything else."
+                )
+                result.data["postcondition_failed"] = problems
+                self.events.emit(
+                    EventType.TOOL_POSTCONDITION_FAILED,
+                    session_id=self.ctx.session_id,
+                    tool=tool.name,
+                    files=perm.affected_files,
+                    problems=problems,
+                )
         tiered = await self._tier(tool.name, args, result, call_id or f"{tool.name}-{int(started)}")
         out_lines = [ln for ln in (result.output or "").splitlines() if ln.strip()]
         self.events.emit(

@@ -7,6 +7,7 @@ HTML endpoint (DuckDuckGo by default) so no paid API is required.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from urllib.parse import quote_plus, unquote, urlsplit
@@ -96,10 +97,19 @@ class WebFetchTool(Tool):
             return ToolResult(ok=False, output=f"refused: {problem}")
         try:
             resp = await self._client.get(args.url)
-        except httpx.TimeoutException:
-            return ToolResult(ok=False, output=f"timed out fetching {args.url}")
-        except httpx.HTTPError as exc:
-            return ToolResult(ok=False, output=f"network error: {exc.__class__.__name__}")
+        except httpx.HTTPError as first:
+            # retry policy for tools (U4): one retry after a short backoff for transient errors
+            await asyncio.sleep(1.0)
+            try:
+                resp = await self._client.get(args.url)
+            except httpx.TimeoutException:
+                return ToolResult(ok=False, output=f"timed out fetching {args.url} (after retry)")
+            except httpx.HTTPError as exc:
+                return ToolResult(
+                    ok=False,
+                    output=f"network error: {exc.__class__.__name__} (after retry; first: "
+                    f"{first.__class__.__name__})",
+                )
         ctype = resp.headers.get("content-type", "")
         body = resp.text
         text = html_to_text(body) if "html" in ctype or body.lstrip().startswith("<") else body

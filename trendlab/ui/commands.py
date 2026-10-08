@@ -31,6 +31,7 @@ HELP = """\
 /compact                   Compact older conversation into a structured summary
 /cost [--by role|phase|step]  Session cost          /cost-limit <usd>   Set a hard budget
 /inbox [apply|test|dismiss|silence|open <id>]  Issue cards (engine inbox)
+/tools                     Per-tool success rate, latency, breaker state
 /diff [file]               Changes made this session (or git diff of a file)
 /git <status|diff|log>     Read-only git commands
 /commit [msg]              Commit everything; the message is written from the diff when omitted
@@ -117,6 +118,7 @@ class CommandRouter:
             "/compact": self._compact,
             "/cost": self._cost,
             "/inbox": self._inbox,
+            "/tools": self._tools,
             "/cost-limit": self._cost_limit,
             "/diff": self._diff,
             "/git": self._git,
@@ -358,6 +360,42 @@ class CommandRouter:
             f"Budget: {f'${limit:.2f}' if limit else 'none'} · "
             f"pricing entries: {len(self.app.config.pricing)}"
         )
+
+    async def _tools(self, args: list[str]) -> None:
+        """Tool reliability (uplift U4)."""
+        health = self.app.tools.health if self.app.tools else None
+        if health is None or not health.stats:
+            self.console.print("[dim]no tool calls yet this session[/dim]")
+            return
+        t = Table(title=f"Tools · overall success {health.overall_success_rate():.0%}")
+        for col in (
+            "tool",
+            "calls",
+            "success",
+            "failed",
+            "skipped",
+            "timeouts",
+            "avg ms",
+            "breaker",
+        ):
+            t.add_column(col)
+        for name, d in health.summary().items():
+            state = (
+                "open"
+                if health.blocked(name)
+                else (f"tripped ×{d['breaker_opened']}" if d["breaker_opened"] else "closed")
+            )
+            t.add_row(
+                name,
+                str(d["calls"]),
+                f"{d['success_rate']:.0%}",
+                str(d["failed"]),
+                str(d["skipped"]),
+                str(d["timeouts"]),
+                str(d["avg_ms"]),
+                state,
+            )
+        self.console.print(t)
 
     async def _inbox(self, args: list[str]) -> None:
         """Inbox actions (cheap-model spec §7.2): list · apply · test · dismiss · silence · open."""

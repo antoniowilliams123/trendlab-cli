@@ -84,6 +84,8 @@ class EventType(StrEnum):
     STEP_FAILED = "step.failed"  # validation failed or the iteration cap was hit
     ATTEMPT_CANDIDATE = "attempt.candidate"  # one best-of-N candidate finished
     GUARD_FIRED = "guard.fired"  # a weak-model guard (rescue, nudge, loop, cap…) kicked in
+    TOOL_CIRCUIT_OPENED = "tool.circuit_opened"  # a tool paused after consecutive failures
+    TOOL_POSTCONDITION_FAILED = "tool.postcondition_failed"  # an edit left a file unparsable
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
     SKILL_UNLOADED = "skill.unloaded"
     FILE_CHANGED = "file.changed"

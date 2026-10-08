@@ -104,6 +104,15 @@ def format_event(event: Event) -> str | None:
             f"  [{GREY}]⑂ candidate {d.get('n')}:[/] {mark} [{GREY}]{d.get('diff_lines')} diff lines"
             f" · ${d.get('cost_usd', 0):.3f} · {d.get('elapsed_s', 0):.0f}s[/]"
         )
+    if t == EventType.TOOL_CIRCUIT_OPENED:
+        return (
+            f"[{AMBER}]⏸ {d.get('tool')} paused {float(d.get('cooldown_s') or 0):.0f}s after "
+            f"{d.get('failures')} failures[/] "
+            f"[{GREY}]{escape(_short(str(d.get('last_error')), 100))}[/]"
+        )
+    if t == EventType.TOOL_POSTCONDITION_FAILED:
+        probs = escape("; ".join(d.get("problems") or []))[:160]
+        return f"[bold {RED}]✗ edit left a file unparsable:[/] [{GREY}]{probs}[/]"
     if t == EventType.SKILL_LOADED:
         return f"[{MINT}]◈ skill {escape(str(d.get('name')))} loaded[/] [{GREY}]({d.get('trigger')})[/]"
     if t == EventType.VERIFY_STARTED:
