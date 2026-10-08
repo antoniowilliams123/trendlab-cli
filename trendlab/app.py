@@ -580,7 +580,7 @@ class TrendLabApp:
         from trendlab.providers.structured_json import ask_json
 
         async def call(msgs):
-            response, used = await self.gateway.complete(ref, msgs, None)
+            response, used = await self.gateway.complete(ref, msgs, None, role="planner")
             self.costs.record(
                 used,
                 response.usage,
@@ -651,7 +651,7 @@ class TrendLabApp:
         ref = self.config.routing["router"]
 
         async def call(messages):
-            response, used = await self.gateway.complete(ref, messages, None)
+            response, used = await self.gateway.complete(ref, messages, None, role="router")
             self.costs.record(
                 used,
                 response.usage,
@@ -702,7 +702,7 @@ class TrendLabApp:
         )
 
         async def call(messages):
-            response, used = await self.gateway.complete(ref, messages, None)
+            response, used = await self.gateway.complete(ref, messages, None, role="judge")
             self.costs.record(
                 used,
                 response.usage,
@@ -793,7 +793,7 @@ class TrendLabApp:
         )
 
         async def call(messages):
-            response, used = await self.gateway.complete(ref, messages, None)
+            response, used = await self.gateway.complete(ref, messages, None, role="verifier")
             self.costs.record(
                 used,
                 response.usage,
@@ -812,7 +812,9 @@ class TrendLabApp:
         if verdict is not None and second and second != ref:
             # U2 judge agreement: a second verifier model on the same evidence
             async def call2(messages):
-                response, used = await self.gateway.complete(second, messages, None)
+                response, used = await self.gateway.complete(
+                    second, messages, None, role="verifier"
+                )
                 self.costs.record(
                     used,
                     response.usage,
@@ -1073,7 +1075,7 @@ class TrendLabApp:
         ref = resolve_role(self.config, "screener", self.model_ref)
 
         async def call(messages):
-            response, used = await self.gateway.complete(ref, messages, None)
+            response, used = await self.gateway.complete(ref, messages, None, role="screener")
             self.costs.record(
                 used,
                 response.usage,
@@ -1088,7 +1090,7 @@ class TrendLabApp:
     async def _summarize(self, messages: list[dict[str, Any]]) -> str:
         assert self.gateway and self.costs
         ref = resolve_role(self.config, "summarizer", self.model_ref)
-        response, used = await self.gateway.complete(ref, messages, None)
+        response, used = await self.gateway.complete(ref, messages, None, role="summarizer")
         self.costs.record(
             used,
             response.usage,

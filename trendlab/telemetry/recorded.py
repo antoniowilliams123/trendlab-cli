@@ -40,7 +40,7 @@ class RecordedCaller:
         )
 
     async def __call__(self, messages: list[dict[str, Any]]) -> str:
-        response, used = await self.gateway.complete(self.ref, messages, None)
+        response, used = await self.gateway.complete(self.ref, messages, None, role=self.role)
         self.costs.record(used, response.usage, 0, role=self.role)
         return response.text
 

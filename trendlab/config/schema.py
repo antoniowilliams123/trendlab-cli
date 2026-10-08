@@ -256,6 +256,18 @@ class EconomicsConfig(BaseModel):
     alert_at: list[float] = Field(default_factory=lambda: [0.8, 1.0])
 
 
+class SamplingParams(BaseModel):
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+
+
+def _default_sampling() -> dict[str, SamplingParams]:
+    # Judging roles answer the same question the same way: temperature 0 (U18). The main agent
+    # keeps the provider default; best-of-N candidates vary temperature on purpose.
+    zero = SamplingParams(temperature=0.0)
+    return {r: zero for r in ("router", "verifier", "reviewer", "judge", "screener")}
+
+
 class SessionsConfig(BaseModel):
     """Retention (U6): how long stored sessions and events are kept."""
 
@@ -444,6 +456,7 @@ class AppConfig(BaseModel):
     governance: GovernanceConfig = GovernanceConfig()
     sessions: SessionsConfig = SessionsConfig()
     economics: EconomicsConfig = EconomicsConfig()
+    sampling: dict[str, SamplingParams] = Field(default_factory=_default_sampling)
     attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)

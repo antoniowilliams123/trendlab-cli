@@ -50,8 +50,17 @@ class ModelGateway:
     def register(self, model_ref: str, provider: ModelProvider) -> None:
         self._providers[model_ref] = provider
 
-    async def complete(self, model_ref: str, messages, tools=None) -> tuple[ModelResponse, str]:
-        """Returns (response, model_ref_actually_used)."""
+    async def complete(
+        self, model_ref: str, messages, tools=None, *, role: str | None = None
+    ) -> tuple[ModelResponse, str]:
+        """Returns (response, model_ref_actually_used). ``role`` applies that role's
+        ``[sampling]`` parameters to this request."""
+        params = (getattr(self.config, "sampling", None) or {}).get(role) if role else None
+        if params is not None and messages:
+            sampling = {k: v for k, v in params.model_dump().items() if v is not None}
+            if sampling:
+                messages = [dict(m) for m in messages]
+                messages[0]["_sampling"] = sampling
         last: ProviderError | None = None
         for ref in fallback_chain(self.config, model_ref):
             try:

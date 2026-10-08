@@ -1100,6 +1100,57 @@ def retrieval_eval(tasks, modes: list[str], embedder=None, k_max: int = 5) -> di
     }
 
 
+async def determinism_eval(
+    config, model: str, *, tasks, repeats: int = 5, temperatures=(None, 0.0)
+) -> dict[str, Any]:
+    """U18: how often does the verifier give the same verdict to the same evidence? For each
+    seeded diff (defect-introducing and its fix) ask ``repeats`` times per temperature setting;
+    agreement = share of diffs whose verdicts were all identical."""
+    import copy
+
+    from trendlab.agent.verifier import verify
+    from trendlab.config.schema import SamplingParams
+    from trendlab.telemetry.recorded import RecordedCaller
+
+    out: dict[str, Any] = {"repeats": repeats, "settings": {}}
+    for temp in temperatures:
+        cfg = copy.deepcopy(config)
+        cfg.sampling["verifier"] = SamplingParams(temperature=temp)
+        caller = RecordedCaller(cfg, "verifier", "(benchmarks)", model=model)
+
+        async def call(messages, _c=caller):
+            return await _c(messages), _c.ref
+
+        same = total = 0
+        verdicts: list[list[str]] = []
+        try:
+            for t in tasks:
+                for label, diff in zip(("bad", "good"), seeded_diffs(t), strict=True):
+                    task_text = (
+                        f"Small cleanup in {t.defect.file}."
+                        if label == "bad"
+                        else (t.defect.symptom)
+                    )
+                    got = []
+                    for _ in range(repeats):
+                        v = await verify(call, task=task_text, diff=diff, validation=None, plan="")
+                        got.append(v.verdict if v else "none")
+                    verdicts.append(got)
+                    total += 1
+                    same += len(set(got)) == 1
+        finally:
+            cost = caller.cost
+            await caller.close()
+        flips = sum(len(set(v)) - 1 for v in verdicts)
+        out["settings"]["default" if temp is None else f"t={temp}"] = {
+            "diffs": total,
+            "all_agree": round(same / total, 3) if total else None,
+            "verdict_flips": flips,
+            "cost": round(cost, 4),
+        }
+    return out
+
+
 def summarize_review_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
     from trendlab.benchmarks.stats import wilson_interval
 

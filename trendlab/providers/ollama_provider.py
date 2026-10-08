@@ -139,6 +139,11 @@ class OllamaProvider(ModelProvider):
             "keep_alive": self._keep_alive,
             "options": {"num_ctx": await self.num_ctx()},
         }
+        sampling = next((m["_sampling"] for m in messages if m.get("_sampling")), None)
+        if sampling:  # per-role sampling policy (U18)
+            payload["options"].update(
+                {k: v for k, v in sampling.items() if k in {"temperature", "top_p"}}
+            )
         if tools and self._caps.native_tools:
             payload["tools"] = tools
         elif any(m.get("_json_mode") for m in messages):
