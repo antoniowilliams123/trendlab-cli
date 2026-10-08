@@ -86,7 +86,8 @@ class Engine:
             hour, minute = (int(x) for x in ecfg.sleep_at.split(":")[:2])
             stamp = now.strftime("%Y-%m-%d")
             after = (now.hour, now.minute) >= (hour, minute)
-            return not warm and after and self.state.get("sleep_day") != stamp
+            recent = last is not None and (now.timestamp() - float(last)) < 20 * 3600
+            return not warm and after and not recent and self.state.get("sleep_day") != stamp
         if job == "meta":
             return not warm and (
                 not last or (now.timestamp() - float(last)) >= ecfg.meta_days * 86400
@@ -95,8 +96,13 @@ class Engine:
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
         return False
 
+    @staticmethod
+    def now() -> datetime:
+        """Local wall-clock time; the schedule (sleep_at, day stamps) is in the owner's zone."""
+        return datetime.now(UTC).astimezone()
+
     async def run_job(self, job: str) -> dict[str, Any]:
-        now = datetime.now(UTC)
+        now = self.now()
         result: dict[str, Any] = {"job": job, "at": now.isoformat(timespec="seconds")}
         try:
             if job == "watch":
@@ -188,7 +194,7 @@ class Engine:
                 pass
         try:
             while not self._stop.is_set():
-                now = datetime.now(UTC).astimezone()
+                now = self.now()
                 for job in ("watch", "sleep", "meta", "digest"):
                     if self.due(job, now):
                         await self.run_job(job)

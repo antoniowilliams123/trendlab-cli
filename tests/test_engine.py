@@ -215,6 +215,16 @@ async def test_engine_schedule_socket_and_digest(tmp_path: Path, monkeypatch, _t
     assert eng.due("sleep", now)  # 03:00 >= 02:30 and not done today
     eng.state["sleep_day"] = "2026-10-08"
     assert not eng.due("sleep", now)
+    eng.state.pop("sleep_day")
+    eng.state["last_sleep"] = now.timestamp() - 3600  # ran an hour ago → not again
+    assert not eng.due("sleep", now)
+    eng.state.pop("last_sleep")
+    # the job stamps the day in the same (local) zone the schedule reads
+    res = await eng.run_job("sleep")
+    assert "error" not in res or "sleep" in res
+    assert eng.state["sleep_day"] == eng.now().strftime("%Y-%m-%d") and not eng.due(
+        "sleep", eng.now()
+    )
     eng.state["last_watch"] = now.timestamp()
     assert not eng.due("watch", now)
     sent = []
