@@ -4826,6 +4826,30 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   (`scripts/apply_ratings.py`); every changed rating names its evidence. Mean of the 560
   rated AI terms 5.72 → 7.60 at this point; 366 still below 9.
 
+- **Review mode chosen by measurement** (`2ef7cc7`, `f5e08f7`): 32 seeded defects, Flash —
+  deep (a call per lens) 100 % recall, 6.2 % high false alarms, 1.16 findings per correct fix,
+  384 calls; deep + confirmation 0.28; quick 0 % / 0.47, 64 calls; quick + confirmation 100 %
+  recall, 3.1 %, 0.16, 109 calls ($0.14 for 64 reviews). Default = quick + confirmation.
+  Critique panel: both planted-flaw sets saturated (a single Flash critic found 15/15).
+- **U16 Semantic retrieval** (`a4c6b2f`): embeddings via Ollama (`nomic-embed-text`, local)
+  or OpenAI-compatible endpoints; on-disk vector index by content hash; exact cosine search;
+  reciprocal-rank fusion with BM25; `[context] retrieval_mode` bm25 | vector | hybrid;
+  `trendlab search --semantic`; `bench --retrieval-eval`.
+- **U17 Hallucinated references** (`18b6be9`): after a Python edit, the lines it added are
+  resolved statically (stdlib, project modules incl. `src/` and relative imports, the
+  project's venv, names imported from project modules, `alias.attr` on project modules); the
+  edit result names what does not exist. 0 false alarms on 1,078 real files; 5/5 seeded.
+- **U18 Sampling policy** (`6d06cc3`): `[sampling]` per role; judging roles at temperature 0.
+  Measured: the Flash verifier agreed with itself on 11/12 diffs over five repeats at both
+  default and zero temperature — no measurable effect on this model.
+- **U19 Spec traceability** (`44f92d9`): `trendlab spec SPEC.md` → implemented / partial /
+  missing, tested or not, verified evidence, drift since the last check; `--eval` on a
+  ten-requirement shop spec: 90 % → 100 % after two retrieval fixes that help everyone —
+  light stemming ("reserving" now meets "reserve") and per-method chunks for classes. Suite
+  retrieval (64 tasks): BM25 recall@3 84 % → 97 %, MRR 0.75 → 0.82; vector recall@1 73 % →
+  83 %, MRR 0.88.
+- Ratings: mean 7.80, 347 terms still below 9.
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is
