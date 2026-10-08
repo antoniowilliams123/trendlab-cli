@@ -502,8 +502,11 @@ def bench_cmd(
             all_rows.append(results)
             if log:
                 append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
+        cmp = compare_rows(all_rows[0], all_rows[1]) if len(summaries) == 2 else None
         if output == "json":
-            typer.echo(json.dumps({"summaries": summaries}, indent=2))
+            typer.echo(json.dumps({"summaries": summaries, "compare": cmp}, indent=2, default=str))
+            if gate and cmp and not cmp["gate"]["ok"]:
+                raise typer.Exit(code=1)
             return
         cols = (
             "config",
@@ -524,8 +527,7 @@ def bench_cmd(
         for sm in summaries:
             t.add_row(*(str(sm.get(c, "")) for c in cols))
         console.print(t)
-        if len(summaries) == 2:
-            cmp = compare_rows(all_rows[0], all_rows[1])
+        if cmp is not None:
             deltas = cmp["deltas"]
             pp = cmp["paired_passes"]
             console.print(

@@ -537,6 +537,12 @@ Follow-ups the same night:
   | flash @ harness | **10/10** | 10/10 | $0.093 | 350 s |
   | flash @ bare | **10/10** | 10/10 | $0.069 | 430 s |
 
+- **Canary set, two runs per task, with U1 rigour** (10 tasks × 2, bare vs harness, review on
+  Flash for small changes): bare 20/20, harness 20/20; both pass-rate intervals [0.84, 1.00];
+  0 flaky tasks either side; cost bare $0.109 ($0.0047–0.0062 per task), harness $0.118
+  ($0.0050–0.0071) → **1.09×**; tool success rate 96.5 % vs 96.9 %. Paired sign test: 0 wins,
+  0 losses, p = 1.0 — no difference at this sample size, stated as such.
+
 **What the evidence says, plainly.** On every task this suite can generate — 60 tasks across
 three languages, half symptom-only, ten deliberately nasty — DeepSeek Flash alone passes
 100 %. The harness adds a review and a regression-test discipline at 1.2–1.4× the cost and

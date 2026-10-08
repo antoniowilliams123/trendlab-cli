@@ -4724,6 +4724,15 @@ below 9 grouped into packages U1–U12). Each package: feature + tests + a numbe
   night and writes cause hints into the drift card ("model version changed", "system prompt
   changed", or "same model id and prompt: provider behaviour or flakiness"); history in
   `~/.trendlab/engine/canary_history.jsonl`, shown by `trendlab drift`.
+- **U2 Judge quality** (`242a16c`, `49c980c`): `trendlab/agent/judge.py` — pairwise judge
+  asked twice with the order swapped; a disagreement between orders is recorded as position
+  bias and counts as a tie (`judge.pairwise`); used to break ties between passing best-of-N
+  candidates. The verifier prompt scores a rubric (correctness, minimality, safety, tests;
+  0–2 each, kept on the verdict) and is told to ignore length and style. `[verification]
+  second_opinion = "provider:model"` runs a second verifier on the same evidence and emits
+  `verify.second_opinion {agree}`; a second-opinion `fail` downgrades a `pass` to `fix`.
+  Bench summaries carry `judge` = verifier precision, false-pass rate and false-flag rate
+  against hidden-test truth. Canary ×2 measurement recorded in §93.7 → 9.5.
 
 
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
