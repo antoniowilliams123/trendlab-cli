@@ -10,21 +10,14 @@ from trendlab.config.loader import trendlab_home
 from trendlab.engine.inbox import Inbox
 from trendlab.engine.meta import counter_summary, file_cards, scan
 from trendlab.engine.sleep import sleeptime
-from trendlab.providers.gateway import ModelGateway
-from trendlab.providers.registry import resolve_role
 from trendlab.sessions.store import SessionStore
-from trendlab.telemetry.events import EventBus
 
 
 def _caller(config, role: str):
-    ref = resolve_role(config, role, config.defaults.model)
-    gateway = ModelGateway(config, EventBus(), "engine")
+    """Engine model calls are recorded under an '(engine)' session (fully loaded cost, U10)."""
+    from trendlab.telemetry.recorded import RecordedCaller
 
-    async def call(messages):
-        response, _used = await gateway.complete(ref, messages, None)
-        return response.text
-
-    return call
+    return RecordedCaller(config, role, "(engine)")
 
 
 async def sleep_projects(projects: list[Path], config) -> list[dict[str, Any]]:
@@ -34,12 +27,13 @@ async def sleep_projects(projects: list[Path], config) -> list[dict[str, Any]]:
         for root in projects:
             if not root.is_dir():
                 continue
-            res = await sleeptime(
-                _caller(config, "summarizer"),
-                store=store,
-                project_root=root,
-                model_ref=config.defaults.model,
-            )
+            call = _caller(config, "summarizer")
+            try:
+                res = await sleeptime(
+                    call, store=store, project_root=root, model_ref=config.defaults.model
+                )
+            finally:
+                await call.close()
             out.append({"project": str(root), **res})
         return out
     finally:

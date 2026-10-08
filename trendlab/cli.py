@@ -479,6 +479,12 @@ def bench_cmd(
         "--planning-eval",
         help="Planner only: plan each selected task (no execution) and score the plans.",
     ),
+    review_eval: bool = typer.Option(
+        False,
+        "--review-eval",
+        help="Reviewer only: seeded-defect and correct-fix diffs per task; recall, false alarms.",
+    ),
+    review_mode: str = typer.Option("auto", "--review-mode", help="auto | quick | deep"),
 ) -> None:
     """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
@@ -492,6 +498,43 @@ def bench_cmd(
         verify_suite_tasks,
     )
 
+    if review_eval:
+        from trendlab.benchmarks.runner import (
+            review_eval_task,
+            select_tasks,
+            summarize_review_eval,
+        )
+        from trendlab.config.loader import load_config
+        from trendlab.telemetry.recorded import RecordedCaller
+
+        chosen = [t for t in select_tasks(tasks, lang, tier, holdout=holdout) if t.defect.old]
+
+        async def _review_all():
+            call = RecordedCaller(load_config(), "reviewer", "(benchmarks)", model=model)
+            out = []
+            try:
+                for t in chosen:
+                    row = await review_eval_task(t, call, mode=review_mode)
+                    out.append(row)
+                    if output != "json":
+                        console.print(
+                            f"  {t.id}: caught={row['caught']} localised={row['localised']} "
+                            f"false_alarm={row['false_alarm']} lenses={row['lenses_catching']}"
+                        )
+            finally:
+                cost = call.cost
+                await call.close()
+            return out, cost
+
+        rows, cost = asyncio.run(_review_all())
+        summary = {**summarize_review_eval(rows), "model": model, "cost": round(cost, 4)}
+        if save_rows is not None:
+            save_rows.write_text(json.dumps(rows, indent=1, default=str))
+        if output == "json":
+            typer.echo(json.dumps({"summary": summary, "rows": rows}, indent=2, default=str))
+        else:
+            console.print(f"[neon]review eval[/neon] {model}: " + json.dumps(summary))
+        return
     if planning_eval:
         from trendlab.benchmarks.runner import (
             planning_eval_task,
@@ -1202,6 +1245,145 @@ def cost_cmd(
         console.print(
             f"  budget {b['budget']}: ${b['spent']:.2f} of ${b['limit']:.2f} ({b['share']:.0%})"
         )
+
+
+def _review_source(root: Path, base: str | None, range_: str | None, pr: int | None):
+    """(diff, intent, label) for a pull request, a commit range, or the branch + working tree
+    against its merge base with ``base`` (default: the remote's default branch, else main)."""
+    import subprocess as sp
+
+    def git(*args):
+        return sp.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout
+
+    if pr is not None:
+        diff = sp.run(
+            ["gh", "pr", "diff", str(pr)], cwd=root, capture_output=True, text=True
+        ).stdout
+        meta = sp.run(
+            ["gh", "pr", "view", str(pr), "--json", "title,body"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        ).stdout
+        try:
+            m = json.loads(meta)
+            intent = f"{m.get('title', '')}\n\n{m.get('body', '')}"
+        except ValueError:
+            intent = ""
+        return diff, intent, f"PR #{pr}"
+    if range_:
+        return git("diff", range_), git("log", "--format=%s%n%b", range_), range_
+    if base is None:
+        head = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").strip()
+        base = head.split("/", 1)[1] if "/" in head else "main"
+    mb = git("merge-base", base, "HEAD").strip() or base
+    diff = git("diff", mb)  # committed on the branch + uncommitted changes
+    untracked = git("ls-files", "--others", "--exclude-standard").split()
+    for f in untracked[:50]:
+        diff += git("diff", "--no-index", "/dev/null", f)
+    return diff, git("log", "--format=%s%n%b", f"{mb}..HEAD"), f"branch vs {base}"
+
+
+@app.command("review")
+def review_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    base: str | None = typer.Option(None, "--base", help="Review the branch against this ref."),
+    range_: str | None = typer.Option(None, "--range", help="Review a commit range, e.g. A..B."),
+    pr: int | None = typer.Option(None, "--pr", help="Review a GitHub pull request (needs gh)."),
+    mode: str = typer.Option("auto", "--mode", help="auto | quick (one call) | deep (per lens)."),
+    model: str | None = typer.Option(None, "--model", "-m", help="Reviewer model."),
+    recheck: bool = typer.Option(False, "--recheck", help="Re-check the last review's findings."),
+    fix: bool = typer.Option(False, "--fix", help="Hand the open findings to the agent."),
+    pre_pr: bool = typer.Option(
+        False, "--pre-pr", help="Run validation + review; exit 1 on failures or blocking findings."
+    ),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Code review of a branch, range or PR (U13): deterministic checks + focused lenses
+    (correctness, edge cases, structure, performance, tests, security), a findings ledger in
+    .trendlab/reviews.json, re-check closure, and a pre-PR gate."""
+    import subprocess as sp
+
+    from rich.markup import escape
+
+    from trendlab.agent.review import (
+        apply_recheck,
+        fix_prompt,
+        is_closed,
+        load_ledger,
+        review_diff,
+        save_review,
+        static_findings,
+    )
+    from trendlab.agent.review import (
+        recheck as do_recheck,
+    )
+    from trendlab.config.loader import load_config
+    from trendlab.telemetry.recorded import RecordedCaller
+
+    root = project.resolve()
+    config = load_config(root)
+    diff, intent, label = _review_source(root, base, range_, pr)
+    if fix:
+        led = load_ledger(root)
+        if not led["reviews"]:
+            console.print("[dim]no review yet; run `trendlab review` first[/dim]")
+            raise typer.Exit(code=1)
+        prompt = fix_prompt(led["reviews"][-1])
+        rc = sp.run(
+            [sys.executable, "-m", "trendlab.cli", "-C", str(root), "-p", prompt]
+        ).returncode
+        raise typer.Exit(code=rc)
+    if not diff.strip():
+        console.print(f"[dim]nothing to review ({label})[/dim]")
+        return
+    call = RecordedCaller(
+        config,
+        "reviewer",
+        str(root),
+        model=model or config.routing.get("reviewer", config.routing.get("verifier")),
+    )
+    try:
+        if recheck:
+            led = load_ledger(root)
+            if not led["reviews"]:
+                console.print("[dim]no review to re-check[/dim]")
+                raise typer.Exit(code=1)
+            review = led["reviews"][-1]
+            outcome = asyncio.run(do_recheck(call, review["findings"], diff))
+            review = apply_recheck(review, outcome, [f["id"] for f in static_findings(diff)])
+        else:
+            res = asyncio.run(review_diff(call, diff, intent=intent, mode=mode))
+            review = {"source": label, "model": call.ref, **res}
+        validation_ok = None
+        if pre_pr:
+            from trendlab.context.validation import detect_validation_commands
+
+            cmds = detect_validation_commands(root)
+            for kind in ("test", "lint"):
+                if cmds.get(kind):
+                    ok = sp.run(cmds[kind], shell=True, cwd=root).returncode == 0
+                    validation_ok = ok if validation_ok is None else validation_ok and ok
+        review["cost"] = round(call.cost, 4)
+        review["closed"] = is_closed(review, validation_ok)
+        review = save_review(root, review)
+    finally:
+        asyncio.run(call.close())
+    if output == "json":
+        typer.echo(json.dumps(review, indent=2))
+    else:
+        open_ = [f for f in review["findings"] if f.get("status") == "open"]
+        fixed = sum(1 for f in review["findings"] if f.get("status") == "fixed")
+        console.print(
+            f"[neon]review {review['id']}[/neon] · {label} · {review.get('mode', 'recheck')} · "
+            f"{len(open_)} open, {fixed} fixed · ${review['cost']:.4f}"
+        )
+        for f in open_:
+            where = f["file"] + (f":{f['line']}" if f.get("line") else "")
+            console.print(f"  [{f['severity']}] {f['lens']} {escape(where)} — {escape(f['issue'])}")
+        console.print("  closed ✓" if review["closed"] else "  not closed: blocking findings open")
+    if pre_pr and not review["closed"]:
+        raise typer.Exit(code=1)
 
 
 @app.command("inbox")

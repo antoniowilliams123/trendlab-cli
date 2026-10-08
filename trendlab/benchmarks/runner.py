@@ -867,6 +867,85 @@ def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     return deltas
 
 
+def seeded_diffs(task) -> tuple[str, str]:
+    """(bad, good) unified diffs for a suite task: introducing its defect, and fixing it."""
+    import difflib as _difflib
+
+    from trendlab.benchmarks import suite as suite_mod
+
+    rel = task.defect.file
+    ref = suite_mod.BASES[task.lang][rel]
+    buggy = ref.replace(task.defect.old, task.defect.new, 1)
+
+    def udiff(a, b):
+        return f"diff --git a/{rel} b/{rel}\n" + "".join(
+            _difflib.unified_diff(
+                a.splitlines(True), b.splitlines(True), f"a/{rel}", f"b/{rel}", n=8
+            )
+        )
+
+    return udiff(ref, buggy), udiff(buggy, ref)
+
+
+async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
+    """U13 reviewer eval on one task: the defect-introducing diff must draw a high/med model
+    finding in the defect file (recall, localisation); the correct fix must draw no high model
+    finding (false alarm). Static findings are excluded from both."""
+    from trendlab.agent.review import review_diff
+
+    bad, good = seeded_diffs(task)
+    rel = task.defect.file
+    r_bad = await review_diff(call, bad, intent=f"Small cleanup in {rel}.", mode=mode)
+    r_good = await review_diff(call, good, intent=task.defect.symptom, mode=mode)
+
+    def model(fs):
+        return [f for f in fs if not f.get("static")]
+
+    hits = [
+        f
+        for f in model(r_bad["findings"])
+        if f["severity"] in {"high", "med"} and f["file"].endswith(rel)
+    ]
+    near = [f for f in hits if f.get("line") and abs(f["line"] - task.answer_line) <= 3]
+    false_alarm = [f for f in model(r_good["findings"]) if f["severity"] == "high"]
+    return {
+        "task": task.id,
+        "kind": task.defect.kind,
+        "mode": r_bad["mode"],
+        "caught": bool(hits),
+        "localised": bool(near),
+        "false_alarm": bool(false_alarm),
+        "findings_bad": len(model(r_bad["findings"])),
+        "findings_good": len(model(r_good["findings"])),
+        "calls": r_bad["calls"] + r_good["calls"],
+        "lenses_catching": sorted({f["lens"] for f in hits}),
+    }
+
+
+def summarize_review_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    from trendlab.benchmarks.stats import wilson_interval
+
+    n = len(rows)
+    if not n:
+        return {"tasks": 0}
+    caught = sum(1 for r in rows if r["caught"])
+    fa = sum(1 for r in rows if r["false_alarm"])
+    lens_counts: dict[str, int] = {}
+    for r in rows:
+        for lens in r["lenses_catching"]:
+            lens_counts[lens] = lens_counts.get(lens, 0) + 1
+    return {
+        "tasks": n,
+        "recall": round(caught / n, 3),
+        "recall_ci95": wilson_interval(caught, n),
+        "localised": round(sum(1 for r in rows if r["localised"]) / n, 3),
+        "false_alarm_rate": round(fa / n, 3),
+        "false_alarm_ci95": wilson_interval(fa, n),
+        "calls": sum(r["calls"] for r in rows),
+        "lens_catches": dict(sorted(lens_counts.items(), key=lambda kv: -kv[1])),
+    }
+
+
 def load_profile(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Stress/load view (U11): latency percentiles, makespan and throughput of a run batch."""
     walls = sorted(float(r["wall_s"]) for r in rows if r.get("wall_s") is not None)
