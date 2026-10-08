@@ -49,6 +49,7 @@ class LimitsConfig(BaseModel):
     step_iterations: int = Field(default=12, ge=3, le=100)
     # Warn when session cost reaches this fraction of max_cost_usd.
     warn_at_fraction: float = Field(default=0.8, ge=0.0, le=1.0)
+    max_tokens_per_run: int | None = Field(default=None, ge=1000)  # input + output tokens
     # Latency budget per route, seconds (U14): past it the agent is told once to wrap up with
     # the smallest complete result. A soft budget; max_wall_clock_minutes is the hard stop.
     latency_budget_s: dict[str, float] = Field(
@@ -268,6 +269,13 @@ def _default_sampling() -> dict[str, SamplingParams]:
     return {r: zero for r in ("router", "verifier", "reviewer", "judge", "screener")}
 
 
+class ToolsConfig(BaseModel):
+    """Which tools this project or session may use (U26). Empty allow = every tool."""
+
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+
+
 class SessionsConfig(BaseModel):
     """Retention (U6): how long stored sessions and events are kept."""
 
@@ -275,6 +283,8 @@ class SessionsConfig(BaseModel):
     keep_latest: int = Field(default=50, ge=1)
     # record every model response so sessions can be replayed deterministically (U20)
     record_cassettes: bool = True
+    # one live run per checkout; a second one is refused (use --worktree to run in parallel)
+    run_lock: bool = True
 
 
 class GovernanceConfig(BaseModel):
@@ -461,6 +471,7 @@ class AppConfig(BaseModel):
     sessions: SessionsConfig = SessionsConfig()
     economics: EconomicsConfig = EconomicsConfig()
     sampling: dict[str, SamplingParams] = Field(default_factory=_default_sampling)
+    tools: ToolsConfig = ToolsConfig()
     attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)

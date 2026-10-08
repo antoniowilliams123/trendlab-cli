@@ -128,6 +128,9 @@ def main_callback(
         "--allow-path",
         help="Change scope for this session: edits outside these globs are refused (repeatable).",
     ),
+    tools_allow: str | None = typer.Option(
+        None, "--tools", help="Comma-separated tool allowlist for this session."
+    ),
     telegram: bool = typer.Option(
         False, "--telegram", help="Remote control from your Telegram chat for this session."
     ),
@@ -155,6 +158,8 @@ def main_callback(
         config.limits.max_cost_usd = max_cost
     if allow_path:
         config.governance.change_allow = list(allow_path)
+    if tools_allow:
+        config.tools.allow = [t.strip() for t in tools_allow.split(",") if t.strip()]
     if auto_edit:
         mode = PermissionMode.AUTO_EDIT
     if safe:

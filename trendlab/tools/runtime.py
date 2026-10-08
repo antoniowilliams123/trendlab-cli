@@ -48,6 +48,8 @@ def _in_git_repo(root: Path) -> bool:
     return False
 
 
+ALWAYS_ALLOWED = {"task", "ask_user"}  # planning and asking are never taken away
+
 TAINT_GATED = {
     OperationCategory.FILE_DELETE,
     OperationCategory.NETWORK,
@@ -90,6 +92,8 @@ class ToolRuntime:
         self.tainted: list[dict[str, str]] = []
         self.secrets_touched: list[str] = []  # secret-bearing paths read this run (U11)
         self.recorder = None  # (tool name, raw result) -> None; cassette recording (U20)
+        self.allow_tools: set[str] = set()  # [tools] allow (U26); empty = all
+        self.deny_tools: set[str] = set()
         # Called with affected files before a mutation runs (checkpointing).
         self.on_before_mutation: Callable[[list[str]], Awaitable[None]] | None = None
 
@@ -102,6 +106,10 @@ class ToolRuntime:
         """Why ``name`` cannot work in this project, or None when it can. Tools that cannot
         work are not offered to the model at all, so it never has to discover that by failing."""
         root = self.ctx.project_root
+        if self.allow_tools and name not in self.allow_tools and name not in ALWAYS_ALLOWED:
+            return "not in this session's tool allowlist"
+        if name in self.deny_tools:
+            return "denied for this project"
         if name in GIT_TOOLS and not _in_git_repo(root):
             return "this project is not a git repository; use list_directory/read_file instead"
         if name == "run_tests" and not (self.ctx.validation_commands or {}):

@@ -241,6 +241,8 @@ class TrendLabApp:
         registry.register(TaskTool(self.plan, self.events))
         registry.register(AskUserTool(self.approvals))
         self.tools = ToolRuntime(registry, self.engine, self.approvals, self.events, ctx)
+        self.tools.allow_tools = set(self.config.tools.allow)
+        self.tools.deny_tools = set(self.config.tools.deny)
         self.tools.tool_budgets = dict(self.config.context.tool_budgets)
         self.tools.screener_threshold_tokens = self.config.context.screener_threshold_tokens
         self.tools.screener = self._screen_output
@@ -500,9 +502,19 @@ class TrendLabApp:
         self._run_steering = []
         self._run_failures = 0
         worktree = self._enter_worktree()
+        locked_root = None
+        if self.config.sessions.run_lock:
+            from trendlab.sessions.runlock import acquire
+
+            locked_root = self.tools.ctx.project_root if self.tools else self.project_root
+            acquire(locked_root, self.session_id)  # raises RunLocked when another run holds it
         try:
             result = await self.agent.run(content)
         finally:
+            if locked_root is not None:
+                from trendlab.sessions.runlock import release
+
+                release(locked_root)
             if worktree is not None:
                 await self._surface_worktree(*worktree)
             if restore_model is not None:

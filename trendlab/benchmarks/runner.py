@@ -276,6 +276,7 @@ async def run_task(
         plan_files: list[str] = []
         plan_events: list[dict] = []
         unresolved_refs: list[str] = []
+        timeline: dict[str, list[float]] = {"edit": [], "validate": [], "verify": []}
         route_kind: list[str] = []
 
         def count(e):
@@ -286,6 +287,14 @@ async def run_task(
                 sequence.append((str(e.data.get("tool")), str(files[0]) if files else ""))
             if e.type == EventType.ROUTE_DECIDED:
                 route_kind.append(str(e.data.get("kind")))
+            if e.type == EventType.TOOL_COMPLETED:  # verification latency (U26)
+                name = str(e.data.get("tool"))
+                if name in {"write_file", "patch_file", "apply_patch"}:
+                    timeline["edit"].append(time.monotonic())
+                elif name in {"run_tests", "shell"} and "exit_code" in e.data:
+                    timeline["validate"].append(time.monotonic())
+            if e.type == EventType.VERIFY_VERDICT:
+                timeline["verify"].append(time.monotonic())
             if e.type == EventType.PLANNER_CALLED:
                 plan_events.append(dict(e.data))
                 for fs in e.data.get("files") or []:
@@ -455,6 +464,7 @@ async def run_task(
             # proactivity: edits on a question (overreach) / nothing done on a fix (timidity)
             "edited_on_question": bool(changed) if task.answer_keywords else None,
             "idle_on_fix": (not changed) if not task.answer_keywords and task.defect.old else None,
+            **verification_latency(timeline, started),
             "over_latency_budget": (result.latency or {}).get("over"),
             "answer_words": (result.communication or {}).get("words"),
             "reading_ease": (result.communication or {}).get("reading_ease"),
@@ -548,6 +558,20 @@ async def run_suite(
             await one(task, run)
     else:
         await asyncio.gather(*(one(t, r) for t, r in jobs))
+    return out
+
+
+def verification_latency(timeline: dict[str, list[float]], started: float) -> dict[str, Any]:
+    """Seconds from the run start to the first edit, and from the last edit to the next test run
+    and to the verifier's verdict (how quickly a change gets checked)."""
+    edits, vals, ver = timeline["edit"], timeline["validate"], timeline["verify"]
+    out: dict[str, Any] = {"time_to_first_edit_s": round(edits[0] - started, 1) if edits else None}
+    if edits:
+        last = edits[-1]
+        nxt = [v for v in vals if v >= last]
+        out["edit_to_validation_s"] = round(nxt[0] - last, 1) if nxt else None
+        vv = [v for v in ver if v >= last]
+        out["edit_to_verdict_s"] = round(vv[0] - last, 1) if vv else None
     return out
 
 
@@ -811,6 +835,18 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             "median_excess_lines": pars[len(pars) // 2],
             "minimal_share": round(sum(1 for x in pars if x <= 2) / len(pars), 3),
             "max_excess_lines": pars[-1],
+        }
+    lat = [r["edit_to_validation_s"] for r in ran if r.get("edit_to_validation_s") is not None]
+    if lat:
+        lat.sort()
+        summary["verification_latency"] = {
+            "edit_to_validation_p50_s": lat[len(lat) // 2],
+            "unvalidated_edits": sum(
+                1
+                for r in ran
+                if r.get("time_to_first_edit_s") is not None
+                and r.get("edit_to_validation_s") is None
+            ),
         }
     gamed = [r for r in ran if r.get("test_gaming") is not None]
     summary["test_gaming_rate"] = (

@@ -142,6 +142,9 @@ class AgentRuntime:
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
         self._latency_nudged = False
+        self._tokens_at_start = (
+            self.costs.total_input_tokens + self.costs.total_output_tokens if self.costs else 0
+        )
         self._scope: dict[str, Any] | None = None
         self.regression_gate = False
         self._verify_rounds = 0
@@ -288,6 +291,9 @@ class AgentRuntime:
         self._communication: dict[str, Any] | None = None
         self._cooldowns = 0
         self._latency_nudged = False
+        self._tokens_at_start = (
+            self.costs.total_input_tokens + self.costs.total_output_tokens if self.costs else 0
+        )
         self._scope = None
         self._step_id, self._step_iters = None, 0
         self._verified_steps = set()
@@ -560,6 +566,15 @@ class AgentRuntime:
             return f"cost limit ${self.limits.max_cost_usd:.2f} reached"
         if self.costs.over_call_limit():
             return f"max_model_calls ({self.limits.max_model_calls}) reached"
+        cap = getattr(self.limits, "max_tokens_per_run", None)
+        if cap:
+            used = (
+                self.costs.total_input_tokens
+                + self.costs.total_output_tokens
+                - self._tokens_at_start
+            )
+            if used > cap:
+                return f"token limit ({cap}) reached"
         if self.limits.max_wall_clock_minutes and (
             time.monotonic() - started > self.limits.max_wall_clock_minutes * 60
         ):
