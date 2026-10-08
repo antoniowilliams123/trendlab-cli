@@ -623,11 +623,24 @@ class TrendLabApp:
         return steps
 
     def _retrieve(self, task_text: str):
-        from trendlab.context.retrieval import hints_message, index_project, search
+        from trendlab.context.retrieval import hints_message, index_project
+        from trendlab.context.vectors import VectorIndex, index_path, make_embedder, retrieve
 
         cfg = self.config.context
         rules = self.tools.ctx.ignore_rules if self.tools else None
-        hits = search(index_project(self.project_root, rules), task_text, k=cfg.retrieval_k)
+        chunks = index_project(self.project_root, rules)
+        mode, index = cfg.retrieval_mode, None
+        if mode != "bm25" and cfg.embeddings:
+            try:
+                index = VectorIndex(
+                    index_path(self.project_root), make_embedder(self.config, cfg.embeddings)
+                )
+            except Exception:  # noqa: BLE001 — no embedder: lexical retrieval still works
+                mode = "bm25"
+        try:
+            hits = retrieve(chunks, task_text, mode=mode, index=index, k=cfg.retrieval_k)
+        except Exception:  # noqa: BLE001 — embedding service down: fall back to BM25
+            hits = retrieve(chunks, task_text, mode="bm25", k=cfg.retrieval_k)
         return hints_message(hits, cfg.retrieval_max_chars), hits
 
     async def _route_request(self, prompt: str):

@@ -91,6 +91,9 @@ class ContextConfig(BaseModel):
     retrieval: bool = False
     retrieval_k: int = Field(default=3, ge=1, le=10)
     retrieval_max_chars: int = Field(default=3000, ge=500)
+    # U16: "bm25" (lexical), "vector" (embeddings) or "hybrid" (rank fusion of both)
+    retrieval_mode: str = "bm25"
+    embeddings: str = ""  # provider:model, e.g. "ollama:nomic-embed-text"
 
 
 class GitConfig(BaseModel):

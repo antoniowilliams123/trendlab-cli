@@ -493,6 +493,13 @@ def bench_cmd(
         "--delegate-eval",
         help="Explorer sub-agent only: locate each task's defect from the bug report.",
     ),
+    retrieval_eval: str | None = typer.Option(
+        None,
+        "--retrieval-eval",
+        help="Retrieval only: recall@k/MRR for modes, e.g. bm25,vector,hybrid "
+        "(vector modes use [context] embeddings or --embeddings).",
+    ),
+    embeddings: str | None = typer.Option(None, "--embeddings", help="provider:model"),
 ) -> None:
     """Run the fixtures A–E, the suite, a comparison, an ablation, a sweep or a counterfactual."""
     from trendlab.benchmarks.runner import (
@@ -506,6 +513,31 @@ def bench_cmd(
         verify_suite_tasks,
     )
 
+    if retrieval_eval:
+        from trendlab.benchmarks.runner import retrieval_eval as run_retrieval_eval
+        from trendlab.benchmarks.runner import select_tasks
+        from trendlab.config.loader import load_config
+        from trendlab.context.vectors import make_embedder
+
+        modes = [m.strip() for m in retrieval_eval.split(",") if m.strip()]
+        cfg = load_config()
+        ref = embeddings or cfg.context.embeddings
+        embedder = make_embedder(cfg, ref) if ref and any(m != "bm25" for m in modes) else None
+        chosen = [
+            t
+            for t in select_tasks(tasks, lang, tier, holdout=holdout)
+            if t.lang != "go" and not t.answer_keywords and t.defect.old
+        ]
+        res = run_retrieval_eval(chosen, modes, embedder)
+        if save_rows is not None:
+            save_rows.write_text(json.dumps(res["rows"], indent=1))
+        res.pop("rows")
+        if output == "json":
+            typer.echo(json.dumps(res, indent=2))
+        else:
+            for m, v in res["modes"].items():
+                console.print(f"  {m}: all {v['all']} · symptom-only {v['symptom_only']}")
+        return
     if delegate_eval:
         from trendlab.benchmarks.runner import (
             delegate_eval_task,
@@ -1694,11 +1726,39 @@ def search_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
     limit: int = typer.Option(30, "--limit"),
     ranked: bool = typer.Option(False, "--ranked", help="Rank whole sessions by relevance."),
+    semantic: bool = typer.Option(
+        False, "--semantic", help="Rank sessions by meaning ([context] embeddings or local)."
+    ),
 ) -> None:
-    """Search past sessions: exact matches in messages and events, or --ranked by relevance."""
+    """Search past sessions: exact matches, --ranked (BM25) or --semantic (embeddings)."""
     from trendlab.sessions.store import SessionStore
 
     store = SessionStore(trendlab_home() / "sessions.db")
+    if semantic:
+        from trendlab.config.loader import load_config
+        from trendlab.context.vectors import make_embedder, semantic_sessions
+
+        cfg = load_config()
+        try:
+            emb = make_embedder(cfg, cfg.context.embeddings or "ollama:nomic-embed-text")
+            top = semantic_sessions(
+                store, emb, text, cache=trendlab_home() / "index" / "sessions.json", k=limit
+            )
+        finally:
+            store.close()
+        t = Table(title=f"Sessions closest in meaning to: {text}")
+        for col in ("score", "session", "updated", "project", "about"):
+            t.add_column(col)
+        for h in top:
+            t.add_row(
+                str(h["score"]),
+                h["session"],
+                str(h["updated_at"] or "")[:16],
+                Path(h["project"] or "").name,
+                h["preview"][:90],
+            )
+        console.print(t if top else "[dim]no sessions[/dim]")
+        return
     if ranked:
         try:
             top = store.ranked_search(text, str(project.resolve()) if project else None, limit)

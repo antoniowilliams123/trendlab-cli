@@ -1044,6 +1044,51 @@ async def critique_eval(
     }
 
 
+def retrieval_eval(tasks, modes: list[str], embedder=None, k_max: int = 5) -> dict[str, Any]:
+    """U16 retrieval eval: for each task, does the defect's file appear in the top 1/3/5 chunks
+    for the bug report? Recall@k and mean reciprocal rank per mode, overall and symptom-only."""
+    from trendlab.benchmarks import suite as suite_mod
+    from trendlab.context.ignore import IgnoreRules
+    from trendlab.context.retrieval import index_project
+    from trendlab.context.vectors import VectorIndex, retrieve
+
+    rows = []
+    with tempfile.TemporaryDirectory(prefix="trendlab-suite-retrieval-") as tmp:
+        cache = Path(tmp) / "vectors.json"
+        for t in tasks:
+            root = Path(tmp) / t.id
+            suite_mod.materialize(t, root)
+            chunks = index_project(root, IgnoreRules([]))
+            row = {"task": t.id, "symptom_only": "existing tests still pass" in t.prompt}
+            for mode in modes:
+                index = VectorIndex(cache, embedder) if mode != "bm25" and embedder else None
+                hits = retrieve(chunks, t.prompt, mode=mode, index=index, k=k_max)
+                files = [c.path for c, _ in hits]
+                rank = next((i + 1 for i, f in enumerate(files) if f == t.answer_file), None)
+                row[mode] = rank
+            rows.append(row)
+
+    def stats(subset, mode):
+        n = len(subset)
+        if not n:
+            return None
+        ranks = [r[mode] for r in subset]
+        return {
+            "n": n,
+            "recall@1": round(sum(1 for x in ranks if x == 1) / n, 3),
+            "recall@3": round(sum(1 for x in ranks if x and x <= 3) / n, 3),
+            "recall@5": round(sum(1 for x in ranks if x and x <= 5) / n, 3),
+            "mrr": round(sum(1 / x for x in ranks if x) / n, 3),
+        }
+
+    symptom = [r for r in rows if r["symptom_only"]]
+    return {
+        "modes": {m: {"all": stats(rows, m), "symptom_only": stats(symptom, m)} for m in modes},
+        "embed_calls": getattr(embedder, "calls", 0),
+        "rows": rows,
+    }
+
+
 def summarize_review_eval(rows: list[dict[str, Any]]) -> dict[str, Any]:
     from trendlab.benchmarks.stats import wilson_interval
 
