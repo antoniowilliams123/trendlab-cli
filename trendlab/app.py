@@ -291,6 +291,8 @@ class TrendLabApp:
         self.agent.verification_mode = vcfg.verifier if has_verifier_model else "off"
         self.agent.verify_min_diff_lines = vcfg.min_diff_lines
         self.agent.verify_min_files = vcfg.min_files
+        self.agent.scope_config = self.config.governance
+        self.agent.test_strength = self._test_strength
         if self.config.planner.enabled:
             self.agent.planner = self._plan_steps
             self.agent.planner_max_calls = self.config.planner.max_calls
@@ -584,6 +586,65 @@ class TrendLabApp:
             parent_ctx=self.tools.ctx,
         )
         return await runner.run_best_of(task, failure_tail, n)
+
+    # -- generated-test strength (uplift U5) ------------------------------------------------------
+    async def _test_strength(self, changed: dict[str, list[str]]) -> str:
+        """Does the new test fail without the fix? Source files are restored from this run's
+        checkpoint snapshot, the test command runs, then the current files are put back."""
+        import shutil
+        import tempfile
+
+        from trendlab.agent.scope import is_test_path
+
+        cmd = (self.tools.ctx.validation_commands or {}).get("test") if self.tools else None
+        if not cmd or self._run_checkpoint is None or self.checkpoints is None:
+            return "unknown"
+        snap = self.checkpoints.dir / self._run_checkpoint["id"]
+        sources = [f for f in changed if not is_test_path(f)]
+        if not sources:
+            return "n/a"
+        backup = Path(tempfile.mkdtemp(prefix="trendlab-strength-"))
+        try:
+            restored = 0
+            for rel in sources:
+                cur, pre = self.project_root / rel, snap / rel
+                if cur.is_file():
+                    (backup / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(cur, backup / rel)
+                if pre.is_file():
+                    shutil.copy2(pre, cur)
+                    restored += 1
+                elif cur.is_file():
+                    cur.unlink()  # the fix created this file; without the fix it is absent
+                    restored += 1
+            if not restored:
+                return "unknown"
+            argv = (
+                self.sandbox.wrap(cmd, cwd=self.project_root)
+                if self.sandbox
+                else ["/bin/sh", "-c", cmd]
+            )
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(self.project_root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=300)
+            except TimeoutError:
+                proc.kill()
+                return "unknown"
+            return "weak" if proc.returncode == 0 else "strong"
+        finally:
+            for rel in sources:
+                cur, saved = self.project_root / rel, backup / rel
+                if saved.is_file():
+                    cur.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(saved, cur)
+                elif cur.exists():
+                    cur.unlink()
+            shutil.rmtree(backup, ignore_errors=True)
 
     # -- verify-then-surface (cheap-model spec §3.2, §5) ------------------------------------------
     async def _verify_change(self, task_text: str, ev, small: bool = False) -> Any:

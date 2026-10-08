@@ -104,6 +104,12 @@ def format_event(event: Event) -> str | None:
             f"  [{GREY}]⑂ candidate {d.get('n')}:[/] {mark} [{GREY}]{d.get('diff_lines')} diff lines"
             f" · ${d.get('cost_usd', 0):.3f} · {d.get('elapsed_s', 0):.0f}s[/]"
         )
+    if t == EventType.SCOPE_CHECKED:
+        if d.get("ok"):
+            ts = d.get("test_strength")
+            extra = f" · new test {ts}" if ts in {"strong", "weak"} else ""
+            return f"[{GREY}]▦ scope ok: {d.get('files')} files, +{d.get('added')} -{d.get('removed')}{extra}[/]"
+        return f"[{AMBER}]▦ scope: {escape('; '.join(d.get('problems') or []))[:160]}[/]"
     if t == EventType.TOOL_CIRCUIT_OPENED:
         return (
             f"[{AMBER}]⏸ {d.get('tool')} paused {float(d.get('cooldown_s') or 0):.0f}s after "
@@ -272,6 +278,13 @@ def run_footer(result) -> str:
             parts.append(f"[{NEON if ok else RED}]validated {'✓' if ok else '✗'}[/]")
         else:
             parts.append(f"[{AMBER}]not validated[/]")
+        sc = getattr(result, "scope", None) or {}
+        if sc:
+            parts.append(
+                f"[{NEON if sc.get('ok') else AMBER}]scope {'✓' if sc.get('ok') else '!'}[/]"
+            )
+            if sc.get("test_strength") == "weak":
+                parts.append(f"[{AMBER}]weak test[/]")
         ver = getattr(result, "verification", None) or {}
         v = ver.get("verdict")
         if v == "pass":

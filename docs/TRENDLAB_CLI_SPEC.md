@@ -4686,6 +4686,38 @@ the programme spec in full when the last phase lands. Locked rules are unchanged
   one failing job never stops the loop. `[engine] projects` lists the roots.
 - Tests: `tests/test_engine.py` (8).
 
+### 93.8 Rating uplift programme (started 2026-10-08)
+
+Source and plan: `docs/RATING_UPLIFT_PLAN.md` (560 AI concepts rated against the harness; 540
+below 9 grouped into packages U1–U12). Each package: feature + tests + a number.
+
+- **U1 Evaluation rigour** (`3a17e49`): `trendlab/benchmarks/stats.py` — Wilson and bootstrap
+  95 % intervals, exact sign test for paired task outcomes, pass@1 / pass@k and flaky-task
+  count across `bench --runs N`, per-tool success rate and error rate in every summary;
+  `bench --compare a@p b@q` reports wins/losses/ties, p-value and cost ratio, and says "not a
+  significant difference at this sample size" when that is the truth; `--gate` exits 1 when
+  the second configuration loses significantly (p ≤ 0.05) or costs > 1.5×; `--canary` runs
+  the fixed ten-task set; the engine runs it nightly (`[engine] canary = true`, `canary_at`)
+  and files a drift card when ≥ `canary_drop_alert` tasks are lost versus the previous night.
+  Every bench row carries `model_version`, tool counters and `tools` breakdown.
+- **U4 Tool reliability** (`93a1ae0`): `trendlab/tools/health.py` — per-tool calls, ok,
+  failed, skipped, timeouts, latency; circuit breaker (three consecutive *tool errors* pause
+  the tool for 60 s with a readable reason and an alternative; one probe call reopens it;
+  `tool.circuit_opened`); a non-zero command exit is a result, never a failure; edit
+  postconditions (Python/JSON/TOML must still parse, else `POSTCONDITION FAILED` in the
+  result and `tool.postcondition_failed`); `web_fetch` retries once after a 1 s backoff;
+  `/tools` shows the table.
+- **U5 Scope and code-quality control**: `trendlab/agent/scope.py` — diff shape from the
+  per-edit diffs (files, source vs test, new files, +/- lines, new definitions, dependency
+  files, new dependencies not named in the task); budget by task kind (`[governance]`
+  max_files_fix 4 / max_files_change 12 / max_new_definitions_fix 3); dependency gate; one
+  scope nudge per run then the report lands on `RunResult.scope` and the footer (`scope ✓/!`,
+  `weak test`); generated-test strength: for a fix with a new/changed test, the app restores
+  the pre-fix sources from the run checkpoint, runs the test command, and reports `weak` when
+  the test still passes (`test_strength` in bench rows); `scope.checked` event,
+  `scope_budget` guard.
+
+
 ### 93.7 Programme specification (merged 2026-10-08 from docs/CHEAP_MODEL_HARNESS_SPEC.md)
 
 The full programme document, including its status table and measurements, so this spec is

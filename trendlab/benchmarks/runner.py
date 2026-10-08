@@ -291,6 +291,8 @@ async def run_task(
             "guards_fired": guards,
             "verification": (result.verification or {}).get("verdict"),
             "stop_reason": result.stop_reason,
+            "scope_ok": (result.scope or {}).get("ok"),
+            "test_strength": (result.scope or {}).get("test_strength"),
             "tool_calls": sum(d["calls"] for d in tools.values()),
             "tool_failures": sum(d["failed"] + d["skipped"] for d in tools.values()),
             "tools": tools,

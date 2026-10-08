@@ -226,6 +226,17 @@ class EngineConfig(BaseModel):
     canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
 
 
+class GovernanceConfig(BaseModel):
+    """Scope, bloat and dependency control (uplift U5)."""
+
+    scope_check: bool = True
+    max_files_fix: int = Field(default=4, ge=1)
+    max_files_change: int = Field(default=12, ge=1)
+    max_new_definitions_fix: int = Field(default=3, ge=0)
+    dependency_gate: bool = True  # a dependency the task did not ask for must be justified
+    test_strength_check: bool = True  # a new test must fail without the fix
+
+
 class PlanGateConfig(BaseModel):
     """Ask for a human 'go' (terminal, phone page or Telegram buttons) before the first change
     of every run. Off by default; independent of the permission mode."""
@@ -382,6 +393,7 @@ class AppConfig(BaseModel):
     planner: PlannerConfig = PlannerConfig()
     prompts: PromptsConfig = PromptsConfig()
     engine: EngineConfig = EngineConfig()
+    governance: GovernanceConfig = GovernanceConfig()
     attempts: AttemptsConfig = AttemptsConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)

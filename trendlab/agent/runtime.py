@@ -60,11 +60,13 @@ class RunResult:
     stop_reason: str | None = None
     plan: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
+    scope: dict[str, Any] | None = None  # diff shape, budget and test strength (uplift U5)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "verification": self.verification,
+            "scope": self.scope,
             "text": self.text,
             "report": self.report,
             "changed_files": self.changed_files,
@@ -124,6 +126,10 @@ class AgentRuntime:
         self.verification_max_rounds = 1
         self.verify_min_diff_lines = 0  # risk gating, set by the app from config
         self.verify_min_files = 1
+        self.scope_config: Any = None  # GovernanceConfig (U5); None = scope check off
+        self.test_strength: Any = None  # async (changed_files) -> strong | weak | unknown
+        self._scope_nudged = False
+        self._scope: dict[str, Any] | None = None
         self.regression_gate = False
         self._verify_rounds = 0
         self._verification: dict[str, Any] | None = None
@@ -247,6 +253,8 @@ class AgentRuntime:
         self._verify_rounds = 0
         self._verification = None
         self._planner_calls = 0
+        self._scope_nudged = False
+        self._scope = None
         self._step_id, self._step_iters = None, 0
         self._verified_steps = set()
         self._phase = "plan"
@@ -364,6 +372,10 @@ class AgentRuntime:
                 for reason in verdict.reasons if not verdict.accept else []:
                     self._guard(_guard_name(reason))
                 if verdict.accept:
+                    nudge = await self._scope_check(response.text)
+                    if nudge:
+                        self._append({"role": "user", "content": nudge})
+                        continue
                     outcome = await self._verify_before_surface(response.text)
                     if outcome is None:
                         text, status = response.text, AgentState.COMPLETED
@@ -814,6 +826,61 @@ class AgentRuntime:
         )
         return True
 
+    async def _scope_check(self, final_text: str) -> str | None:
+        """U5: diff shape vs budget, dependency gate, generated-test strength. One nudge per run;
+        the report always lands on the RunResult."""
+        if self.scope_config is None or not getattr(self.scope_config, "scope_check", False):
+            return None
+        from trendlab.agent.scope import diff_shape, scope_nudge
+
+        changed = dict(self.tools.changed_files)
+        if not changed:
+            return None
+        cfg = self.scope_config
+        rep = diff_shape(
+            changed,
+            self._task_text,
+            max_files_fix=cfg.max_files_fix,
+            max_files_change=cfg.max_files_change,
+            max_new_defs_fix=cfg.max_new_definitions_fix,
+            dependency_gate=cfg.dependency_gate,
+        )
+        if (
+            cfg.test_strength_check
+            and self.test_strength is not None
+            and rep.task_kind == "fix"
+            and rep.test_files
+            and rep.source_files
+            and self.evidence().validated
+        ):
+            try:
+                rep.test_strength = await self.test_strength(changed)
+            except Exception:  # noqa: BLE001
+                rep.test_strength = "unknown"
+            if rep.test_strength == "weak":
+                rep.problems.append(
+                    "the test you added passes even without your fix — it does not catch the bug"
+                )
+        self._scope = rep.to_json()
+        self.events.emit(
+            EventType.SCOPE_CHECKED,
+            session_id=self.session_id,
+            ok=rep.ok,
+            problems=rep.problems,
+            files=rep.files,
+            added=rep.added,
+            removed=rep.removed,
+            new_definitions=len(rep.new_definitions),
+            new_dependencies=rep.new_dependencies,
+            test_strength=rep.test_strength,
+            task_kind=rep.task_kind,
+        )
+        if rep.ok or self._scope_nudged:
+            return None
+        self._scope_nudged = True
+        self._guard("scope_budget")
+        return scope_nudge(rep)
+
     def _small_verified_change(self, ev: EvidenceSummary, final_text: str) -> bool:
         """Risk gate (M1): a change below both size thresholds that validated green with its
         regression test is reviewed by the cheap lead model, not the stronger one."""
@@ -911,6 +978,7 @@ class AgentRuntime:
         )
         result = RunResult(
             verification=self._verification,
+            scope=self._scope,
             status=status.value,
             text=text,
             report=report,
