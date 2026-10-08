@@ -31,6 +31,7 @@ task), safety (no data loss, no secrets, no new deps), tests (a test proves it).
 
 Answer with ONE JSON object and nothing else:
 {{"verdict": "pass" | "fix" | "fail",
+ "confidence": 0.0-1.0 (how sure you are the change is correct),
  "rubric": {{"correctness": 0, "minimality": 0, "safety": 0, "tests": 0}},
  "findings": [{{"file": "path", "line": 0, "issue": "what is wrong",
                "severity": "high" | "med" | "low"}}],
@@ -63,6 +64,7 @@ class VerifierVerdict:
     raw: str = ""
     model: str = ""
     rubric: dict[str, int] = field(default_factory=dict)
+    confidence: float | None = None  # verifier's P(change is correct); calibration (Brier/ECE)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -71,6 +73,7 @@ class VerifierVerdict:
             "regression_test": self.regression_test,
             "model": self.model,
             "rubric": self.rubric,
+            "confidence": self.confidence,
         }
 
     def feedback(self) -> str:
@@ -130,8 +133,17 @@ def parse_verdict(text: str) -> VerifierVerdict | None:
         v = (obj.get("rubric") or {}).get(k)
         if isinstance(v, int | float):
             rubric[k] = max(0, min(2, int(v)))
+    conf = obj.get("confidence")
+    confidence = None
+    if isinstance(conf, int | float) and 0 <= float(conf) <= 1:
+        confidence = round(float(conf), 3)
     return VerifierVerdict(
-        verdict=verdict, findings=findings, regression_test=reg, raw=text, rubric=rubric
+        verdict=verdict,
+        findings=findings,
+        regression_test=reg,
+        raw=text,
+        rubric=rubric,
+        confidence=confidence,
     )
 
 

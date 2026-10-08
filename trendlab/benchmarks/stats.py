@@ -106,3 +106,103 @@ def gate(
     if cost_ratio > max_cost_ratio:
         reasons.append(f"B costs {cost_ratio:.2f}× A (limit {max_cost_ratio}×)")
     return {"ok": not reasons, "reasons": reasons}
+
+
+def classifier_metrics(pairs: list[tuple[bool, bool]]) -> dict[str, Any]:
+    """Binary classifier scores. ``pairs`` = (predicted_positive, actually_positive).
+
+    For the verifier, *positive* means "this change is wrong": predicted positive = the
+    verifier flagged it (fix/fail), actually positive = the hidden test failed."""
+    tp = sum(1 for p, a in pairs if p and a)
+    fp = sum(1 for p, a in pairs if p and not a)
+    fn = sum(1 for p, a in pairs if not p and a)
+    tn = sum(1 for p, a in pairs if not p and not a)
+
+    def ratio(x: int, y: int) -> float | None:
+        return round(x / y, 3) if y else None
+
+    precision = ratio(tp, tp + fp)
+    recall = ratio(tp, tp + fn)
+    f1 = (
+        round(2 * precision * recall / (precision + recall), 3)
+        if precision is not None and recall is not None and (precision + recall) > 0
+        else None
+    )
+    return {
+        "n": len(pairs),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "false_positive_rate": ratio(fp, fp + tn),
+        "false_negative_rate": ratio(fn, fn + tp),
+        "accuracy": ratio(tp + tn, len(pairs)),
+    }
+
+
+def calibration(probs_and_truth: list[tuple[float, bool]], bins: int = 5) -> dict[str, Any]:
+    """Brier score and expected calibration error for stated confidences (P(correct))."""
+    pts = [(float(p), bool(t)) for p, t in probs_and_truth if p is not None]
+    if not pts:
+        return {"n": 0, "brier": None, "ece": None, "bins": []}
+    brier = sum((p - (1.0 if t else 0.0)) ** 2 for p, t in pts) / len(pts)
+    table = []
+    ece = 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        inside = [(p, t) for p, t in pts if (lo <= p < hi) or (b == bins - 1 and p == 1.0)]
+        if not inside:
+            continue
+        conf = sum(p for p, _ in inside) / len(inside)
+        acc = sum(1 for _, t in inside if t) / len(inside)
+        ece += len(inside) / len(pts) * abs(conf - acc)
+        table.append(
+            {
+                "bin": f"{lo:.1f}-{hi:.1f}",
+                "n": len(inside),
+                "confidence": round(conf, 3),
+                "accuracy": round(acc, 3),
+            }
+        )
+    return {"n": len(pts), "brier": round(brier, 4), "ece": round(ece, 4), "bins": table}
+
+
+def cohen_kappa(a: list[Any], b: list[Any]) -> float | None:
+    """Agreement between two raters beyond chance (inter-rater / judge agreement)."""
+    pairs = [(x, y) for x, y in zip(a, b, strict=False) if x is not None and y is not None]
+    if not pairs:
+        return None
+    n = len(pairs)
+    labels = sorted({x for x, _ in pairs} | {y for _, y in pairs}, key=str)
+    po = sum(1 for x, y in pairs if x == y) / n
+    pe = sum(
+        (sum(1 for x, _ in pairs if x == lab) / n) * (sum(1 for _, y in pairs if y == lab) / n)
+        for lab in labels
+    )
+    if pe >= 1.0:
+        return 1.0 if po == 1.0 else 0.0
+    return round((po - pe) / (1 - pe), 3)
+
+
+def capability_map(
+    rows: list[dict[str, Any]], key: str = "defect_kind"
+) -> dict[str, dict[str, Any]]:
+    """Pass rate per group (defect kind, language, tier): where the model is strong or weak
+    — the jagged edge of its capability, measured instead of guessed."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        if r.get("skipped"):
+            continue
+        groups.setdefault(str(r.get(key) or "?"), []).append(r)
+    out = {}
+    for g, rs in sorted(groups.items()):
+        k = sum(1 for r in rs if r.get("passes"))
+        out[g] = {
+            "n": len(rs),
+            "passes": round(k / len(rs), 3),
+            "ci95": wilson_interval(k, len(rs)),
+        }
+    return out

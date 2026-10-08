@@ -1074,6 +1074,11 @@ def materialize(task: Task, dest: Path) -> str:
     return task.prompt
 
 
+def reference_content(task: Task, rel: str) -> str | None:
+    """Reference answer (exact/fuzzy match grading): the file as it is without the defect."""
+    return BASES[task.lang].get(rel)
+
+
 def write_hidden_test(task: Task, root: Path) -> Path:
     path = root / task.defect.hidden_test_file
     path.parent.mkdir(parents=True, exist_ok=True)

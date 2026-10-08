@@ -61,12 +61,14 @@ class RunResult:
     plan: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
     scope: dict[str, Any] | None = None  # diff shape, budget and test strength (uplift U5)
+    unsupported_claims: list[str] = field(default_factory=list)  # claims the evidence contradicts
 
     def to_json(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "verification": self.verification,
             "scope": self.scope,
+            "unsupported_claims": self.unsupported_claims,
             "text": self.text,
             "report": self.report,
             "changed_files": self.changed_files,
@@ -990,7 +992,19 @@ class AgentRuntime:
             status=status.value,
             model_calls=self.costs.model_calls,
         )
+        from trendlab.agent.claims import unsupported_claims
+
+        claims = (
+            unsupported_claims(
+                text, {"changed_files": ev.changed_files, "validation_runs": ev.validation_runs}
+            )
+            if status == AgentState.COMPLETED
+            else []
+        )
+        if claims:
+            self.events.emit(EventType.CLAIM_UNSUPPORTED, session_id=self.session_id, claims=claims)
         result = RunResult(
+            unsupported_claims=claims,
             verification=self._verification,
             scope=self._scope,
             status=status.value,

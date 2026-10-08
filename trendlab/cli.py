@@ -433,6 +433,9 @@ def bench_cmd(
     holdout: bool = typer.Option(
         False, "--holdout", help="Only the holdout tasks (release gate; never tune on these)."
     ),
+    scorecard_path: Path | None = typer.Option(
+        None, "--scorecard", help="Write a markdown scorecard of the suite run to this file."
+    ),
     profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
     compare: list[str] | None = typer.Option(
         None,
@@ -503,6 +506,11 @@ def bench_cmd(
             if log:
                 append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
         cmp = compare_rows(all_rows[0], all_rows[1]) if len(summaries) == 2 else None
+        if scorecard_path is not None:
+            from trendlab.benchmarks.runner import scorecard
+
+            scorecard_path.write_text(scorecard(summaries, cmp) + "\n", encoding="utf-8")
+            console.print(f"[ok]scorecard[/ok] {scorecard_path}")
         if output == "json":
             typer.echo(json.dumps({"summaries": summaries, "compare": cmp}, indent=2, default=str))
             if gate and cmp and not cmp["gate"]["ok"]:

@@ -76,6 +76,22 @@ async def pairwise(
     return {"winner": "tie", "position_bias": True, "orders": [first, second], "usable": True}
 
 
+def verifier_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The verifier as a classifier of *wrong* changes, plus calibration of its confidence."""
+    from trendlab.benchmarks.stats import calibration, classifier_metrics
+
+    judged = [r for r in rows if r.get("verification") in {"pass", "fix", "fail"} and "passes" in r]
+    cls = classifier_metrics([(r["verification"] != "pass", not r["passes"]) for r in judged])
+    cal = calibration(
+        [
+            (r.get("verifier_confidence"), bool(r["passes"]))
+            for r in judged
+            if r.get("verifier_confidence") is not None
+        ]
+    )
+    return {"classifier": cls, "calibration": cal}
+
+
 def judge_accuracy(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Verifier verdicts vs hidden-test ground truth over benchmark rows (U2).
 

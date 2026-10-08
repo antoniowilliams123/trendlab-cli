@@ -267,9 +267,24 @@ async def run_task(
             root_cause = any(abs(ln - task.answer_line) <= 3 for ln in lines)
         test_like = [f for f in changed if "test" in f.lower()]
         lead = [r for r in (tl.costs.records if tl.costs else []) if r.role == "main"]
+        import difflib
+
+        ref = suite_mod.reference_content(task, task.answer_file)
+        final = (root / task.answer_file).read_text() if (root / task.answer_file).is_file() else ""
+        exact_match = ref is not None and final == ref
+        ref_similarity = (
+            round(difflib.SequenceMatcher(None, ref, final).ratio(), 4) if ref is not None else None
+        )
         return {
             "task": task.id,
             "lang": task.lang,
+            "tier": task.tier,
+            "defect_kind": task.defect.kind,
+            "symptom_only": "existing tests still pass" in task.prompt,
+            "exact_match": exact_match,
+            "ref_similarity": ref_similarity,
+            "unsupported_claims": list(result.unsupported_claims),
+            "verifier_confidence": (result.verification or {}).get("confidence"),
             "model": model,
             "profile": profile,
             "located": located,
@@ -386,7 +401,88 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     from trendlab.agent.judge import judge_accuracy
 
     summary["judge"] = judge_accuracy(ran)  # U2: verifier verdicts vs hidden-test truth
+    from trendlab.agent.judge import verifier_scores
+    from trendlab.benchmarks.stats import capability_map
+
+    summary["verifier"] = verifier_scores(ran)
+    with_ref = [r for r in ran if r.get("ref_similarity") is not None]
+    summary["exact_match"] = (
+        round(sum(1 for r in with_ref if r.get("exact_match")) / len(with_ref), 3)
+        if with_ref
+        else None
+    )
+    summary["ref_similarity"] = (
+        round(sum(r["ref_similarity"] for r in with_ref) / len(with_ref), 4) if with_ref else None
+    )
+    summary["hallucination_rate"] = round(sum(1 for r in ran if r.get("unsupported_claims")) / n, 3)
+    summary["capability"] = {
+        "by_defect": capability_map(ran, "defect_kind"),
+        "by_lang": capability_map(ran, "lang"),
+        "by_tier": capability_map(ran, "tier"),
+        "symptom_only": capability_map(ran, "symptom_only"),
+    }
     return summary
+
+
+def scorecard(summaries: list[dict[str, Any]], compare: dict[str, Any] | None = None) -> str:
+    """Markdown scorecard of one or two configurations (U1 scorecard)."""
+    rows = [
+        ("tasks", "tasks"),
+        ("pass rate", "passes"),
+        ("pass rate 95% CI", "passes_ci95"),
+        ("pass@k (k)", None),
+        ("flaky tasks", "flaky_tasks"),
+        ("located file", "located"),
+        ("root cause ±3 lines", "root_cause"),
+        ("exact match with reference", "exact_match"),
+        ("similarity to reference", "ref_similarity"),
+        ("no collateral edits", "no_collateral"),
+        ("regression test added", "regression_added"),
+        ("hallucination rate", "hallucination_rate"),
+        ("tool success rate", "tool_success_rate"),
+        ("error rate", "error_rate"),
+        ("cost (USD)", "cost"),
+        ("cost per task 95% CI", "cost_per_task_ci95"),
+        ("lead tokens", "tokens_lead"),
+        ("wall time (s)", "wall_s"),
+    ]
+    head = (
+        "| metric | "
+        + " | ".join(s.get("config", f"config {i + 1}") for i, s in enumerate(summaries))
+        + " |"
+    )
+    lines = [head, "|---|" + "---|" * len(summaries)]
+    for label, key in rows:
+        if key is None:
+            vals = [f"{s.get('pass_at_k')} ({s.get('k')})" for s in summaries]
+        else:
+            vals = [str(s.get(key, "")) for s in summaries]
+        lines.append(f"| {label} | " + " | ".join(vals) + " |")
+    for s in summaries:
+        v = (s.get("verifier") or {}).get("classifier") or {}
+        if v.get("n"):
+            lines.append(
+                f"\nVerifier ({s.get('config')}): precision {v.get('precision')}, recall "
+                f"{v.get('recall')}, F1 {v.get('f1')}, FPR {v.get('false_positive_rate')}, "
+                f"FNR {v.get('false_negative_rate')} over {v.get('n')} judged changes."
+            )
+        weak = [
+            k
+            for k, d in (s.get("capability") or {}).get("by_defect", {}).items()
+            if d["passes"] < 1.0
+        ]
+        if weak:
+            lines.append(f"Weak spots ({s.get('config')}): " + ", ".join(weak))
+    if compare:
+        pp = compare["paired_passes"]
+        g = compare["gate"]
+        verdict = "passed" if g["ok"] else "failed: " + "; ".join(g["reasons"])
+        lines.append(
+            f"\nPaired: second wins {pp['b_wins']}, loses {pp['b_losses']}, ties {pp['ties']}; "
+            f"exact sign test p = {pp['p_value']}; cost ratio {compare['cost_ratio']}×; "
+            f"gate {verdict}."
+        )
+    return "\n".join(lines)
 
 
 def compare_summaries(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:

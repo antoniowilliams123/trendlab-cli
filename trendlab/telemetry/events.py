@@ -91,6 +91,7 @@ class EventType(StrEnum):
     SCOPE_CHECKED = "scope.checked"  # diff shape vs budget, dependency gate, test strength (U5)
     JUDGE_PAIRWISE = "judge.pairwise"  # pairwise verdict asked both ways (U2)
     SPAN_STARTED = "span.started"  # timed, nested unit of work (U6)
+    CLAIM_UNSUPPORTED = "claim.unsupported"  # final answer claims what the evidence contradicts
     SPAN_ENDED = "span.ended"
     VERIFY_SECOND_OPINION = "verify.second_opinion"  # two verifier models compared (U2)
     SKILL_LOADED = "skill.loaded"  # a skill matched a trigger and joined the run context
