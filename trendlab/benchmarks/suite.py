@@ -1074,6 +1074,31 @@ def materialize(task: Task, dest: Path) -> str:
     return task.prompt
 
 
+def _suite_version() -> str:
+    """Fingerprint of the generated suite (contamination tracking: results are only comparable
+    within one version)."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for t in build_tasks():
+        h.update(f"{t.id}|{t.defect.old}|{t.defect.new}|{t.defect.hidden_test}".encode())
+    return h.hexdigest()[:12]
+
+
+def leakage(task: Task, context_text: str) -> list[str]:
+    """Benchmark/test-set leakage guard: the hidden test and the reference fix must never reach
+    the model's context. Returns what leaked (empty = clean)."""
+    leaked = []
+    hidden_body = [ln.strip() for ln in task.defect.hidden_test.splitlines() if "assert" in ln]
+    for ln in hidden_body:
+        if len(ln) > 25 and ln in context_text:
+            leaked.append("hidden test assertion")
+            break
+    if task.defect.hidden_test_file in context_text:
+        leaked.append("hidden test file name")
+    return leaked
+
+
 def reference_content(task: Task, rel: str) -> str | None:
     """Reference answer (exact/fuzzy match grading): the file as it is without the defect."""
     return BASES[task.lang].get(rel)
@@ -1088,3 +1113,6 @@ def write_hidden_test(task: Task, root: Path) -> Path:
 
 def toolchain_available(lang: str) -> bool:
     return shutil.which(TOOLCHAIN[lang]) is not None
+
+
+SUITE_VERSION = _suite_version()

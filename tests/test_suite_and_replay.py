@@ -60,8 +60,7 @@ def test_suite_shape_and_a_python_task_round_trips(tmp_path: Path):
         ]
     )
     assert (
-        all(t.lang == "go" for t in select_tasks(None, "go"))
-        and len(select_tasks(None, "go")) == 8
+        all(t.lang == "go" for t in select_tasks(None, "go")) and len(select_tasks(None, "go")) == 8
     )
 
 
@@ -345,3 +344,34 @@ def test_replay_copy_refuses_home_and_uses_tracked_files(tmp_path: Path):
     (src / "big.bin").write_bytes(b"0" * 10)
     assert copy_project(src, tmp_path / "dest") is None
     assert (tmp_path / "dest/a.py").is_file() and not (tmp_path / "dest/big.bin").exists()
+
+
+def test_working_set_copy_only_takes_touched_files(tmp_path: Path):
+    from trendlab.benchmarks.replay import RecordedSession, copy_working_set, working_set
+
+    src = tmp_path / "home"
+    (src / "proj").mkdir(parents=True)
+    (src / "proj/a.py").write_text("a = 1\n")
+    (src / "proj/b.py").write_text("b = 1\n")
+    (src / "big").mkdir()
+    (src / "big/data.bin").write_bytes(b"0" * 100)
+    rec = RecordedSession(
+        session_id="s",
+        project_path=str(src),
+        model="m",
+        prompts=["p"],
+        tool_calls=[
+            ("read_file", json.dumps({"path": "proj/a.py"})),
+            ("read_file", json.dumps({"file_path": str(src / "proj/b.py")})),
+            ("web_fetch", json.dumps({"url": "https://x"})),
+            ("read_file", json.dumps({"path": "/etc/passwd"})),
+        ],
+    )
+    assert working_set(rec) == {"proj/a.py", str(src / "proj/b.py"), "/etc/passwd"}
+    n = copy_working_set(src, tmp_path / "dest", rec)
+    assert (
+        n == 2
+        and (tmp_path / "dest/proj/a.py").is_file()
+        and (tmp_path / "dest/proj/b.py").is_file()
+    )
+    assert not (tmp_path / "dest/big").exists() and not (tmp_path / "dest/etc").exists()

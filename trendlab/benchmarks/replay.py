@@ -146,10 +146,16 @@ async def replay_session(
     src = Path(rec.project_path) if rec.project_path else None
     with tempfile.TemporaryDirectory(prefix="trendlab-replay-") as tmp:
         root = Path(tmp) / "repo"
+        copy_mode = "full"
         if src is not None and src.is_dir():
             problem = copy_project(src, root)
             if problem:
-                return {"session": session_id, "project": str(src), "error": problem}
+                # Too big or the home directory: copy only the working set the session touched.
+                shutil.rmtree(root, ignore_errors=True)
+                n = copy_working_set(src, root, rec)
+                if n == 0:
+                    return {"session": session_id, "project": str(src), "error": problem}
+                copy_mode = f"working set ({n} files)"
         else:
             root.mkdir()
         config.defaults.permission_mode = PermissionMode.UNSAFE
@@ -199,6 +205,7 @@ async def replay_session(
             "cost_before": round(rec.cost_usd, 4),
             "cost_after": round(tl.costs.total_usd if tl.costs else 0.0, 4),
             "wall_s": round(time.monotonic() - started, 1),
+            "copy_mode": copy_mode,
         }
 
 
@@ -259,6 +266,53 @@ def copy_project(src: Path, dest: Path) -> str | None:
             d.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, d)
     return None
+
+
+_PATH_KEYS = ("path", "file_path", "file", "paths", "files")
+
+
+def working_set(rec: RecordedSession) -> set[str]:
+    """Paths the recorded session read or edited (from its tool-call arguments)."""
+    out: set[str] = set()
+    for _name, args_json in rec.tool_calls:
+        try:
+            args = json.loads(args_json)
+        except ValueError:
+            continue
+        for key in _PATH_KEYS:
+            v = args.get(key)
+            for p in v if isinstance(v, list) else [v]:
+                if isinstance(p, str) and p and not p.startswith(("http:", "https:")):
+                    out.add(p)
+    return out
+
+
+def copy_working_set(
+    src: Path, dest: Path, rec: RecordedSession, max_bytes: int = 50 * 1024 * 1024
+) -> int:
+    """Copy only the files the session touched (resolved under ``src``); directories are
+    listed but not copied recursively. Returns the number of files copied."""
+    dest.mkdir(parents=True, exist_ok=True)
+    src = src.resolve()
+    copied = total = 0
+    for raw in sorted(working_set(rec)):
+        p = Path(raw).expanduser()
+        p = (p if p.is_absolute() else src / p).resolve()
+        try:
+            rel = p.relative_to(src)
+        except ValueError:
+            continue
+        if any(part in _SKIP for part in rel.parts) or not p.is_file():
+            continue
+        size = p.stat().st_size
+        if total + size > max_bytes:
+            break
+        d = dest / rel
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, d)
+        copied += 1
+        total += size
+    return copied
 
 
 def _counts(names: list[str]) -> dict[str, int]:

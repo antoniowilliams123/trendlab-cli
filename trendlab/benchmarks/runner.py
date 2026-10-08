@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 import tempfile
@@ -206,7 +207,11 @@ async def run_task(
     with tempfile.TemporaryDirectory(prefix=f"trendlab-suite-{task.id}-") as tmp:
         root = Path(tmp) / "repo"
         prompt = suite_mod.materialize(task, root)
-        before = {f: (root / f).read_text() for f in task.expected_changed if (root / f).is_file()}
+        before = {
+            str(p.relative_to(root)): p.read_text(errors="replace")
+            for p in root.rglob("*")
+            if p.is_file() and ".trendlab" not in p.parts
+        }
         tl = TrendLabApp(
             root,
             config,
@@ -268,7 +273,25 @@ async def run_task(
         test_like = [f for f in changed if "test" in f.lower()]
         lead = [r for r in (tl.costs.records if tl.costs else []) if r.role == "main"]
         import difflib
+        import difflib as _difflib
 
+        diff_parts = []
+        for f in sorted(changed):
+            after_text = (root / f).read_text(errors="replace") if (root / f).is_file() else ""
+            before_text = before.get(f, "")
+            diff_parts.append(
+                "".join(
+                    _difflib.unified_diff(
+                        before_text.splitlines(True),
+                        after_text.splitlines(True),
+                        f"a/{f}",
+                        f"b/{f}",
+                    )
+                )
+            )
+        run_diff = "\n".join(diff_parts)[:20_000]
+        context_text = json.dumps(tl.context.messages if tl.context else [], default=str)
+        leak = suite_mod.leakage(task, context_text)
         ref = suite_mod.reference_content(task, task.answer_file)
         final = (root / task.answer_file).read_text() if (root / task.answer_file).is_file() else ""
         exact_match = ref is not None and final == ref
@@ -279,6 +302,10 @@ async def run_task(
             "task": task.id,
             "lang": task.lang,
             "tier": task.tier,
+            "suite_version": suite_mod.SUITE_VERSION,
+            "leakage": leak,
+            "diff": run_diff,
+            "prompt": task.prompt,
             "defect_kind": task.defect.kind,
             "symptom_only": "existing tests still pass" in task.prompt,
             "exact_match": exact_match,
@@ -414,6 +441,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     summary["ref_similarity"] = (
         round(sum(r["ref_similarity"] for r in with_ref) / len(with_ref), 4) if with_ref else None
     )
+    summary["leakage"] = sum(1 for r in ran if r.get("leakage"))
     summary["hallucination_rate"] = round(sum(1 for r in ran if r.get("unsupported_claims")) / n, 3)
     summary["capability"] = {
         "by_defect": capability_map(ran, "defect_kind"),
@@ -522,7 +550,8 @@ def append_bench_log(path: Path, title: str, rows: list[dict[str, Any]], note: s
     lines = [f"\n## {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC — {title}\n"]
     if note:
         lines.append(note + "\n")
-    keys = [k for k in rows[0] if k not in {"cost_by_phase"}] if rows else []
+    bulky = {"cost_by_phase", "diff", "prompt", "tools", "unsupported_claims", "guards_fired"}
+    keys = [k for k in rows[0] if k not in bulky] if rows else []
     if keys:
         lines.append("| " + " | ".join(keys) + " |")
         lines.append("|" + "---|" * len(keys))

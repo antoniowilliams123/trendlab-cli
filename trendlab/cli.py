@@ -436,6 +436,9 @@ def bench_cmd(
     scorecard_path: Path | None = typer.Option(
         None, "--scorecard", help="Write a markdown scorecard of the suite run to this file."
     ),
+    save_rows: Path | None = typer.Option(
+        None, "--save-rows", help="Write every task row (with diffs) as JSON for label/judge-bias."
+    ),
     profile: str = typer.Option("harness", "--profile", help="harness | bare (suite)."),
     compare: list[str] | None = typer.Option(
         None,
@@ -506,6 +509,13 @@ def bench_cmd(
             if log:
                 append_bench_log(Path("docs/BENCH_LOG.md"), f"suite {spec}", results)
         cmp = compare_rows(all_rows[0], all_rows[1]) if len(summaries) == 2 else None
+        if save_rows is not None:
+            tagged = [
+                [{**r, "config": s["config"]} for r in rows]
+                for s, rows in zip(summaries, all_rows, strict=True)
+            ]
+            save_rows.write_text(json.dumps({"rows": tagged}, indent=1, default=str))
+            console.print(f"[ok]rows[/ok] {save_rows}")
         if scorecard_path is not None:
             from trendlab.benchmarks.runner import scorecard
 
@@ -1142,6 +1152,110 @@ def import_cmd(
     finally:
         store.close()
     console.print(f"[ok]imported {done}[/ok], skipped {skipped} (already imported or empty)")
+
+
+def _load_rows(path: Path) -> list[dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and "rows" in data:
+        return [r for rows in data["rows"] for r in rows]
+    return data if isinstance(data, list) else []
+
+
+@app.command("label")
+def label_cmd(
+    rows_file: Path = typer.Argument(..., help="Rows saved with `bench --save-rows`."),
+    labels_file: Path = typer.Option(Path("labels.json"), "--out"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Blind human grading: you see the task and the diff, not the config, verifier or test
+    result. Afterwards reports agreement (Cohen's kappa) with the verifier and the hidden test."""
+    import random
+
+    from trendlab.benchmarks.stats import cohen_kappa
+
+    rows = [r for r in _load_rows(rows_file) if r.get("diff")]
+    labels = json.loads(labels_file.read_text()) if labels_file.is_file() else {}
+    todo = [
+        r
+        for r in rows
+        if f"{r.get('task')}#{r.get('config', r.get('profile'))}#{r.get('run', 1)}" not in labels
+    ]
+    random.Random(7).shuffle(todo)  # blind order: configs interleaved
+    for r in todo[:limit]:
+        key = f"{r.get('task')}#{r.get('config', r.get('profile'))}#{r.get('run', 1)}"
+        console.rule()
+        console.print(f"[neon]Task[/neon] {r.get('prompt', '')}")
+        console.print(r["diff"][:4000], markup=False, highlight=False)
+        ans = typer.prompt(
+            "Correct and minimal? [y]es / [n]o / [s]kip / [q]uit", default="s"
+        ).lower()[:1]
+        if ans == "q":
+            break
+        if ans in {"y", "n"}:
+            labels[key] = ans == "y"
+            labels_file.write_text(json.dumps(labels, indent=1))
+    human, judge, truth = [], [], []
+    for r in rows:
+        key = f"{r.get('task')}#{r.get('config', r.get('profile'))}#{r.get('run', 1)}"
+        if key in labels:
+            human.append(labels[key])
+            judge.append(None if r.get("verification") is None else r.get("verification") == "pass")
+            truth.append(bool(r.get("passes")))
+    console.print(
+        f"{len(human)} labelled · kappa human↔hidden test {cohen_kappa(human, truth)} · "
+        f"human↔verifier {cohen_kappa(human, judge)} · "
+        f"verifier↔hidden test {cohen_kappa(judge, truth)}"
+    )
+
+
+@app.command("judge-bias")
+def judge_bias_cmd(
+    rows_file: Path = typer.Argument(..., help="Rows saved with `bench --save-rows`."),
+    limit: int = typer.Option(10, "--limit"),
+    model: str | None = typer.Option(
+        None, "--model", help="Verifier model (default: routing.verifier)."
+    ),
+) -> None:
+    """Probe the verifier for verbosity and style bias: same change, three presentations."""
+    from trendlab.agent.judge import bias_probe
+    from trendlab.config.loader import load_config
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    config = load_config()
+    ref = (
+        model
+        or config.routing.get("verifier")
+        or config.routing.get("escalation")
+        or config.defaults.model
+    )
+    gw = ModelGateway(config, EventBus(), "judge-bias")
+
+    async def call(messages):
+        response, used = await gw.complete(ref, messages, None)
+        return response.text, used
+
+    rows = [r for r in _load_rows(rows_file) if r.get("diff")][:limit]
+
+    async def run_all():
+        out = []
+        for r in rows:
+            res = await bias_probe(call, task=r.get("prompt", ""), diff=r["diff"], validation=None)
+            out.append(res)
+            console.print(
+                f"  {r.get('task')}: {res['plain']} / padded {res['padded']} "
+                f"/ restyled {res['restyled']}"
+            )
+        return out
+
+    results = asyncio.run(run_all())
+    n = len(results) or 1
+    vb = sum(1 for r in results if r["verbosity_bias"])
+    sb = sum(1 for r in results if r["style_bias"])
+    console.print(
+        f"[neon]{ref}[/neon]: verbosity bias {vb}/{len(results)} ({vb / n:.0%}), "
+        f"style bias {sb}/{len(results)} ({sb / n:.0%})"
+    )
 
 
 @app.command("doctor")

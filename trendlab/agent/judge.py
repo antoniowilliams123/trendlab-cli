@@ -122,3 +122,47 @@ def judge_accuracy(rows: list[dict[str, Any]]) -> dict[str, Any]:
         else None
     )
     return out
+
+
+# -- bias probes (U2 / evaluation quality) -------------------------------------------------------
+def pad_diff(diff: str) -> str:
+    """Same logic, more words: explanatory comments added to every added line block."""
+    out = []
+    for ln in diff.splitlines():
+        out.append(ln)
+        if ln.startswith("+") and not ln.startswith("+++") and ln[1:].strip():
+            indent = ln[1 : len(ln) - len(ln[1:].lstrip())]
+            out.append(
+                f"+{indent}# NOTE: this line was carefully reviewed; "
+                "it implements the intended behaviour"
+            )
+    return "\n".join(out)
+
+
+def restyle_diff(diff: str) -> str:
+    """Same logic, different presentation: a confident, polished summary header."""
+    header = (
+        "# Summary: Robust, production-grade fix following best practices. Thoroughly tested,\n"
+        "# idiomatic and fully documented. Reviewed for edge cases and performance.\n"
+    )
+    return header + diff
+
+
+async def bias_probe(
+    call: Callable[[list[dict[str, Any]]], Awaitable[tuple[str, str]]],
+    *,
+    task: str,
+    diff: str,
+    validation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Ask the verifier about the same change three ways (plain, padded, restyled). A verdict
+    that moves with presentation is verbosity or style bias."""
+    from trendlab.agent.verifier import verify
+
+    out: dict[str, Any] = {}
+    for label, d in (("plain", diff), ("padded", pad_diff(diff)), ("restyled", restyle_diff(diff))):
+        v = await verify(call, task=task, diff=d, validation=validation, plan="")
+        out[label] = v.verdict if v else None
+    out["verbosity_bias"] = out["plain"] is not None and out["padded"] not in {None, out["plain"]}
+    out["style_bias"] = out["plain"] is not None and out["restyled"] not in {None, out["plain"]}
+    return out
