@@ -74,6 +74,10 @@ class EventType(StrEnum):
     TOOL_SKIPPED = "tool.skipped"  # denied / invalid / unknown / blocked: never ran
     TOOL_OUTPUT = "tool.output"  # live tail of a running command (transient: not persisted)
     TOOL_OUTPUT_TIERED = "tool.output_tiered"  # large result reduced to facts + detail
+    VERIFY_STARTED = "verify.started"  # independent review of the diff before surfacing
+    VERIFY_VERDICT = "verify.verdict"  # pass | fix | fail with findings
+    REGRESSION_GATE = "verify.regression_gate"  # fix-type task: test present / waived / missing
+    WORKTREE_RUN = "verify.worktree"  # run executed in a throwaway worktree; applied or parked
     FILE_CHANGED = "file.changed"
     # Permissions
     PERMISSION_REQUESTED = "permission.requested"

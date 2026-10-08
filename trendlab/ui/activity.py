@@ -79,6 +79,38 @@ def format_event(event: Event) -> str | None:
             f"chars ({d.get('parser')}); full text kept for inspect_output[/]"
             + (f"\n    [{AMBER}]{escape(str(d.get('anomaly')))}[/]" if d.get("anomaly") else "")
         )
+    if t == EventType.VERIFY_STARTED:
+        return f"[{MINT}]⚖ verifying the change before reporting it done[/]"
+    if t == EventType.VERIFY_VERDICT:
+        v = str(d.get("verdict"))
+        n = d.get("findings") or 0
+        model = f" [{GREY}]{escape(str(d.get('model') or ''))}[/]" if d.get("model") else ""
+        if v == "pass":
+            return f"[bold {NEON}]⚖ verified ✓[/]{model}"
+        if v == "fix":
+            return f"[{AMBER}]⚖ verifier asked for fixes ({n})[/]{model}"
+        if v == "fail":
+            return f"[bold {RED}]⚖ verifier rejected the change ({n} findings)[/]{model}"
+        return f"[{GREY}]⚖ verifier unavailable[/]"
+    if t == EventType.REGRESSION_GATE:
+        o = str(d.get("outcome"))
+        label = {
+            "present": f"[{NEON_DIM}]⊕ regression test present[/]",
+            "waived": f"[{AMBER}]⊕ regression test waived by the model[/]",
+            "missing": f"[{AMBER}]⊕ no regression test for a fix[/]",
+        }.get(o)
+        return label
+    if t == EventType.WORKTREE_RUN:
+        o = str(d.get("outcome"))
+        if o == "entered":
+            return f"[{GREY}]⎇ working in a throwaway worktree ({escape(str(d.get('name')))})[/]"
+        if o == "applied":
+            return f"[{NEON_DIM}]⎇ verified diff applied to the working tree[/]"
+        if o == "parked":
+            return f"[{AMBER}]⎇ diff parked as {escape(str(d.get('patch')))} (not applied)[/]"
+        if o == "skipped":
+            return f"[{GREY}]⎇ worktree mode skipped: {escape(str(d.get('reason')))}[/]"
+        return None
     if t == EventType.DIAGNOSTICS:
         report = str(d.get("report") or "")
         body = [ln for ln in report.splitlines()[1:] if ln.strip()][:3]
@@ -204,4 +236,11 @@ def run_footer(result) -> str:
             parts.append(f"[{NEON if ok else RED}]validated {'✓' if ok else '✗'}[/]")
         else:
             parts.append(f"[{AMBER}]not validated[/]")
+        ver = getattr(result, "verification", None) or {}
+        v = ver.get("verdict")
+        if v == "pass":
+            parts.append(f"[{NEON}]verified ✓[/]")
+        elif v in {"fix", "fail"}:
+            n = len(ver.get("findings") or [])
+            parts.append(f"[{AMBER if v == 'fix' else RED}]verifier: {v} ({n})[/]")
     return "  ".join(parts)

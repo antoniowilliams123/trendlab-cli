@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -17,6 +18,7 @@ from trendlab import PRODUCT_NAME
 from trendlab.agent.plan_gate import PlanGate
 from trendlab.agent.prompt import build_system_prompt
 from trendlab.agent.runtime import AgentRuntime, RunResult
+from trendlab.agent.state import AgentState
 from trendlab.agent.tasks import Plan
 from trendlab.approvals.channels.base import ChannelError
 from trendlab.approvals.channels.local import LocalTerminalChannel
@@ -279,6 +281,16 @@ class TrendLabApp:
             on_message=self._persist_message,
             stream=self.on_token is not None,
         )
+        vcfg = self.config.verification
+        self.agent.verifier = self._verify_change
+        # The verifier needs a model of its own ([routing] verifier, else escalation); with
+        # neither configured the review is off rather than a same-context self-review.
+        has_verifier_model = bool(
+            self.config.routing.get("verifier") or self.config.routing.get("escalation")
+        )
+        self.agent.verification_mode = vcfg.verifier if has_verifier_model else "off"
+        self.agent.verification_max_rounds = vcfg.max_rounds
+        self.agent.regression_gate = vcfg.regression_gate
         await self._start_extensions()
         self.events.subscribe(self._notify_run_events)
         self.events.subscribe(self._track_run_signals)
@@ -460,9 +472,12 @@ class TrendLabApp:
                     )
         self._run_steering = []
         self._run_failures = 0
+        worktree = self._enter_worktree()
         try:
             result = await self.agent.run(content)
         finally:
+            if worktree is not None:
+                await self._surface_worktree(*worktree)
             if restore_model is not None:
                 self.switch_model(restore_model)
         # Memory extraction runs in the background so a slow summarizer never holds the session.
@@ -473,6 +488,136 @@ class TrendLabApp:
         if self.hooks is not None:
             await self.hooks.run("task_complete", status=result.status)
         return result
+
+    # -- verify-then-surface (cheap-model spec §3.2, §5) ------------------------------------------
+    async def _verify_change(self, task_text: str, ev) -> Any:
+        """Fresh-context verifier call: task + diff + latest validation + plan → verdict."""
+        from trendlab.agent.verifier import verify
+
+        assert self.gateway is not None and self.costs is not None and self.tools is not None
+        ref = (
+            self.config.routing.get("verifier")
+            or self.config.routing.get("escalation")
+            or self.model_ref
+        )
+
+        async def call(messages):
+            response, used = await self.gateway.complete(ref, messages, None)
+            self.costs.record(
+                used,
+                response.usage,
+                0,
+                role="verifier",
+                local=self.gateway.provider(used).capabilities().local,
+            )
+            return response.text, used
+
+        return await verify(
+            call,
+            task=task_text,
+            diff=self._diff_for_review(ev.changed_files),
+            validation=ev.last_validation,
+            plan=self.plan.render() if hasattr(self.plan, "render") else "",
+        )
+
+    def _diff_for_review(self, files: list[str]) -> str:
+        """The per-edit diffs the tools recorded this run; whole file when a diff is missing."""
+        assert self.tools is not None
+        parts: list[str] = []
+        for f in files:
+            diffs = [d for d in self.tools.changed_files.get(f, []) if d]
+            if diffs:
+                parts.append("\n".join(diffs))
+                continue
+            path = self.project_root / f
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            except OSError:
+                body = ""
+            parts.append(
+                f"+++ {f} (new or rewritten)\n{body[:8000]}" if body else f"--- {f} (deleted)"
+            )
+        return "\n\n".join(parts)
+
+    def _enter_worktree(self) -> tuple[Path, Path, str] | None:
+        """Worktree workspace: edit in .trendlab/worktrees/<run>, surface only a verified diff."""
+        if self.config.verification.workspace != "worktree":
+            return None
+        if not (self.project_root / ".git").exists():
+            self.events.emit(
+                EventType.WORKTREE_RUN,
+                session_id=self.session_id,
+                outcome="skipped",
+                reason="not a git repository",
+            )
+            return None
+        from trendlab.orchestration.gitflow import WorktreeManager
+
+        name = f"run-{secrets.token_hex(4)}"
+        main_root = self.project_root
+        try:
+            wt = WorktreeManager(main_root).create_sync(name)
+        except Exception as exc:  # noqa: BLE001 — fall back to editing in place
+            self.events.emit(
+                EventType.WORKTREE_RUN,
+                session_id=self.session_id,
+                outcome="skipped",
+                reason=str(exc)[:200],
+            )
+            return None
+        self.switch_project_root(wt)
+        self.events.emit(
+            EventType.WORKTREE_RUN, session_id=self.session_id, outcome="entered", name=name
+        )
+        return main_root, wt, name
+
+    async def _surface_worktree(self, main_root: Path, wt: Path, name: str) -> None:
+        """Apply the worktree's diff to the main tree when the run completed (and the verifier
+        did not reject it); otherwise park it as a patch. The worktree is always removed."""
+        from trendlab.tools.git import run_git
+
+        assert self.agent is not None
+        outcome, detail = "nothing", ""
+        patch = ""
+        try:
+            await run_git(wt, "add", "-A")
+            code, patch = await run_git(wt, "diff", "--cached", "--binary", "HEAD")
+            if code != 0:
+                patch = ""
+        except Exception as exc:  # noqa: BLE001
+            detail = str(exc)[:200]
+        completed = self.agent.state.state == AgentState.COMPLETED
+        patch_file: Path | None = None
+        if patch.strip():
+            if completed:
+                check, msg = await _git_apply(main_root, patch, "--check")
+                if check == 0:
+                    check, msg = await _git_apply(main_root, patch, "--index")
+                outcome = "applied" if check == 0 else "parked"
+                if check != 0:
+                    detail = msg.strip()[:200]
+            else:
+                outcome = "parked"
+            if outcome == "parked":
+                patch_dir = main_root / ".trendlab" / "patches"
+                patch_dir.mkdir(parents=True, exist_ok=True)
+                patch_file = patch_dir / f"{name}.patch"
+                patch_file.write_text(patch, encoding="utf-8")
+        self.switch_project_root(main_root)
+        try:
+            await run_git(main_root, "worktree", "remove", "--force", str(wt))
+            await run_git(main_root, "branch", "-D", f"trendlab/{name}")
+        except Exception:  # noqa: BLE001
+            pass
+        self.events.emit(
+            EventType.WORKTREE_RUN,
+            session_id=self.session_id,
+            outcome=outcome,
+            name=name,
+            patch=str(patch_file.relative_to(main_root)) if patch_file else None,
+            reason=detail,
+            completed=completed,
+        )
 
     async def _before_mutation(self, files: list[str]) -> None:
         if self.plan_gate is not None:
@@ -1012,3 +1157,22 @@ class TrendLabApp:
             "pending": len(self.approvals.pending()) if self.approvals else 0,
         }
 
+
+async def _git_apply(root: Path, patch: str, *flags: str) -> tuple[int, str]:
+    """``git apply`` with the patch on stdin (never a temp file: sandboxes cannot see those)."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "apply",
+        *flags,
+        "-",
+        cwd=str(root),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(patch.encode("utf-8")), timeout=60)
+    except TimeoutError:
+        proc.kill()
+        return 124, "git apply timed out"
+    return proc.returncode or 0, out.decode("utf-8", "replace")

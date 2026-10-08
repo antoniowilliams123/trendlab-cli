@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -53,10 +54,12 @@ class RunResult:
     iterations: int = 0
     stop_reason: str | None = None
     plan: dict[str, Any] = field(default_factory=dict)
+    verification: dict[str, Any] | None = None  # verifier verdict (spec §3.2), when it ran
 
     def to_json(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "verification": self.verification,
             "text": self.text,
             "report": self.report,
             "changed_files": self.changed_files,
@@ -110,6 +113,14 @@ class AgentRuntime:
         self.stream = stream
         self.state = AgentStateMachine(on_change=self._emit_state)
         self.evaluator = CompletionEvaluator()
+        # Verify-then-surface (cheap-model spec §3.2): attached by the app.
+        self.verifier: Any = None  # async (task_text, evidence) -> VerifierVerdict | None
+        self.verification_mode = "off"  # required | advisory | off
+        self.verification_max_rounds = 1
+        self.regression_gate = False
+        self._verify_rounds = 0
+        self._verification: dict[str, Any] | None = None
+        self._task_text = ""
         self.loops = LoopDetector()
         self.iterations = 0
         self._cancel = asyncio.Event()
@@ -211,6 +222,9 @@ class AgentRuntime:
         if self.state.terminal:
             self.state.transition(AgentState.IDLE)
         self._append({"role": "user", "content": prompt})
+        self._task_text = _text_of(prompt)
+        self._verify_rounds = 0
+        self._verification = None
         compaction_attempted = False
         stop_reason: str | None = None
         text = ""
@@ -299,11 +313,22 @@ class AgentRuntime:
                 # Final text: let the evaluator decide.
                 self.state.transition(AgentState.VALIDATING)
                 verdict = self.evaluator.evaluate(
-                    self.evidence(), response.text, validation_available=self.validation_available
+                    self.evidence(),
+                    response.text,
+                    validation_available=self.validation_available,
+                    fix_task=self.regression_gate and looks_like_fix(self._task_text),
                 )
                 self._append({"role": "assistant", "content": response.text})
                 if verdict.accept:
-                    text, status = response.text, AgentState.COMPLETED
+                    outcome = await self._verify_before_surface(response.text)
+                    if outcome is None:
+                        text, status = response.text, AgentState.COMPLETED
+                        break
+                    kind, payload = outcome
+                    if kind == "fix":
+                        self._append({"role": "user", "content": payload})
+                        continue
+                    text, status, stop_reason = response.text, AgentState.FAILED, payload
                     break
                 self.events.emit(
                     EventType.RECOVERY,
@@ -482,6 +507,56 @@ class AgentRuntime:
         self._append(_tool_message(call, output))
         return None
 
+    async def _verify_before_surface(self, final_text: str) -> tuple[str, str] | None:
+        """Independent review of the diff (spec §3.2). None = surface the run as COMPLETED;
+        ("fix", feedback) = one more author round; ("fail", reason) = stop the run."""
+        ev = self.evidence()
+        if self.regression_gate and ev.mutated and looks_like_fix(self._task_text):
+            outcome = regression_outcome(ev.changed_files, final_text, ev.validation_runs)
+            self.events.emit(
+                EventType.REGRESSION_GATE,
+                session_id=self.session_id,
+                outcome=outcome,
+                files=ev.changed_files,
+            )
+        if self.verification_mode == "off" or self.verifier is None or not ev.mutated:
+            return None
+        self.events.emit(EventType.VERIFY_STARTED, session_id=self.session_id, role=self.role)
+        try:
+            verdict = await self.verifier(self._task_text, ev)
+        except Exception as exc:  # noqa: BLE001 — a broken verifier never blocks surfacing
+            verdict = None
+            self.events.emit(
+                EventType.VERIFY_VERDICT,
+                session_id=self.session_id,
+                verdict="unavailable",
+                error=str(exc)[:200],
+            )
+        if verdict is None:
+            self._verification = {"verdict": "unavailable"}
+            return None
+        self._verification = verdict.to_json()
+        self.events.emit(
+            EventType.VERIFY_VERDICT,
+            session_id=self.session_id,
+            verdict=verdict.verdict,
+            findings=len(verdict.findings),
+            regression_test=verdict.regression_test,
+            model=verdict.model,
+            mode=self.verification_mode,
+            detail=verdict.findings[:3],
+        )
+        if verdict.verdict == "pass":
+            return None
+        if verdict.verdict == "fix" and self._verify_rounds < self.verification_max_rounds:
+            self._verify_rounds += 1
+            self.evaluator.nudges = 0  # the fix round gets a fresh evaluator budget
+            return ("fix", verdict.feedback())
+        if self.verification_mode == "advisory":
+            return None
+        first = verdict.findings[0]["issue"] if verdict.findings else "no details given"
+        return ("fail", f"verifier rejected the change: {first}")
+
     def _finish(
         self, status: AgentState, text: str, stop_reason: str | None, started: float
     ) -> RunResult:
@@ -497,6 +572,7 @@ class AgentRuntime:
             model_calls=self.costs.model_calls,
         )
         result = RunResult(
+            verification=self._verification,
             status=status.value,
             text=text,
             report=report,
@@ -554,3 +630,51 @@ def _assistant_message(response: ModelResponse) -> dict[str, Any]:
 
 def _tool_message(call, content: str) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": content}
+
+
+def _text_of(prompt: str | list[dict[str, Any]]) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    return " ".join(str(p.get("text") or "") for p in prompt if isinstance(p, dict))
+
+
+_FIX_WORDS = re.compile(
+    r"\b(fix|bug|broken|breaks?|fail(?:s|ing|ed|ure)?|error|crash(?:es|ed)?|regress(?:ion|ed)?|"
+    r"wrong|incorrect|does ?n[o']t work|not working|exception|traceback)\b",
+    re.I,
+)
+_WAIVER = re.compile(r"regression test:?\s*not applicable", re.I)
+_TEST_PATH = re.compile(
+    r"(^|/)(tests?|spec|__tests__)/|(^|/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|"
+    r"(^|/)conftest\.py$",
+    re.I,
+)
+
+
+def looks_like_fix(task_text: str) -> bool:
+    """Heuristic: the task reads as a bug fix (spec §5.2), so a regression test is expected."""
+    return bool(_FIX_WORDS.search(task_text or ""))
+
+
+def is_test_file(path: str) -> bool:
+    return bool(_TEST_PATH.search(path.replace("\\", "/")))
+
+
+def regression_outcome(
+    changed_files: list[str], final_text: str, validation_runs: list[dict[str, Any]] | None = None
+) -> str:
+    """present | waived | missing | not_applicable (only tests or docs changed).
+
+    "present" means a test change was made, or the existing suite failed before the fix and
+    passed after it (the test that catches the bug already existed)."""
+    source = [f for f in changed_files if not is_test_file(f)]
+    if not source:
+        return "not_applicable"
+    if any(is_test_file(f) for f in changed_files):
+        return "present"
+    oks = [bool(r.get("ok")) for r in (validation_runs or [])]
+    if False in oks and oks[-1] and oks.index(False) < len(oks) - 1:
+        return "present"
+    if _WAIVER.search(final_text or ""):
+        return "waived"
+    return "missing"

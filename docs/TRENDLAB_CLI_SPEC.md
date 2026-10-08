@@ -3975,6 +3975,8 @@ decisions taken after the original specification. Newest last.
     (`inspect_output` tool), `screener.py`. Runtime hook in `ToolRuntime._tier`,
     `[context] tool_budgets` / `screener_threshold_tokens`, `screener` role,
     `tool.output_tiered` event, `tokens_lead` benchmark metric. See §93.1.
+-   Phase 2 (same night): verifier + fix round + regression gate + worktree workspace
+    (`agent/verifier.py`, `[verification]` config, `verify.*` events). See §93.2.
 
 ## 90. Daily-Driver Features, Round Two (implemented 2026-10-05)
 
@@ -4520,3 +4522,29 @@ the programme spec in full when the last phase lands. Locked rules are unchanged
 - **Benchmark**: `tokens_lead` (input+output tokens of the lead role) added to the report.
 - Tests: `tests/test_tiered_output.py` (12). Suite 316.
 
+### 93.2 Phase 2 — Verify-then-surface (2026-10-07)
+
+- **Verifier** `trendlab/agent/verifier.py`: fresh-context review (task, per-edit diffs,
+  latest validation, plan) answering `{"verdict": pass|fix|fail, "findings": [...],
+  "regression_test": present|missing|not_applicable}`. Model = `[routing] verifier`, else
+  `escalation`; with neither configured the review is off. Cost recorded under role
+  `verifier`. Unparseable or failing verifier → `unavailable`, never blocks.
+- **Loop hook** `AgentRuntime._verify_before_surface`: runs after the completion evaluator
+  accepts and only when files changed. `pass` → COMPLETED; `fix` → findings handed to the
+  author as a user message for one more round (`max_rounds`, default 1, evaluator budget
+  reset); `fail` → FAILED with `verifier rejected the change: …` in required mode, reported
+  only in advisory mode. `RunResult.verification` carries the verdict; footer shows
+  `verified ✓` / `verifier: fix|fail (n)`.
+- **Regression gate** (`[verification] regression_gate`, default on): when the task reads as
+  a fix (`looks_like_fix`) and non-test source changed, the evaluator nudges for a test
+  change or an explicit `regression test: not applicable: <why>`; `verify.regression_gate`
+  event records present / waived / missing / not_applicable.
+- **Worktree workspace** (`[verification] workspace = "worktree"`, default `inplace`): the
+  run edits in `.trendlab/worktrees/run-<hex>` (branch `trendlab/run-<hex>`), the tools,
+  checkpoints, repo map and sandbox follow the root, and on completion the diff
+  (`git add -A && git diff --cached --binary HEAD`) is applied to the main tree over stdin
+  (`git apply --check`, then `--index`). A failed or rejected run, or a patch that does not
+  apply cleanly, parks the patch at `.trendlab/patches/run-<hex>.patch`; the worktree and
+  branch are always removed. Non-git projects fall back to in-place with a logged reason.
+- Events `verify.started`, `verify.verdict`, `verify.regression_gate`, `verify.worktree`;
+  activity lines for each. Tests: `tests/test_verify_then_surface.py` (9).

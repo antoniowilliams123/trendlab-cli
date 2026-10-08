@@ -44,7 +44,12 @@ class CompletionEvaluator:
         self.nudges = 0
 
     def evaluate(
-        self, ev: EvidenceSummary, final_text: str, *, validation_available: bool
+        self,
+        ev: EvidenceSummary,
+        final_text: str,
+        *,
+        validation_available: bool,
+        fix_task: bool = False,
     ) -> Verdict:
         reasons: list[str] = []
         if not _substantive(final_text):
@@ -61,6 +66,15 @@ class CompletionEvaluator:
             reasons.append("files were changed but no validation (tests/lint) was run afterwards")
         elif ev.mutated and ev.last_validation and not ev.last_validation.get("ok"):
             reasons.append("the most recent validation run failed")
+        if fix_task and ev.mutated:
+            from trendlab.agent.runtime import regression_outcome
+
+            if regression_outcome(ev.changed_files, final_text, ev.validation_runs) == "missing":
+                reasons.append(
+                    "this is a bug fix but no test was added or changed — add a regression test "
+                    "that fails without the fix and passes with it, or state "
+                    "'regression test: not applicable: <why>'"
+                )
         if ev.plan.tasks and ev.plan.open and not _acknowledges_incomplete(final_text):
             open_titles = ", ".join(t.title for t in ev.plan.open[:4])
             reasons.append(f"plan tasks are still open: {open_titles}")

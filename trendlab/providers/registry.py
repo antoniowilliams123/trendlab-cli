@@ -16,6 +16,7 @@ ROLES = (
     "reviewer",
     "summarizer",
     "screener",
+    "verifier",
 )
 
 

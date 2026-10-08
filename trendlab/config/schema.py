@@ -141,6 +141,35 @@ class DiagnosticsConfig(BaseModel):
     commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class VerificationConfig(BaseModel):
+    """Verify-then-surface (cheap-model spec §3.2, §5): an independent verifier reviews the
+    diff + validation log before a run that changed files is reported as done; optionally the
+    author works in a throwaway worktree and only a verified diff reaches the working tree."""
+
+    # required = a 'fail' verdict stops the run; advisory = findings are reported only; off.
+    verifier: str = "required"
+    max_rounds: int = Field(default=1, ge=0, le=3)  # 'fix' verdicts handed back to the lead
+    # inplace = edit the working tree (default until M1); worktree = edit .trendlab/worktrees/.
+    workspace: str = "inplace"
+    # Fix-type tasks that change source must also add/change a test (or state a waiver).
+    regression_gate: bool = True
+    apply_timeout_seconds: int = 60
+
+    @field_validator("verifier")
+    @classmethod
+    def _verifier(cls, v: str) -> str:
+        if v not in {"required", "advisory", "off"}:
+            raise ValueError("verification.verifier must be required, advisory or off")
+        return v
+
+    @field_validator("workspace")
+    @classmethod
+    def _workspace(cls, v: str) -> str:
+        if v not in {"inplace", "worktree"}:
+            raise ValueError("verification.workspace must be inplace or worktree")
+        return v
+
+
 class PlanGateConfig(BaseModel):
     """Ask for a human 'go' (terminal, phone page or Telegram buttons) before the first change
     of every run. Off by default; independent of the permission mode."""
@@ -293,6 +322,7 @@ class AppConfig(BaseModel):
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     memory: MemoryConfig = MemoryConfig()
     plan_gate: PlanGateConfig = PlanGateConfig()
+    verification: VerificationConfig = VerificationConfig()
     telegram_bridge: TelegramBridgeConfig = TelegramBridgeConfig()
     mcp: dict[str, dict[str, McpServerConfig]] = Field(default_factory=dict)
     remote_approval: RemoteApprovalConfig = RemoteApprovalConfig()

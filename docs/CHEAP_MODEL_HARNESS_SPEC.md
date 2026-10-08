@@ -340,7 +340,7 @@ jet-black/neon UI).
 | Phase | State | Landed |
 |---|---|---|
 | P1 Tiering | **done 2026-10-07** | `trendlab/tools/views/` (ToolOutput, 8 parsers, generic fallback, `render(budget)`), `tiering.py` (budgets, baselines, screener hand-off, traces), `inspect.py` (`inspect_output` tool), `screener.py` (≤300-token prompt, strict JSON), `[context] tool_budgets` + `screener_threshold_tokens`, `screener` routing role, `tool.output_tiered` event, diagnostics rendered as a lint view, `tokens_lead` in the benchmark report. 12 tests (`tests/test_tiered_output.py`). Measurement in §9.2. |
-| P2 Verify | next | — |
+| P2 Verify | **done 2026-10-07** | `trendlab/agent/verifier.py` (fixed-schema verdict, fresh context), `AgentRuntime._verify_before_surface` (pass / fix round / fail), regression gate (`looks_like_fix`, `regression_outcome`, evaluator nudge), `[verification]` config (verifier, max_rounds, workspace, regression_gate), worktree workspace in `TrendLabApp` (`_enter_worktree` / `_surface_worktree`: apply verified diff or park `.trendlab/patches/<run>.patch`), events `verify.*`, `verifier` routing role, footer + activity lines. 9 tests (`tests/test_verify_then_surface.py`). |
 | P3 Steps | queued | — |
 | P4 Cocktail | queued | — |
 | P5 Suite | queued | — |
