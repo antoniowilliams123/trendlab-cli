@@ -1868,6 +1868,46 @@ def mutate_cmd(
             console.print(f"  survived line {sv['line']}: {sv['kind']} {sv['change']}")
 
 
+@app.command("surface")
+def surface_cmd(
+    project: Path = typer.Option(Path.cwd(), "--project", "-C"),
+    output: str = typer.Option("text", help="text | json"),
+) -> None:
+    """Attack surface (U27): what the agent can reach under this config, and the risks."""
+    from trendlab.config.loader import load_config
+    from trendlab.security.surface import inventory, risks
+
+    root = project.resolve()
+    inv = inventory(load_config(root), root)
+    found = risks(inv)
+    if output == "json":
+        typer.echo(json.dumps({**inv, "risks": found}, indent=2))
+        return
+    console.print(
+        f"[neon]attack surface[/neon] · mode {inv['mode']} · {len(inv['tools'])} tools · "
+        f"network {inv['network']['decision']} · {len(inv['mcp_servers'])} MCP servers · "
+        f"{len(inv['hooks'])} hooks · secrets by name: {', '.join(inv['secrets_referenced'])}"
+    )
+    for r in found:
+        console.print(f"  · {r}")
+
+
+@app.command("audit")
+def audit_cmd(project: Path = typer.Option(Path.cwd(), "--project", "-C")) -> None:
+    """Dependency vulnerabilities (U27): the project venv's packages against OSV (sends package
+    names and versions to api.osv.dev)."""
+    from trendlab.security.surface import audit
+
+    r = audit(project.resolve())
+    if not r["vulnerable"]:
+        console.print(f"[ok]no known vulnerabilities[/ok] in {r['packages']} packages")
+        return
+    console.print(f"[danger]{len(r['vulnerable'])} vulnerable[/danger] of {r['packages']}")
+    for v in r["vulnerable"]:
+        console.print(f"  {v['package']} {v['version']}: {', '.join(v['advisories'])}")
+    raise typer.Exit(code=1)
+
+
 @app.command("inbox")
 def inbox_cmd(
     project: Path | None = typer.Option(None, "--project", "-C"),
