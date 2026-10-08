@@ -42,7 +42,8 @@ def main() -> None:
             out.append(line)
             continue
         n = m.group(1)
-        base = TAG.sub("", line)
+        # everything from the first rating tag on is regenerated (tags + evidence)
+        base = line.split(" **[TrendLab CLI:", 1)[0].split(" *[TrendLab CLI: n/a", 1)[0]
         o = orig.get(n)
         entry = ledger.get(n)
         new = entry["rating"] if entry else o
