@@ -57,6 +57,8 @@ async def test_async_review_reviews_only_new_commits(
     asked = []
 
     async def fake_call(self, messages):
+        if "REAL defect" in messages[0]["content"]:
+            return '{"keep": [], "drop": []}'
         asked.append(messages[0]["content"])
         return (
             '{"findings": [{"file": "src/app.py", "line": 1, "issue": "timeout lowered '

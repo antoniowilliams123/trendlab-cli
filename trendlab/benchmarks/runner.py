@@ -898,7 +898,9 @@ def seeded_diffs(task) -> tuple[str, str]:
     return bad, good
 
 
-async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
+async def review_eval_task(
+    task, call, *, mode: str = "auto", confirm: bool = True
+) -> dict[str, Any]:
     """U13 reviewer eval on one task: the defect-introducing diff must draw a high/med model
     finding in the defect file (recall, localisation); the correct fix must draw no high model
     finding (false alarm). Static findings are excluded from both."""
@@ -906,11 +908,15 @@ async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
 
     bad, good = seeded_diffs(task)
     rel = task.defect.file
-    r_bad = await review_diff(call, bad, intent=f"Small cleanup in {rel}.", mode=mode)
-    r_good = await review_diff(call, good, intent=task.defect.symptom, mode=mode)
+    r_bad = await review_diff(
+        call, bad, intent=f"Small cleanup in {rel}.", mode=mode, confirm_findings=confirm
+    )
+    r_good = await review_diff(
+        call, good, intent=task.defect.symptom, mode=mode, confirm_findings=confirm
+    )
 
     def model(fs):
-        return [f for f in fs if not f.get("static")]
+        return [f for f in fs if not f.get("static") and not f.get("dropped")]
 
     # caught = a bug-finding lens names the problem in the right file (a "no test" note from the
     # tests lens is true of any change and does not count)
@@ -927,6 +933,8 @@ async def review_eval_task(task, call, *, mode: str = "auto") -> dict[str, Any]:
         "task": task.id,
         "kind": task.defect.kind,
         "mode": r_bad["mode"],
+        "confirm": confirm,
+        "dropped": sum(1 for f in r_bad["findings"] + r_good["findings"] if f.get("dropped")),
         "caught": bool(hits),
         "localised": bool(near),
         "false_alarm": bool(false_alarm),

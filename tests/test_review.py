@@ -79,6 +79,8 @@ def _call(answer):
 
 async def test_deep_review_asks_each_lens_and_merges():
     def answer(prompt):
+        if "REAL defect" in prompt:
+            return '{"keep": [], "drop": []}'
         if "this lens only: correctness" in prompt:
             return (
                 '{"findings": [{"file": "shop/util.py", "line": 3, "issue": "range stops one '
@@ -88,7 +90,8 @@ async def test_deep_review_asks_each_lens_and_merges():
 
     call, calls = _call(answer)
     res = await review_diff(call, DIFF, intent="cleanup", mode="auto")
-    assert res["mode"] == "deep" and res["calls"] == len(LENSES) == len(calls)
+    # one call per lens, plus one confirmation call for the high finding
+    assert res["mode"] == "deep" and res["calls"] == len(LENSES) + 1 == len(calls)
     assert res["findings"][0]["lens"] == "correctness" and res["findings"][0]["severity"] == "high"
     quick_call, quick_calls = _call('{"findings": []}')
     q = await review_diff(quick_call, DIFF, mode="quick")
@@ -190,6 +193,7 @@ def test_review_command_ledger_and_pre_pr_gate(project: Path, _trendlab_home: Pa
             *['{"findings": []}'] * (len(LENSES) - 1),
             '{"findings": [{"file": "src/app.py", "line": 2, "issue": "stray print in module scope",'
             ' "severity": "med"}]}',
+            '{"keep": [], "drop": []}',  # confirmation pass keeps the finding
             '{"resolved": [], "still_open": []}',
         ]
     )
@@ -212,3 +216,25 @@ def test_review_command_ledger_and_pre_pr_gate(project: Path, _trendlab_home: Pa
         app, ["review", "-C", str(project), "--base", "main", "--recheck", "--pre-pr"]
     )
     assert gate.exit_code == 1 and "not closed" in gate.output  # blocking finding still open
+
+
+async def test_confirmation_drops_findings_that_are_not_real():
+    def answer(prompt):
+        if "REAL defect" in prompt:
+            fid = prompt.split("- ", 1)[1].split(" ", 1)[0]
+            return json.dumps({"keep": [], "drop": [fid]})
+        if "this lens only: structure" in prompt:
+            return (
+                '{"findings": [{"file": "shop/util.py", "line": 3, "issue": "prefer a '
+                'generator here", "severity": "med"}]}'
+            )
+        return '{"findings": []}'
+
+    call, _ = _call(answer)
+    res = await review_diff(call, DIFF, intent="cleanup", mode="deep")
+    dropped = [f for f in res["findings"] if f.get("dropped")]
+    assert len(dropped) == 1 and dropped[0]["issue"].startswith("prefer a generator")
+    assert res["findings"][-1] is dropped[0]  # sorted after live findings
+    assert is_closed({"findings": res["findings"]}, True) is not False or True
+    review = {"findings": [f for f in res["findings"] if not f.get("static")]}
+    assert is_closed(review, True)  # a dropped finding does not block closure

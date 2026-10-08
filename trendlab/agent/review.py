@@ -91,6 +91,24 @@ Answer with ONE JSON object and nothing else:
 {diff}
 """
 
+CONFIRM = """Below are findings another reviewer reported on a code change, with ids. For each,
+decide whether it is a REAL defect introduced or left by this diff (wrong behaviour, security
+hole, missing handling the code needs) — not a style preference, not a hypothetical about code
+outside the diff, not something the diff already handles.
+
+Answer with ONE JSON object and nothing else:
+{{"keep": ["id", ...], "drop": ["id", ...]}}
+
+## What the change is for
+{intent}
+
+## Findings
+{findings}
+
+## Diff
+{diff}
+"""
+
 _JSON = re.compile(r"\{.*\}", re.S)
 _DEBUG = re.compile(
     r"^\+(?!\+\+).*\b(print\(|console\.log\(|debugger;|breakpoint\(\)|pdb\.set_trace)"
@@ -222,7 +240,13 @@ Call = Callable[[list[dict[str, Any]]], Awaitable[str]]
 
 
 async def review_diff(
-    call: Call, diff: str, *, intent: str = "", mode: str = "auto", lenses: list[str] | None = None
+    call: Call,
+    diff: str,
+    *,
+    intent: str = "",
+    mode: str = "auto",
+    lenses: list[str] | None = None,
+    confirm_findings: bool = True,
 ) -> dict[str, Any]:
     """Run the static pass and the model lenses; returns {findings, calls, mode, chunks}."""
     import asyncio
@@ -268,15 +292,60 @@ async def review_diff(
             if f["id"] not in seen:
                 seen.add(f["id"])
                 findings.append(f)
+    calls = len(jobs)
+    if confirm_findings:
+        findings, extra = await confirm(call, findings, diff, intent)
+        calls += extra
+        findings = [f for f in findings if not f.get("dropped")] + [
+            f for f in findings if f.get("dropped")
+        ]
     order = {"high": 0, "med": 1, "low": 2}
-    findings.sort(key=lambda f: (order[f["severity"]], f["lens"], f["file"]))
+    findings.sort(
+        key=lambda f: (bool(f.get("dropped")), order[f["severity"]], f["lens"], f["file"])
+    )
     return {
         "findings": findings,
-        "calls": len(jobs),
+        "calls": calls,
         "mode": mode,
         "chunks": len(chunks),
         "lines": lines,
     }
+
+
+def parse_confirm(text: str) -> dict[str, list[str]] | None:
+    m = _JSON.search(text or "")
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except ValueError:
+        return None
+    if not isinstance(obj.get("keep"), list):
+        return None
+    return {"keep": [str(x) for x in obj["keep"]], "drop": [str(x) for x in obj.get("drop") or []]}
+
+
+async def confirm(call: Call, findings: list[dict[str, Any]], diff: str, intent: str):
+    """Second opinion on medium/high model findings (precision pass). Dropped findings are
+    kept in the result with ``dropped=True`` so the decision stays auditable."""
+    from trendlab.providers.structured_json import ask_json
+
+    targets = [f for f in findings if not f.get("static") and f["severity"] in {"high", "med"}]
+    if not targets:
+        return findings, 0
+    listing = "\n".join(
+        f"- {f['id']} [{f['severity']}/{f['lens']}] {f['file']}:{f.get('line', 0)}: {f['issue']}"
+        for f in targets
+    )
+    msg = CONFIRM.format(intent=intent, findings=listing, diff=diff[: CHUNK_CHARS * 2])
+    got, _ = await ask_json(call, [{"role": "user", "content": msg}], parse_confirm)
+    if not got:
+        return findings, 1
+    drop = set(got["drop"]) - set(got["keep"])
+    for f in findings:
+        if f["id"] in drop:
+            f["dropped"] = True
+    return findings, 1
 
 
 def parse_recheck(text: str) -> dict[str, list[str]] | None:
@@ -298,7 +367,11 @@ def parse_recheck(text: str) -> dict[str, list[str]] | None:
 async def recheck(call: Call, findings: list[dict[str, Any]], diff: str) -> dict[str, list[str]]:
     from trendlab.providers.structured_json import ask_json
 
-    open_ = [f for f in findings if f.get("status", "open") == "open" and not f.get("static")]
+    open_ = [
+        f
+        for f in findings
+        if f.get("status", "open") == "open" and not f.get("static") and not f.get("dropped")
+    ]
     if not open_:
         return {"resolved": [], "still_open": []}
     listing = "\n".join(f"- {f['id']} [{f['severity']}] {f['file']}: {f['issue']}" for f in open_)
@@ -327,7 +400,7 @@ def save_review(root: Path, review: dict[str, Any]) -> dict[str, Any]:
     review.setdefault("id", hashlib.sha1(f"{time.time()}".encode()).hexdigest()[:8])
     review.setdefault("created", time.strftime("%Y-%m-%dT%H:%M:%S"))
     for f in review.get("findings", []):
-        f.setdefault("status", "open")
+        f.setdefault("status", "dropped" if f.get("dropped") else "open")
     led["reviews"] = [r for r in led["reviews"] if r["id"] != review["id"]] + [review]
     p = ledger_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -355,13 +428,19 @@ def is_closed(review: dict[str, Any], validation_ok: bool | None) -> bool:
     blocking = [
         f
         for f in review.get("findings", [])
-        if f.get("status", "open") == "open" and f["severity"] in {"high", "med"}
+        if f.get("status", "open") == "open"
+        and not f.get("dropped")
+        and f["severity"] in {"high", "med"}
     ]
     return not blocking and validation_ok is not False
 
 
 def fix_prompt(review: dict[str, Any]) -> str:
-    items = [f for f in review.get("findings", []) if f.get("status", "open") == "open"]
+    items = [
+        f
+        for f in review.get("findings", [])
+        if f.get("status", "open") == "open" and not f.get("dropped")
+    ]
     lines = [
         "A code review of the current changes found these problems. Fix each real one, add "
         "or update tests where needed, run the validation, and say which findings you did "

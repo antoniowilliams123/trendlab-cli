@@ -221,7 +221,7 @@ async def review_commits(
         review = save_review(root, {"source": f"{last[:10]}..{head[:10]}", "async": True, **res})
         cards = []
         for f in res["findings"]:
-            if f["severity"] in {"high", "med"} and not f.get("static"):
+            if f["severity"] in {"high", "med"} and not f.get("static") and not f.get("dropped"):
                 card = inbox.record(
                     project=key,
                     title=f"review: {f['issue'][:150]}",

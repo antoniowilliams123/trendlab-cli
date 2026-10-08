@@ -485,6 +485,9 @@ def bench_cmd(
         help="Reviewer only: seeded-defect and correct-fix diffs per task; recall, false alarms.",
     ),
     review_mode: str = typer.Option("auto", "--review-mode", help="auto | quick | deep"),
+    no_confirm: bool = typer.Option(
+        False, "--no-confirm", help="Review eval: skip the confirmation pass (ablation)."
+    ),
     delegate_eval: bool = typer.Option(
         False,
         "--delegate-eval",
@@ -555,7 +558,7 @@ def bench_cmd(
             out = []
             try:
                 for t in chosen:
-                    row = await review_eval_task(t, call, mode=review_mode)
+                    row = await review_eval_task(t, call, mode=review_mode, confirm=not no_confirm)
                     out.append(row)
                     if output != "json":
                         console.print(
@@ -1413,11 +1416,15 @@ def review_cmd(
     if output == "json":
         typer.echo(json.dumps(review, indent=2))
     else:
-        open_ = [f for f in review["findings"] if f.get("status") == "open"]
+        open_ = [
+            f for f in review["findings"] if f.get("status") == "open" and not f.get("dropped")
+        ]
+        dropped = sum(1 for f in review["findings"] if f.get("dropped"))
         fixed = sum(1 for f in review["findings"] if f.get("status") == "fixed")
         console.print(
             f"[neon]review {review['id']}[/neon] · {label} · {review.get('mode', 'recheck')} · "
-            f"{len(open_)} open, {fixed} fixed · ${review['cost']:.4f}"
+            f"{len(open_)} open, {fixed} fixed, {dropped} dropped on confirmation · "
+            f"${review['cost']:.4f}"
         )
         for f in open_:
             where = f["file"] + (f":{f['line']}" if f.get("line") else "")
