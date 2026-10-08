@@ -155,6 +155,23 @@ async def test_fix_after_rounds_exhausted_surfaces_with_findings(
     assert "verifier: fix (1)" in run_footer(result)
 
 
+async def test_small_verified_change_skips_review(project: Path, manager_factory, events, recorder):
+    agent, _ = make_agent(
+        project,
+        manager_factory(),
+        events,
+        ScriptedProvider([WRITE, TEST, DONE]),
+        mode=PermissionMode.UNSAFE,
+    )
+    agent.verifier = _verifier([VerifierVerdict("fail")])
+    agent.verification_mode = "required"
+    agent.verify_min_diff_lines, agent.verify_min_files = 30, 2
+    result = await agent.run("add x = 2 to x.py")
+    assert result.status == "COMPLETED" and result.verification["verdict"] == "skipped"
+    assert recorder.of_type(EventType.VERIFY_VERDICT)[0].data["verdict"] == "skipped"
+    assert not recorder.of_type(EventType.VERIFY_STARTED)
+
+
 async def test_fail_verdict_stops_required_but_not_advisory(project: Path, manager_factory, events):
     bad = VerifierVerdict(
         "fail",
@@ -303,6 +320,8 @@ async def test_worktree_workspace_applies_verified_diff_and_parks_failed(
     cfg.remote_approval = RemoteApprovalConfig(enabled=False)
     cfg.verification.workspace = "worktree"
     cfg.verification.verifier = "off"
+    cfg.verification.min_diff_lines = 0
+    cfg.verification.min_files = 1
     provider = ScriptedProvider([WRITE, ModelResponse(text="wrote x.py")])
     tl = TrendLabApp(
         project,

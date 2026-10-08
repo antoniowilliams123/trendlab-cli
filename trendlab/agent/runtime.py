@@ -122,6 +122,8 @@ class AgentRuntime:
         self.verifier: Any = None  # async (task_text, evidence) -> VerifierVerdict | None
         self.verification_mode = "off"  # required | advisory | off
         self.verification_max_rounds = 1
+        self.verify_min_diff_lines = 0  # risk gating, set by the app from config
+        self.verify_min_files = 1
         self.regression_gate = False
         self._verify_rounds = 0
         self._verification: dict[str, Any] | None = None
@@ -129,7 +131,7 @@ class AgentRuntime:
         # Step-scoped execution (cheap-model spec §3.3, §4): attached by the app.
         self.planner: Any = None  # async (task_text, note) -> list[step dict] | None
         self.planner_max_calls = 3
-        self.planner_min_chars = 200
+        self.planner_min_chars = 400
         self._planner_calls = 0
         self.step_iterations = 12
         self.candidates: Any = None  # async (task, failure_tail, n) -> outcome dict
@@ -812,6 +814,31 @@ class AgentRuntime:
         )
         return True
 
+    def _small_verified_change(self, ev: EvidenceSummary, final_text: str) -> bool:
+        """Risk gate (M1): skip the stronger model's review when the change is below both size
+        thresholds, validation passed, and a regression test is present or not applicable."""
+        if self.verify_min_diff_lines <= 0 and self.verify_min_files <= 1:
+            return False
+        if not ev.validated:
+            return False
+        if self.regression_gate and looks_like_fix(self._task_text):
+            if regression_outcome(ev.changed_files, final_text, ev.validation_runs) in {
+                "missing",
+                "waived",
+            }:
+                return False
+        if len(ev.changed_files) >= self.verify_min_files:
+            return False
+        lines = 0
+        for f in ev.changed_files:
+            for d in self.tools.changed_files.get(f, []):
+                lines += sum(
+                    1
+                    for ln in (d or "").splitlines()
+                    if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+                )
+        return lines < self.verify_min_diff_lines
+
     async def _verify_before_surface(self, final_text: str) -> tuple[str, str] | None:
         """Independent review of the diff (spec §3.2). None = surface the run as COMPLETED;
         ("fix", feedback) = one more author round; ("fail", reason) = stop the run."""
@@ -825,6 +852,15 @@ class AgentRuntime:
                 files=ev.changed_files,
             )
         if self.verification_mode == "off" or self.verifier is None or not ev.mutated:
+            return None
+        if self._small_verified_change(ev, final_text):
+            self._verification = {"verdict": "skipped", "reason": "small change, validated"}
+            self.events.emit(
+                EventType.VERIFY_VERDICT,
+                session_id=self.session_id,
+                verdict="skipped",
+                reason="small change validated green with its test",
+            )
             return None
         self.events.emit(EventType.VERIFY_STARTED, session_id=self.session_id, role=self.role)
         try:

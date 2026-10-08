@@ -28,7 +28,7 @@ PLAN_JSON = (
 def test_planner_heuristic_and_parsing():
     assert not needs_planner("fix the typo")
     assert needs_planner("fix the typo in app.py and update README.md")
-    assert needs_planner("x" * 201)
+    assert needs_planner("x" * 401) and not needs_planner("x" * 300)
     steps = parse_steps("Here you go:\n" + PLAN_JSON)
     assert [s["title"] for s in steps] == ["Fix the total in orders.py", "Run the suite"]
     assert steps[0]["validation"] == "python3 -c 'print(1)'" and steps[1]["validation"] is None
@@ -97,7 +97,7 @@ async def test_planner_runs_once_and_step_validation_gates_completion(
         ]
 
     agent.planner = planner
-    result = await agent.run("Please fix src/x.py and also touch src/ok so the check passes " * 4)
+    result = await agent.run("Please fix src/x.py and also touch src/ok so the check passes " * 7)
     assert result.status == "COMPLETED" and calls == [""]
     planned = recorder.of_type(EventType.PLANNER_CALLED)
     assert planned and planned[0].data["steps"] == 2
@@ -153,7 +153,7 @@ async def test_iteration_cap_triggers_replan(project: Path, manager_factory, eve
 
     agent.planner = planner
     agent.step_iterations = 3
-    result = await agent.run("do a long thing " * 20)
+    result = await agent.run("do a long thing " * 30)
     assert result.status == "COMPLETED"
     assert len(notes) == 2 and "did not finish within 3 iterations" in notes[1]
     cap = [
@@ -216,7 +216,7 @@ async def test_best_of_callback_finishes_failed_step(
     agent.planner = planner
     agent.candidates = candidates
     agent.best_of = 3
-    result = await agent.run("fix src/x.py and make src/ok appear " * 6)
+    result = await agent.run("fix src/x.py and make src/ok appear " * 12)
     assert result.status == "COMPLETED" and seen == [("T-1", 3)]
     done = [e for e in recorder.of_type(EventType.STEP_COMPLETED) if e.data["step"] == "T-1"]
     assert done and done[0].data["via"] == "best_of" and done[0].data["winner"] == 2

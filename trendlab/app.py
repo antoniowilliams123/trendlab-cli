@@ -289,6 +289,8 @@ class TrendLabApp:
             self.config.routing.get("verifier") or self.config.routing.get("escalation")
         )
         self.agent.verification_mode = vcfg.verifier if has_verifier_model else "off"
+        self.agent.verify_min_diff_lines = vcfg.min_diff_lines
+        self.agent.verify_min_files = vcfg.min_files
         if self.config.planner.enabled:
             self.agent.planner = self._plan_steps
             self.agent.planner_max_calls = self.config.planner.max_calls

@@ -343,7 +343,7 @@ jet-black/neon UI).
 | P2 Verify | **done 2026-10-07** | `trendlab/agent/verifier.py` (fixed-schema verdict, fresh context), `AgentRuntime._verify_before_surface` (pass / fix round / fail), regression gate (`looks_like_fix`, `regression_outcome`, evaluator nudge), `[verification]` config (verifier, max_rounds, workspace, regression_gate), worktree workspace in `TrendLabApp` (`_enter_worktree` / `_surface_worktree`: apply verified diff or park `.trendlab/patches/<run>.patch`), events `verify.*`, `verifier` routing role, footer + activity lines. 9 tests (`tests/test_verify_then_surface.py`). |
 | P3 Steps | **done 2026-10-07** | `trendlab/agent/planner.py` (planner prompt, `needs_planner` heuristic, strict JSON steps, `apply_steps` onto the existing Plan), `Task` gained `files / done_when / validation / attempts` (= spec `Step`), `AgentRuntime` step loop (`_maybe_plan` ≤ `planner.max_calls`, `_track_step` iteration cap → re-plan → escalate, `_check_steps` runs each completed step's validation and hands failures back), `orchestration/candidates.py` best-of-N in parallel worktrees with temperature jitter + approach hints (`attempts.best_of = auto` → 3 under $1/M input or local), `gitflow.worktree_patch` (junk-free patches), `[planner]` / `[attempts]` / `limits.step_iterations` config, events `planner.called`, `step.*`, `attempt.candidate`, activity lines. 5 tests (`tests/test_step_execution.py`). Measurement in §9.3. |
 | P4 Cocktail | **done 2026-10-07** | `trendlab init` seeds the DeepSeek cocktail (`[routing]` planning/verifier/escalation → V4 Pro, screener/summarizer → Flash) and `trendlab doctor` warns when every role resolves to one model; attribution (`ModelCallRecord.phase/step_id/attempt`, lead phase inferred from the tools just used, `CostTracker.by(role|phase|step)`, `/cost --by …`, `cost_by_phase` + `guards_fired` + `verification` in the bench report); per-model prompt layer `trendlab/prompts/drivers.py` (packaged `drivers/<provider-type>.md` + `drivers/models/<provider>-<model>.md` + `~/.trendlab/skills/_model/` + `<project>/.trendlab/skills/_model/`, `[prompts] drivers`, refreshed on model switch); Flash driver profile seeded from this week's guards; `guard.fired {guard, model}` from rescue, evaluator reasons, loop detector, step cap, verifier fix round and the re-plan guard; skill triggers (`[triggers] paths/tools/keywords/on_failure` in skill.toml, `SkillLibrary.match`, loaded once per run as a user message, `skill.loaded/unloaded`). 4 tests (`tests/test_cocktail_layer.py`). Measurement in §9.4. |
-| P5 Suite | **done 2026-10-08** | `trendlab/benchmarks/suite.py` (50 tasks: 30 Python / 10 TypeScript / 10 Go from three base repos × a defect catalogue of off-by-one, wrong import, missing None check, swapped args, async misuse, config typo, multi-file contract, wrong operator, early return, bad format; 27 symptom-only; hidden regression test + localisation answer per task; materialised on demand), `runner.run_task` metrics (located, root_cause ±3 lines, passes on the hidden test, no_collateral, regression_added, interventions, cost, tokens_lead, tokens_total, wall_s, cost_by_phase, guards_fired), profiles `harness` / `bare`, `trendlab bench --suite --tasks --lang --profile --compare a@p b@q --sandbox docker`, `docs/BENCH_LOG.md`; docker sandbox mode (`[sandbox] mode = "docker"`, pinned image, project at /work, no network); `trendlab stub --spec openapi|recorded [--record host]`; `trendlab replay <session> [--model] [--max-prompts]`. 6 tests (`tests/test_suite_and_replay.py`). Measurement in §9.5. |
+| P5 Suite | **done 2026-10-08** (M1 measured, §9.5) | `trendlab/benchmarks/suite.py` (50 tasks: 30 Python / 10 TypeScript / 10 Go from three base repos × a defect catalogue of off-by-one, wrong import, missing None check, swapped args, async misuse, config typo, multi-file contract, wrong operator, early return, bad format; 27 symptom-only; hidden regression test + localisation answer per task; materialised on demand), `runner.run_task` metrics (located, root_cause ±3 lines, passes on the hidden test, no_collateral, regression_added, interventions, cost, tokens_lead, tokens_total, wall_s, cost_by_phase, guards_fired), profiles `harness` / `bare`, `trendlab bench --suite --tasks --lang --profile --compare a@p b@q --sandbox docker`, `docs/BENCH_LOG.md`; docker sandbox mode (`[sandbox] mode = "docker"`, pinned image, project at /work, no network); `trendlab stub --spec openapi|recorded [--record host]`; `trendlab replay <session> [--model] [--max-prompts]`. 6 tests (`tests/test_suite_and_replay.py`). Measurement in §9.5. |
 | P6 Daemon | **done 2026-10-08** | `trendlab/engine/`: SQLite inbox with clustering (`inbox.py`), outbound-only Telegram digest (`notify.py`), issue drafter (`drafter.py`), sleeptime pass (`sleep.py`: ≤40 facts, TRENDLAB.md / model-notes / skill proposals, review branch `trendlab/memory-YYYY-MM-DD` via a temporary worktree, narrowed git exclude), meta-loop (`meta.py`: clusters stop reasons, skipped tools, guards, loops, verifier fails, cost outliers → cards against the harness; `meta --draft` fixes the top card in a worktree of trendlab-cli), `watch` (test failures → cards), the daemon (`daemon.py`: scheduler watch/sleep/meta/digest, Unix socket, pid file; `trendlab engine start|stop|status|run`), `[engine]` config, failed runs and verifier rejections filed automatically, `/inbox list|apply|test|dismiss|silence|open`. 8 tests (`tests/test_engine.py`). Status in §9.6. |
 
 Decisions taken while building P1:
@@ -465,7 +465,35 @@ number comes with the P5 runs. `/cost --by phase` works; the bench report carrie
 
 ### 9.5 P5 measurement (M1 on the suite)
 
-M1_PLACEHOLDER
+Ten suite tasks (py01, py02, py03, py05, py07, py10, ts01, ts02, ts03, ts04; the Go tasks need a
+toolchain this machine lacks), DeepSeek Flash as lead, V4 Pro for planner/verifier/escalation,
+unattended, approvals auto-denied. `bare` = tiering, planner, verifier, best-of-N and driver
+notes off. The spec's comparator `sonnet+bare` could not run: no Anthropic key is stored.
+
+| Configuration | located | root cause | passes (hidden test) | no collateral | regression test | total cost | lead tokens | wall |
+|---|---|---|---|---|---|---|---|---|
+| flash @ harness, first defaults (planner > 200 chars, verifier always) | 10/10 | 10/10 | **9/10** | 9/10 | 10/10 | **$0.434** | 1.46 M | 1 070 s |
+| flash @ bare | 10/10 | 10/10 | **10/10** | 10/10 | 10/10 | **$0.047** | 0.47 M | 166 s |
+| v4-pro @ bare | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | $0.161 | 0.41 M | 212 s |
+| flash @ harness, **gated** (planner > 400 chars, review skipped for small validated changes) | 10/10 | 10/10 | 9/10 | 10/10 | 10/10 | **$0.063** | 0.43 M | 199 s |
+
+Cost by phase, first harness run: plan $0.250, verify $0.070, validate $0.069, explore $0.021,
+edit $0.014 — the planner, not the verifier, was the big line; one task (ts04) alone cost $0.24
+and 525 s through a verifier fix round. Gated run: plan $0.015, verify $0.023, validate $0.012.
+
+**Reading, plainly.** On easy, well-specified tasks bare Flash already scores 10/10, so every
+extra model call the harness makes is pure overhead: the first defaults cost 9× and took 6×
+longer for a *worse* pass rate. That is the M1 answer for this slice: the heavy machinery
+(planner, stronger-model review, fix rounds) must be reserved for the cases it exists for —
+long briefs, multi-file changes, failed validation, no regression test. The gating shipped the
+same night brings the harness within 1.3× of bare cost on easy tasks while keeping the review
+for the risky ones (every task here changed two files, so the review still ran; it passed every
+time). The one miss (py03, both harness runs) is a hidden-test disagreement about *how* to reject
+a missing quantity — the harness's fix raised an error where the hidden test expects a problem
+string; bare Flash happened to pick the expected form. Whether the harness earns its keep on the
+hard half of the suite (symptom-only tasks, multi-file contracts) is the next measurement:
+`trendlab bench -m deepseek:deepseek-flash --suite --compare deepseek:deepseek-flash@harness
+deepseek:deepseek-flash@bare` on all 40 runnable tasks, best run overnight with the engine idle.
 
 Decisions taken while building P5:
 

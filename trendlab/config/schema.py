@@ -158,6 +158,10 @@ class VerificationConfig(BaseModel):
     # Fix-type tasks that change source must also add/change a test (or state a waiver).
     regression_gate: bool = True
     apply_timeout_seconds: int = 60
+    # Risk gating (M1 finding): a small change that validated green and has its regression
+    # test does not need the stronger model's review. Either threshold met → review runs.
+    min_diff_lines: int = Field(default=30, ge=0)
+    min_files: int = Field(default=2, ge=1)
 
     @field_validator("verifier")
     @classmethod
@@ -185,7 +189,8 @@ class PlannerConfig(BaseModel):
 
     enabled: bool = True
     max_calls: int = Field(default=3, ge=1, le=6)  # initial plan + re-plans per run
-    min_prompt_chars: int = 200
+    # M1 finding: planning every medium prompt cost more than it saved; plan long briefs only.
+    min_prompt_chars: int = 400
 
 
 class AttemptsConfig(BaseModel):

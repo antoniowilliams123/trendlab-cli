@@ -18,6 +18,8 @@ parallel_tools = 6               # consecutive read-only tool calls run concurre
 # OS sandbox for shell commands (bubblewrap, Linux/WSL2) — spec §90.1
 # ---------------------------------------------------------------------------
 [sandbox]
+# mode = "docker" runs shell commands in docker_image with the project at /work (spec §8.3).
+# docker_image = "python:3.12-slim"
 mode = "auto"                    # auto (on when bwrap is installed) | on | off
 allow_network = false            # network/package commands (curl, git push, pip, gh ...) get it anyway
 writable_paths = ["~/.cache"]    # besides the project root
@@ -41,6 +43,10 @@ enabled = false                  # or: trendlab --plan-gate · /plan gate on
 timeout_minutes = 30
 
 [context]
+# Tiered tool output (spec §2): tokens the lead sees per tool; the full text goes to
+# .trendlab/traces/<call_id>.log for inspect_output. read_file is never tiered.
+# tool_budgets = { shell = 1500, run_tests = 1200, search_text = 1000, list_directory = 600, web_fetch = 1500 }
+# screener_threshold_tokens = 3000
 auto_compact = true
 compact_threshold = 0.75         # of the model's context window
 default_context_window = 128000
@@ -137,11 +143,47 @@ cached_input_per_million = 0.005
 # Role routing (spec §11). Missing roles use the session model. "escalation" takes over the rest of a
 # run after two no-progress strikes or two rejected completions, then the default model returns.
 [routing]
-# default = "anthropic:claude-opus-5"
+# The cheap-model cocktail (cheap-model spec §6.1): a cheap lead, a stronger model for the
+# few short calls that decide quality. `trendlab init` writes this for DeepSeek.
+# planning   = "deepseek:deepseek-v4-pro"   # step plan for non-trivial tasks (1–3 calls)
+# verifier   = "deepseek:deepseek-v4-pro"   # reviews the diff before a run is reported done
+# escalation = "deepseek:deepseek-v4-pro"   # takes over after two rejected completions or a loop
+# screener   = "deepseek:deepseek-flash"    # tiers oversized tool output
+# summarizer = "deepseek:deepseek-flash"
 # explorer = "anthropic:claude-sonnet-5"
-# summarizer = "anthropic:claude-haiku-4-5"
 # reviewer = "anthropic:claude-opus-5"
-# escalation = "anthropic:claude-opus-5"
+
+# Verify-then-surface (spec §3.2, §5).
+[verification]
+verifier = "required"      # required | advisory | off (needs routing.verifier or escalation)
+max_rounds = 1             # 'fix' verdicts handed back to the author
+workspace = "inplace"      # inplace | worktree (edit in .trendlab/worktrees, apply verified diff)
+regression_gate = true     # fix-type tasks must add/change a test or state a waiver
+min_diff_lines = 30        # review runs when the diff is at least this big ...
+min_files = 2              # ... or touches this many files, or validation did not pass
+
+# Planner and best-of-N (spec §3.3, §4).
+[planner]
+enabled = true
+max_calls = 3
+min_prompt_chars = 400     # plan long briefs only (M1: planning medium prompts cost more than it saved)
+
+[attempts]
+best_of = "auto"           # 3 for models under $1/M input (or local), else 1
+cheap_price_per_m = 1.0
+
+# Per-model prompt layer (spec §6.3): packaged driver notes + ~/.trendlab/skills/_model/ + project.
+[prompts]
+drivers = true
+
+# Engine daemon (spec §7): `trendlab engine start`.
+[engine]
+projects = []              # roots to watch and sleep over
+watch_minutes = 60
+sleep_at = "02:30"
+meta_days = 1
+digest_minutes = 180
+file_failed_runs = true
 
 # Provider fallback for infrastructure failures only (spec §69).
 [fallback]

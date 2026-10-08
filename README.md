@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-350%20passing-39ff14?style=flat-square&labelColor=000000"></a>
+  <a href="#"><img alt="tests" src="https://img.shields.io/badge/tests-351%20passing-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="#"><img alt="python" src="https://img.shields.io/badge/python-3.12%2B-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-39ff14?style=flat-square&labelColor=000000"></a>
   <a href="docs/TRENDLAB_CLI_SPEC.md"><img alt="spec" src="https://img.shields.io/badge/spec-v1.6%20%C2%B7%2092%20sections-39ff14?style=flat-square&labelColor=000000"></a>
@@ -53,6 +53,9 @@ another device.
 | **Plan gate and Telegram buttons** | `--plan-gate` holds the first edit until you approve the plan from the terminal, the phone page or Telegram inline buttons (Approve once · Session · Deny). |
 | **See everything it does** | Every tool call shows what ran (the command, path or query), a preview of what came back, the first error line when it failed, and a reason when a call was denied, invalid or blocked. Answer first, then one quiet line: calls, time, cost, changed files, validated or not. Same in the plain REPL. |
 | **Input that fits real work** | Multi-line prompts, `$EDITOR` for long ones, **Alt+V (or Ctrl+V where the terminal lets it through) pastes a screenshot** straight into the prompt; if the current model can't see images the prompt is routed to the cheapest vision model you have a key for, then switches back (`@file.png` and `/paste` too), type while it runs to steer, Esc to interrupt, reasoning shown dimmed while it thinks. |
+| **Built for cheap models** | Large tool output is reduced to facts and targeted detail (the full text stays on disk for `inspect_output`); a stronger model plans non-trivial tasks into verifiable steps and reviews the diff before a run is reported done; a failed step gets three candidate patches in parallel worktrees and the test picks the winner; a per-model prompt layer carries what each model needs to hear. Cost is attributed by role, phase and step (`/cost --by phase`). |
+| **Measures itself** | A 50-task benchmark suite (Python, TypeScript, Go; hidden regression tests; localisation scoring), `trendlab bench --suite` / `--compare a@harness b@bare`, shadow replay of stored sessions against the current build, a stub server for tests that call external services, and an optional docker sandbox. |
+| **Works while you sleep** | A local engine files failing tests, failed runs and verifier rejections as clustered inbox cards (`/inbox apply` fixes one in a worktree), consolidates project memory nightly on a review branch, screens the harness's own sessions for recurring problems, and sends one Telegram digest per cycle. |
 | **Ecosystem** | Sub-agents (explorer, debugger, tester, reviewer), MCP servers as tools, lifecycle hooks, reusable skills, a benchmark runner, headless JSON mode for CI. Reads `TRENDLAB.md`, `AGENTS.md` and `CLAUDE.md`. |
 
 ## Screenshots
@@ -228,7 +231,10 @@ Live runs on DeepSeek Flash, the default model:
 | D | edge case needing a new test | fixed + test added, 4 calls, 7.1 s, $0.0020 |
 | E | refactor with tests | done, 4 calls, 5.7 s, $0.0015 |
 
-Run your own with `trendlab bench -m provider:model`.
+Run your own with `trendlab bench -m provider:model`; the 50-task suite with
+`trendlab bench -m provider:model --suite` (add `--compare a@harness b@bare` for deltas).
+Measurements for the cheap-model programme (tiering, verifier, steps, profiles) are in
+`docs/CHEAP_MODEL_HARNESS_SPEC.md` §9.
 
 ## Engineering notes
 
@@ -246,7 +252,7 @@ Run your own with `trendlab bench -m provider:model`.
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest -q          # 350 tests, mocked providers, no network
+.venv/bin/python -m pytest -q          # 351 tests, mocked providers, no network
 .venv/bin/python -m build --wheel      # dist/trendlab_cli-*.whl for pipx install
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```

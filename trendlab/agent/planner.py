@@ -42,7 +42,7 @@ _FILE = re.compile(
 )
 
 
-def needs_planner(task_text: str, *, min_prompt_chars: int = 200) -> bool:
+def needs_planner(task_text: str, *, min_prompt_chars: int = 400) -> bool:
     """Heuristic from §3.3: long prompt, or two or more files mentioned."""
     text = task_text or ""
     if len(text) > min_prompt_chars:
