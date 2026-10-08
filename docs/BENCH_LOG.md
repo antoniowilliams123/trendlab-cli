@@ -617,3 +617,11 @@
   predate the allowed_changed fix).
 - New functions or classes in a bug fix: 0 (7 detector hits were edits to existing signatures).
 - Dependency files touched: 0.
+
+## 2026-10-08 — parallel tool batching on real sessions (no rating change)
+
+- 889 parallel batches across 560 sessions; 2,146 of 6,179 tool calls (35%) ran batched, max 5.
+- Of 421 batches with full span data: summed tool time 63 s, batch wall time 99 s. Local read
+  tools take milliseconds, so per-batch overhead (about 86 ms) exceeds the concurrency gain.
+- Parallel tool calls (term 48) stays at 8: batching is correct and safe but not yet faster.
+  Next step would be trimming per-batch overhead or batching only slow tools (fetch, search).
