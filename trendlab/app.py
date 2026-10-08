@@ -468,6 +468,8 @@ class TrendLabApp:
         """Run a prompt; ``@file.png`` references in the text and ``images`` become vision parts."""
         assert self.agent is not None
         self._run_checkpoint = None
+        self._checkpoint_step = None
+        self._step_checkpoint = None
         if self.plan_gate is not None:
             self.plan_gate.reset()
         images = [*self.pending_images, *(images or [])]
@@ -1083,11 +1085,13 @@ class TrendLabApp:
     async def _checkpoint_before_mutation(self, files: list[str]) -> None:
         if self.checkpoints is None:
             return
+        step = self.plan.active if self.plan else None
         if self._run_checkpoint is None:
             from trendlab.tools.git import git_head
 
             head = await git_head(self.project_root)
             self._run_checkpoint = self.checkpoints.create(files, label="auto", git_head=head)
+            self._checkpoint_step = None
             self.events.emit(
                 EventType.SESSION_CHECKPOINTED,
                 session_id=self.session_id,
@@ -1095,7 +1099,16 @@ class TrendLabApp:
                 files=files,
             )
         else:
+            # the run checkpoint keeps every file's pre-run content (test strength, arch check)
             self.checkpoints.extend(self._run_checkpoint["id"], files)
+        if step is not None and step.id != getattr(self, "_checkpoint_step", None):
+            # natural task checkpoint (U28): the files as they were when this step began
+            self._checkpoint_step = step.id
+            self._step_checkpoint = self.checkpoints.create(
+                files, label=f"step {step.id}: {step.title[:60]}"
+            )
+        elif step is not None and getattr(self, "_step_checkpoint", None):
+            self.checkpoints.extend(self._step_checkpoint["id"], files)
 
     async def _screen_output(self, text: str, meta: dict[str, Any]):
         """Screener (cheap-model spec §3.1): a cheap model turns an unparsed, oversized tool

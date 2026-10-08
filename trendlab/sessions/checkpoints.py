@@ -122,3 +122,28 @@ class CheckpointManager:
         self.store.delete_checkpoint(cp["id"])
         shutil.rmtree(self.dir / cp["id"], ignore_errors=True)
         return {"ok": True, "checkpoint": cp["id"], "restored": restored, "removed": removed}
+
+
+def undo_step(manager: CheckpointManager, step_id: str) -> dict[str, Any]:
+    """Undo back to before plan step ``step_id``: that step's checkpoint and every checkpoint
+    taken after it are undone, newest first (later steps built on this one)."""
+    cps = sorted(manager.list(), key=lambda c: c["created_at"])
+    idx = next(
+        (i for i, c in enumerate(cps) if str(c.get("label") or "").startswith(f"step {step_id}:")),
+        None,
+    )
+    if idx is None:
+        return {"ok": False, "error": f"no checkpoint for step {step_id}"}
+    restored: list[str] = []
+    removed: list[str] = []
+    for cp in reversed(cps[idx:]):
+        res = manager.undo(cp["id"], force=True)
+        if res.get("ok"):
+            restored += res["restored"]
+            removed += res["removed"]
+    return {
+        "ok": True,
+        "step": step_id,
+        "restored": sorted(set(restored)),
+        "removed": sorted(set(removed) - set(restored)),
+    }

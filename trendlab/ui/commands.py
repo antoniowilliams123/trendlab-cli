@@ -38,7 +38,7 @@ HELP = """\
 /pr [title] [--draft]      Push the branch and open a pull request with gh (body generated)
 /issue <n>                 Pull a GitHub issue into the conversation; /pr adds "Closes #n"
 /worktree start [name] | done | list | remove <name>   Work on a throwaway git worktree
-/checkpoint                List checkpoints                /undo [id] [force]   Restore a checkpoint
+/checkpoint                List checkpoints                /undo [id|step T-n] [force] Restore
 /sessions | /resume <id|latest> | /new      Session management (resume switches in place)
 /branch [label] [--keep N]  Fork this conversation into a child session and continue there
 /tree                      Sessions of this project as a branch tree
@@ -678,8 +678,14 @@ class CommandRouter:
         if not self.app.checkpoints:
             return
         force = "force" in args
-        cid = next((a for a in args if a != "force"), None)
-        res = self.app.checkpoints.undo(cid, force=force)
+        if args[:1] == ["step"] and len(args) > 1:
+            from trendlab.sessions.checkpoints import undo_step
+
+            res = undo_step(self.app.checkpoints, args[1])
+            res.setdefault("checkpoint", f"step {args[1]}")
+        else:
+            cid = next((a for a in args if a != "force"), None)
+            res = self.app.checkpoints.undo(cid, force=force)
         if res["ok"]:
             self.console.print(
                 f"[green]Restored checkpoint {res['checkpoint']}[/green]: "
