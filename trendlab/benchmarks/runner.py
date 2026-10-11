@@ -430,6 +430,7 @@ async def run_task(
             "exact_match": exact_match,
             "ref_similarity": ref_similarity,
             "unsupported_claims": list(result.unsupported_claims),
+            "capability_unchecked": list(result.capability_unchecked),
             "verifier_confidence": (result.verification or {}).get("confidence"),
             "verifier_rubric": (result.verification or {}).get("rubric") or {},
             "model": model,
@@ -1062,6 +1063,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         else None
     )
     summary["hallucination_rate"] = round(sum(1 for r in ran if r.get("unsupported_claims")) / n, 3)
+    summary["capability_unchecked_rate"] = round(
+        sum(1 for r in ran if r.get("capability_unchecked")) / n, 3
+    )
     summary["capability"] = {
         "by_defect": capability_map(ran, "defect_kind"),
         "by_lang": capability_map(ran, "lang"),

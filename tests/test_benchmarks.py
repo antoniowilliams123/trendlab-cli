@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from trendlab.benchmarks.fixtures import FIXTURES, materialize
-from trendlab.benchmarks.runner import run_fixture, suite_passes
+from trendlab.benchmarks.runner import run_fixture, suite_passes, summarize
 from trendlab.config.schema import AppConfig, ProviderConfig
 from trendlab.providers.base import ModelResponse, ToolCall
 from trendlab.providers.scripted import ScriptedProvider
@@ -14,6 +14,14 @@ def test_fixtures_start_broken(tmp_path: Path):
         assert prompt and (root / "pyproject.toml").exists()
         # D (missing edge-case test) and E (refactor) start green by design; A-C start red.
         assert suite_passes(root) == (name in {"D", "E"}), name
+
+
+def test_summarize_counts_unattempted_refusals():
+    rows = [
+        {"task": "a", "capability_unchecked": ["never tried web_search"]},
+        {"task": "b", "capability_unchecked": []},
+    ]
+    assert summarize(rows)["capability_unchecked_rate"] == 0.5
 
 
 async def test_runner_scores_a_scripted_fix(_trendlab_home: Path):

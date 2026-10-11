@@ -1,6 +1,6 @@
 # TrendLab agent constitution
 
-Fourteen rules the harness holds the agent to. A rule is only listed here if something in the
+Fifteen rules the harness holds the agent to. A rule is only listed here if something in the
 code enforces it, a test proves the enforcement, and a bench metric measures how often it
 holds. `tests/test_constitution.py` fails when a referenced test or code symbol disappears, so
 this page cannot drift away from what the harness actually does.
@@ -21,3 +21,4 @@ this page cannot drift away from what the harness actually does.
 | C12 | Respect the user's communication rules. | `trendlab.agent.style.check` | `tests/test_governance.py::test_answer_over_the_limit_is_rewritten_once` | `communication` |
 | C13 | Leave a trail someone can replay. | `trendlab.benchmarks.cassette.Recorder` | `tests/test_cassette.py::test_session_is_recorded_and_replays_identically` | `trendlab replay --recent` |
 | C14 | Spend in proportion to the task. | `trendlab.agent.router.settings_for` | `tests/test_router.py::test_settings_per_kind` | `roi`, `cost_per_task_ci95` |
+| C15 | Try a tool before declaring it out of reach. | `trendlab.agent.capability.unattempted_refusals` | `tests/test_capability.py::test_refusal_without_an_attempt_is_nudged` | `capability_unchecked_rate` |

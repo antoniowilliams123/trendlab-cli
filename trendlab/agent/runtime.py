@@ -65,6 +65,8 @@ class RunResult:
     communication: dict[str, Any] | None = None  # answer metrics and issues (uplift U9)
     latency: dict[str, Any] | None = None  # route latency budget and whether it was exceeded
     unsupported_claims: list[str] = field(default_factory=list)  # claims the evidence contradicts
+    capability_unchecked: list[str] = field(default_factory=list)  # "I can't", never tried
+    unattempted_refusal: bool = False  # the flag form of the field above (C15)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,8 @@ class RunResult:
             "communication": self.communication,
             "latency": self.latency,
             "unsupported_claims": self.unsupported_claims,
+            "capability_unchecked": self.capability_unchecked,
+            "unattempted_refusal": self.unattempted_refusal,
             "text": self.text,
             "report": self.report,
             "changed_files": self.changed_files,
@@ -112,6 +116,7 @@ class AgentRuntime:
         self.gateway = gateway
         self.model_ref = model_ref
         self.tools = tools
+        self._tools_tried: set[str] = set()  # tool names the model reached for in this run
         self.context = context
         self.events = events
         self.session_id = session_id
@@ -281,7 +286,11 @@ class AgentRuntime:
 
     def evidence(self) -> EvidenceSummary:
         return EvidenceSummary(
-            list(self.tools.changed_files), list(self.tools.validation_runs), self.plan
+            list(self.tools.changed_files),
+            list(self.tools.validation_runs),
+            self.plan,
+            tools_available=sorted(self.tools.registry.names()),
+            tools_tried=sorted(self._tools_tried),
         )
 
     # -- main loop -------------------------------------------------------------------------
@@ -296,6 +305,7 @@ class AgentRuntime:
             self.state.transition(AgentState.IDLE)
         self._append({"role": "user", "content": prompt})
         self._task_text = _text_of(prompt)
+        self._tools_tried = set()
         self._verify_rounds = 0
         self._verification = None
         self._planner_calls = 0
@@ -474,6 +484,7 @@ class AgentRuntime:
                         )
                 if response.tool_calls:
                     self._design_pending = False
+                    self._tools_tried.update(c.name for c in response.tool_calls)
                     self._append(_assistant_message(response))
                     if response.text and self.on_token is None:
                         pass
@@ -1401,12 +1412,27 @@ class AgentRuntime:
         )
         if claims:
             self.events.emit(EventType.CLAIM_UNSUPPORTED, session_id=self.session_id, claims=claims)
+        from trendlab.agent.capability import unattempted_refusals
+
+        unchecked = (
+            unattempted_refusals(
+                text, tools=self.tools.registry.names(), attempted=self._tools_tried
+            )
+            if status == AgentState.COMPLETED
+            else []
+        )
+        if unchecked:
+            self.events.emit(
+                EventType.CAPABILITY_UNCHECKED, session_id=self.session_id, claims=unchecked
+            )
         from trendlab.agent.taxonomy import classify_stop
 
         failure_code = classify_stop(status.value, stop_reason)
         result = RunResult(
             failure_code=failure_code,
             unsupported_claims=claims,
+            capability_unchecked=unchecked,
+            unattempted_refusal=bool(unchecked),
             verification=self._verification,
             scope=self._scope,
             communication=self._communication,
@@ -1570,6 +1596,8 @@ def infer_phase(tools: list[str]) -> str:
 
 def _guard_name(reason: str) -> str:
     r = reason.lower()
+    if "never tried" in r:
+        return "capability_unchecked"
     if "empty" in r or "json" in r:
         return "empty_answer"
     if "announced" in r:

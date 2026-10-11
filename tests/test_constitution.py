@@ -14,7 +14,7 @@ ROW = re.compile(r"^\| (C\d+) \| (.+?) \| `([\w.]+)` \| `([\w/.]+)::(\w+)` \| (.
 
 def test_every_rule_points_at_real_code_and_a_real_test():
     rows = ROW.findall(DOC.read_text())
-    assert len(rows) == 14
+    assert len(rows) == 15
     for cid, _rule, symbol, test_file, test_name, _metric in rows:
         module, _, attr = symbol.rpartition(".")
         assert hasattr(importlib.import_module(module), attr), f"{cid}: {symbol} is gone"

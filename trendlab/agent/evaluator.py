@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from trendlab.agent.capability import unattempted_refusals
 from trendlab.agent.tasks import Plan
 
 
@@ -14,6 +15,8 @@ class EvidenceSummary:
     changed_files: list[str]
     validation_runs: list[dict[str, Any]]
     plan: Plan
+    tools_available: list[str] = field(default_factory=list)  # the catalog on offer
+    tools_tried: list[str] = field(default_factory=list)  # what the run actually called
 
     @property
     def mutated(self) -> bool:
@@ -78,6 +81,9 @@ class CompletionEvaluator:
         if ev.plan.tasks and ev.plan.open and not _acknowledges_incomplete(final_text):
             open_titles = ", ".join(t.title for t in ev.plan.open[:4])
             reasons.append(f"plan tasks are still open: {open_titles}")
+        reasons.extend(
+            unattempted_refusals(final_text, tools=ev.tools_available, attempted=ev.tools_tried)
+        )
         if not reasons or self.nudges >= self.max_nudges:
             return Verdict(accept=True, reasons=reasons)
         self.nudges += 1

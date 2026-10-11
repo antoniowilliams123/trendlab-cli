@@ -92,6 +92,8 @@ class EventType(StrEnum):
     JUDGE_PAIRWISE = "judge.pairwise"  # pairwise verdict asked both ways (U2)
     SPAN_STARTED = "span.started"  # timed, nested unit of work (U6)
     CLAIM_UNSUPPORTED = "claim.unsupported"  # final answer claims what the evidence contradicts
+    CAPABILITY_UNCHECKED = "claim.capability_unchecked"  # "I can't" with no attempt behind it
+    UNATTEMPTED_REFUSAL = CAPABILITY_UNCHECKED  # same event, the name the plan uses
     INJECTION_SUSPECTED = "security.injection_suspected"  # tool output addressed the agent
     INVARIANT_VIOLATED = "invariant.violated"  # a runtime assertion failed (harness bug)
     ROUTE_DECIDED = "route.decided"  # request classified; run settings chosen (router)
