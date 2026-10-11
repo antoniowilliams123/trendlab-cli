@@ -120,6 +120,11 @@ def test_policy_tells_the_agent_not_to_invent_edge_cases():
     assert "Fix what was asked" in _POLICY and "unless the user asked" in _POLICY
 
 
+def test_policy_tells_the_agent_to_use_its_tools_before_saying_it_cant():
+    assert "Never claim you lack access you haven't checked" in _POLICY
+    assert "web_search" in _POLICY and "pip install" in _POLICY and "Never use sudo" in _POLICY
+
+
 def test_handoff_resolves_a_bare_file_name_only_when_unambiguous(tmp_path):
     from trendlab.orchestration.handoff import evidence
 
