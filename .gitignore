@@ -9,4 +9,5 @@ dist/
 .trendlab/
 *.db
 *.jsonl
+!tests/data/*.jsonl
 .env

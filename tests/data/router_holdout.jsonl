@@ -1,0 +1,40 @@
+{"prompt": "where do we compute the shipping fee?", "kind": "question"}
+{"prompt": "what does the retry decorator do", "kind": "question"}
+{"prompt": "explain how the cache invalidation works in this repo", "kind": "question"}
+{"prompt": "which tests cover the parser?", "kind": "question"}
+{"prompt": "how are sessions stored", "kind": "question"}
+{"prompt": "is there anything that still uses the old config loader?", "kind": "question"}
+{"prompt": "why is this function async", "kind": "question"}
+{"prompt": "can you tell me what the cron job runs at night", "kind": "question"}
+{"prompt": "summarize what changed in the last commit", "kind": "question"}
+{"prompt": "list the API endpoints this service exposes", "kind": "question"}
+{"prompt": "the totals are off by a cent on some orders", "kind": "small_fix"}
+{"prompt": "login page shows a blank screen after the last deploy", "kind": "small_fix"}
+{"prompt": "date picker breaks in Safari", "kind": "small_fix"}
+{"prompt": "fix the typo in the README install section", "kind": "small_fix"}
+{"prompt": "the export button doesn't work anymore", "kind": "small_fix"}
+{"prompt": "chart labels overlap when there are more than 10 bars", "kind": "small_fix"}
+{"prompt": "unit test test_rounding is failing on CI", "kind": "small_fix"}
+{"prompt": "null pointer when the user has no avatar", "kind": "small_fix"}
+{"prompt": "rename the variable tmp to buffer in utils.py", "kind": "small_fix"}
+{"prompt": "bump the timeout in the http client to 30 seconds", "kind": "small_fix"}
+{"prompt": "add a CSV export of the daily report with tests and docs", "kind": "feature"}
+{"prompt": "implement pagination for the orders endpoint", "kind": "feature"}
+{"prompt": "build a settings page where users can change their notification preferences", "kind": "feature"}
+{"prompt": "add dark mode support to the dashboard", "kind": "feature"}
+{"prompt": "create a CLI command that imports products from a JSON file", "kind": "feature"}
+{"prompt": "refactor the payment-agnostic order module into smaller services", "kind": "feature"}
+{"prompt": "support multiple currencies in the price display", "kind": "feature"}
+{"prompt": "write an integration test suite for the checkout flow", "kind": "feature"}
+{"prompt": "add a rate limiter to the public API", "kind": "feature"}
+{"prompt": "introduce a plugin system for custom report formats", "kind": "feature"}
+{"prompt": "fix the auth middleware redirect loop", "kind": "risky"}
+{"prompt": "rotate the api key stored in config", "kind": "risky"}
+{"prompt": "drop the legacy users table", "kind": "risky"}
+{"prompt": "write a migration that renames the email column", "kind": "risky"}
+{"prompt": "delete all the old log files in the repo", "kind": "risky"}
+{"prompt": "change how passwords are hashed", "kind": "risky"}
+{"prompt": "update the production database connection string", "kind": "risky"}
+{"prompt": "force-push the cleaned history to main", "kind": "risky"}
+{"prompt": "refund handling in the billing module is double charging", "kind": "risky"}
+{"prompt": "wipe the staging data and reseed it", "kind": "risky"}
