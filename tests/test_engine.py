@@ -235,7 +235,10 @@ async def test_engine_schedule_socket_and_digest(tmp_path: Path, monkeypatch, _t
     assert await eng.send_digest() is False  # nothing open → no message
     eng.inbox.record(project=str(tmp_path), title="broken thing", signature="x", severity="high")
     assert await eng.send_digest() is True and "broken thing" in sent[0]
-    assert await eng.send_digest() is False  # unchanged digest is not re-sent
+    assert await eng.send_digest() is False  # already-reported issues are not re-sent
+    eng.inbox.record(project=str(tmp_path), title="test failing: tests/test_y.py::t", signature="y")
+    assert await eng.send_digest() is True and len(sent) == 2
+    assert "A test is failing:" in sent[1] and "broken thing" not in sent[1]  # new ones only
     task = asyncio.create_task(eng.run())
     for _ in range(100):
         await asyncio.sleep(0.02)
@@ -244,7 +247,7 @@ async def test_engine_schedule_socket_and_digest(tmp_path: Path, monkeypatch, _t
     status = await client("status")
     assert (
         status
-        and status["inbox"] == {"open": 1}
+        and status["inbox"] == {"open": 2}
         and status["projects"] == [str(tmp_path.resolve())]
     )
     dg = await client("digest")

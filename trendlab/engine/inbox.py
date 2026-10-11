@@ -236,3 +236,29 @@ def digest(issues: list[dict[str, Any]], counts: dict[str, int], project: str = 
         if it.get("root_cause"):
             lines.append(f"   ↳ {str(it['root_cause'])[:140]}")
     return "\n".join(lines)
+
+
+_PLAIN_TITLES = (
+    ("test failing:", "A test is failing:"),
+    ("verifier rejected:", "The reviewer rejected a change for the task:"),
+    ("runs fail with", "Runs keep failing with"),
+)
+
+
+def plain_digest(issues: list[dict[str, Any]], limit: int = 5) -> str:
+    """A short, plain-English Telegram check-in listing only the issues given (new ones)."""
+    n = len(issues)
+    lines = [f"TrendLab check-in: {n} new thing{'s' if n != 1 else ''} to look at."]
+    for it in issues[:limit]:
+        title = str(it["title"])
+        for raw, plain in _PLAIN_TITLES:
+            if title.lower().startswith(raw):
+                title = plain + title[len(raw) :]
+                break
+        files = it.get("impacted_files") or []
+        where = f" ({Path(files[0]).name})" if files else ""
+        lines.append(f"• {title[:100]}{where}")
+    if n > limit:
+        lines.append(f"…and {n - limit} more.")
+    lines.append("Details: run `trendlab inbox` on the server.")
+    return "\n".join(lines)

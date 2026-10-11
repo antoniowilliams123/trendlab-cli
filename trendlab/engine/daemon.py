@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from trendlab.config.loader import load_config, trendlab_home
-from trendlab.engine.inbox import Inbox, digest
+from trendlab.engine.inbox import Inbox, digest, plain_digest
 from trendlab.engine.notify import send_telegram
 
 
@@ -190,16 +190,16 @@ class Engine:
         return result
 
     async def send_digest(self) -> bool:
-        """One message per cycle instead of per event (§7.2); skipped when nothing is open."""
-        counts = self.inbox.counts()
-        if not counts.get("open"):
+        """One plain-English message per cycle (§7.2), only for open issues not reported yet."""
+        open_items = self.inbox.list(status="open")
+        open_ids = {it["id"] for it in open_items}
+        reported = set(self.state.get("digest_reported_ids", [])) & open_ids
+        new = [it for it in open_items if it["id"] not in reported]
+        if not new:
             return False
-        text = digest(self.inbox.list(status="open", limit=3), counts)
-        if self.state.get("last_digest_text") == text:
-            return False
-        ok = await send_telegram(self.config, text)
+        ok = await send_telegram(self.config, plain_digest(new))
         if ok:
-            self.state["last_digest_text"] = text
+            self.state["digest_reported_ids"] = sorted(reported | {it["id"] for it in new})
         return ok
 
     # -- status + socket ---------------------------------------------------------------------
