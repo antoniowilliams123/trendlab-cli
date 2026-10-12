@@ -36,6 +36,10 @@ MAIN = {
 }
 
 
+OPS = {"run_status": "complete", "errored": 0, "ungraded": 0, "stop_reason": ""}
+AGG = {"split": "holdout", "capability": "safe-refusals", "total": 3, "not_passed": 1}
+
+
 def notice(run_id=RUN, findings=(FINDING,), aggregates=(), run_status="complete", **over):
     n = {
         "schema": 1,
@@ -216,6 +220,58 @@ BAD_NOTICES = {
     "unknown run status": lambda: notice(run_status="running"),
     "run id mismatch": lambda: notice(run_id="r-20261012T053000Z-zzzz"),
     "not an object": lambda: [notice()],
+    # one row per guard (review finding 1)
+    "wrong kind": lambda: notice(kind="x"),
+    "passed > total": lambda: notice(counts={"total": 1, "passed": 2, "by_split": {}}),
+    "by_split passed > total": lambda: notice(
+        counts={"total": 12, "passed": 11, "by_split": {"main": {"total": 1, "passed": 2}}}
+    ),
+    "ops disagrees with run": lambda: notice(ops={**OPS, "run_status": "aborted"}),
+    "finding not an object": lambda: notice(findings=("x",)),
+    "bad case_id": lambda: notice(findings=({**FINDING, "case_id": "-x"},)),
+    "passing status": lambda: notice(findings=({**FINDING, "status": "pass"},)),
+    "long failure code": lambda: notice(findings=({**FINDING, "failure_codes": ["x" * 65]},)),
+    "non-string failure code": lambda: notice(findings=({**FINDING, "failure_codes": [1]},)),
+    "too many failure codes": lambda: notice(findings=({**FINDING, "failure_codes": ["X"] * 21},)),
+    "gate int": lambda: notice(findings=({**FINDING, "gate": 3},)),
+    "gate too long": lambda: notice(findings=({**FINDING, "gate": "g" * 65},)),
+    "gate missing": lambda: notice(findings=({k: v for k, v in FINDING.items() if k != "gate"},)),
+    "answer too long": lambda: notice(findings=({**FINDING, "answer_excerpt": "x" * 301},)),
+    "judge reason too long": lambda: notice(findings=({**FINDING, "judge_reason": "x" * 201},)),
+    "stop_reason too long": lambda: notice(ops={**OPS, "stop_reason": "x" * 121}),
+    "main without expected_summary": lambda: notice(
+        findings=({k: v for k, v in MAIN.items() if k != "expected_summary"},)
+    ),
+    "expected_summary too long": lambda: notice(
+        findings=({**MAIN, "expected_summary": "x" * 201},)
+    ),
+    "regression without input": lambda: notice(
+        findings=({k: v for k, v in FINDING.items() if k != "input"},)
+    ),
+    "input too long": lambda: notice(findings=({**FINDING, "input": "x" * 1001},)),
+    "expected string too long": lambda: notice(findings=({**FINDING, "expected": ["x" * 401]},)),
+    "too many expected": lambda: notice(findings=({**FINDING, "expected": ["x"] * 51},)),
+    # unknown keys fail closed at every level (review finding 2)
+    "unknown top-level key": lambda: notice(extra="x"),
+    "unknown run key": lambda: notice(run={**notice()["run"], "ended_at": "x"}),
+    "unknown counts key": lambda: notice(counts={**notice()["counts"], "cost_usd": 1}),
+    "unknown by_split key": lambda: notice(
+        counts={"total": 12, "passed": 11, "by_split": {"main": {"total": 1, "passed": 1, "x": 1}}}
+    ),
+    "unknown ops key": lambda: notice(ops={**OPS, "extra": 0}),
+    "aggregate with case ids": lambda: notice(
+        aggregates=[{**AGG, "case_ids": ["holdout-secret-case"]}]
+    ),
+    "main finding with expected": lambda: notice(findings=({**MAIN, "expected": ["criterion"]},)),
+    "main finding with input": lambda: notice(findings=({**MAIN, "input": "x"},)),
+    "unknown finding key": lambda: notice(findings=({**FINDING, "criteria": ["x"]},)),
+    "unknown severity": lambda: notice(findings=({**FINDING, "severity": "critical"},)),
+    "count is a bool": lambda: notice(ops={**OPS, "errored": True}),
+    "negative count": lambda: notice(ops={**OPS, "ungraded": -1}),
+    "malformed run id": lambda: notice(run_id="r-bad"),
+    "long by_split name": lambda: notice(
+        counts={"total": 12, "passed": 11, "by_split": {"s" * 65: {"total": 1, "passed": 1}}}
+    ),
 }
 
 
@@ -232,14 +288,21 @@ def test_a_malformed_notice_writes_nothing_but_one_rejected_item(tmp_path, case)
     assert inbox.pending_reports() == []
 
 
+@pytest.mark.parametrize("case", sorted(set(BAD_NOTICES) - {"run id mismatch"}))
+def test_each_bad_notice_fails_its_own_guard_not_a_fallback(case):
+    with pytest.raises(NoticeError):  # not a TypeError/KeyError caught later by ingest_notices
+        validate_notice(BAD_NOTICES[case](), "trendlab")
+
+
 def test_validate_notice_never_touches_the_inbox_and_names_the_problem():
     with pytest.raises(NoticeError, match="findings\\[1\\].severity"):
         validate_notice(notice(findings=(MAIN, {**FINDING, "severity": 3})), "trendlab")
 
 
-def test_an_unexpected_validator_error_is_a_rejection_not_an_abort(tmp_path, monkeypatch):
+@pytest.mark.parametrize("error", [TypeError, KeyError, AttributeError])
+def test_an_unexpected_validator_error_is_a_rejection_not_an_abort(tmp_path, monkeypatch, error):
     def odd(_notice, _client):
-        raise TypeError("unhashable")
+        raise error("odd")
 
     drop(tmp_path / "outbox", notice())
     drop(tmp_path / "outbox", notice(run_id="r-20261013T053000Z-bbbb"))
@@ -247,6 +310,102 @@ def test_an_unexpected_validator_error_is_a_rejection_not_an_abort(tmp_path, mon
     inbox, new = ingest(tmp_path)
     assert new == [] and inbox.notice_row(RUN)["status"] == "rejected"
     assert inbox.notice_row("r-20261013T053000Z-bbbb")["status"] == "rejected"
+
+
+def test_errors_on_a_complete_run_give_one_high_ops_item(tmp_path):
+    drop(tmp_path / "outbox", notice(findings=(), ops={**OPS, "errored": 1}))
+    inbox, new = ingest(tmp_path)
+    [item] = inbox.list(status="open")
+    assert new == [RUN] and item["severity"] == "high" and "errored 1" in item["title"]
+
+
+def test_the_stored_payload_is_rebuilt_from_validated_fields(monkeypatch, tmp_path):
+    monkeypatch.setattr(observe, "validate_notice", lambda _n, _c: [])  # let an extra key through
+    drop(tmp_path / "outbox", notice(extra="SMUGGLED", aggregates=[{**AGG, "case_ids": ["s"]}]))
+    inbox, _ = ingest(tmp_path)
+    payload = inbox.notice_row(RUN)["report_payload"]
+    assert "SMUGGLED" not in payload and "case_ids" not in payload
+    assert json.loads(payload) == notice(aggregates=[AGG])
+
+
+# Produced by trendlab-evals `worker_notice` (il-a @ 86f4e2d, its test fixture `make_run`).
+EMITTED = {
+    "schema": 1,
+    "kind": "finding_notice",
+    "client": "trendlab",
+    "run_id": "r-20261012T053000Z-a1b2",
+    "generated_at": "2026-10-12T04:21:47+00:00",
+    "run": {
+        "status": "complete",
+        "kind": "suite",
+        "started_at": "2026-10-12T05:30:00+00:00",
+        "methodology_version": "1.2.0",
+    },
+    "counts": {
+        "total": 5,
+        "passed": 2,
+        "by_split": {
+            "holdout": {"total": 2, "passed": 1},
+            "main": {"total": 2, "passed": 1},
+            "regression": {"total": 1, "passed": 0},
+        },
+    },
+    "findings": [
+        {
+            "case_id": "main-bad",
+            "split": "main",
+            "status": "fail",
+            "capability": "tool-resourcefulness",
+            "category": "accuracy",
+            "severity": "high",
+            "gate": None,
+            "failure_codes": ["ACC.FACTUAL"],
+            "answer_excerpt": "I cannot browse. [REDACTED]",
+            "judge_reason": "did not try the web tool",
+            "expected_summary": "RATIONALE-SUMMARY " * 11 + "R\u2026",
+        },
+        {
+            "case_id": "reg-bad",
+            "split": "regression",
+            "status": "fail",
+            "capability": "tool-resourcefulness",
+            "category": "accuracy",
+            "severity": "med",
+            "gate": None,
+            "failure_codes": ["ACC.FACTUAL"],
+            "answer_excerpt": "no web",
+            "judge_reason": "bad",
+            "input": "REGRESSION-INPUT",
+            "expected": ["REGRESSION-CRITERION"],
+            "checks": {"contains": [], "not_contains": [], "regex": []},
+        },
+    ],
+    "aggregates": [
+        {"split": "holdout", "capability": "safe-refusals", "total": 2, "not_passed": 1}
+    ],
+    "ops": {"run_status": "complete", "errored": 0, "ungraded": 0, "stop_reason": ""},
+}
+
+
+def test_a_notice_from_the_real_emitter_round_trips(tmp_path):
+    assert len(EMITTED["findings"][0]["expected_summary"]) == 200  # the emitter's cap
+    drop(tmp_path / "outbox", EMITTED)
+    inbox, new = ingest(tmp_path)
+    assert new == [EMITTED["run_id"]] and len(inbox.list(status="open")) == 3
+    assert json.loads(inbox.notice_row(EMITTED["run_id"])["report_payload"]) == EMITTED
+
+
+def test_emitter_nulls_in_run_metadata_are_accepted():
+    run = {"status": "complete", "kind": None, "started_at": None, "methodology_version": None}
+    assert validate_notice({**EMITTED, "run": run}, "trendlab")
+
+
+def test_an_oversized_notice_is_rejected_once_without_a_full_read(tmp_path):
+    drop(tmp_path / "outbox", " " * (observe.MAX_NOTICE_BYTES + 10), name=RUN)
+    inbox, _ = ingest(tmp_path)
+    ingest_notices(inbox, tmp_path / "outbox", "trendlab")
+    [item] = inbox.list(status="open")
+    assert item["occurrences"] == 1 and "too large" in inbox.notice_row(RUN)["detail"]
 
 
 def test_unparseable_json_is_rejected_once_not_every_cycle(tmp_path):
@@ -380,3 +539,12 @@ def test_deeply_nested_json_is_rejected_once(tmp_path):
     ingest_notices(inbox, tmp_path / "outbox", "trendlab")
     [item] = inbox.list(status="open")
     assert item["occurrences"] == 1 and inbox.notice_row(RUN)["status"] == "rejected"
+
+
+@pytest.mark.parametrize(
+    ("bad", "message"),
+    [([notice()], "notice is not an object"), (notice(findings=("x",)), r"findings\[0\] is not")],
+)
+def test_non_objects_are_named_as_such(bad, message):
+    with pytest.raises(NoticeError, match=message):
+        validate_notice(bad, "trendlab")

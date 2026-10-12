@@ -206,9 +206,16 @@ class Inbox:
         fingerprint: str,
         entries: list[dict[str, Any]],
         payload: str,
-    ) -> None:
-        """Every item of a validated notice plus its ``ingested`` ledger row: one transaction."""
+    ) -> bool:
+        """Every item of a validated notice plus its ``ingested`` ledger row: one transaction.
+        False (and no write) when the notice is already ingested, so a racing caller cannot
+        count its items twice."""
         with self._lock:
+            done = self._conn.execute(
+                "SELECT 1 FROM notice WHERE run_id=? AND status='ingested'", (run_id,)
+            ).fetchone()
+            if done:
+                return False
             try:
                 for entry in entries:
                     self._record_locked(**entry)
@@ -222,6 +229,7 @@ class Inbox:
             except BaseException:
                 self._conn.rollback()
                 raise
+        return True
 
     def reject_notice(self, *, run_id: str, client: str, fingerprint: str, detail: str) -> None:
         """One "rejected" item and a ``rejected`` ledger row (fingerprinted): one transaction."""

@@ -37,6 +37,20 @@ def test_record_merges_reopens_and_keeps_silenced(tmp_path):
     inbox.close()
 
 
+def test_record_caps_evidence_and_unions_impacted_files(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    for i in range(25):
+        last = inbox.record(
+            project="/p",
+            title="t",
+            signature="sig",
+            evidence=[f"e{i}"],
+            impacted_files=[f"f{i % 3}"],
+        )
+    assert last["evidence_refs"] == [f"e{i}" for i in range(5, 25)]
+    assert last["impacted_files"] == ["f0", "f1", "f2"]
+
+
 def test_record_with_card_stores_it_and_a_later_merge_keeps_it(tmp_path):
     inbox = Inbox(tmp_path / "inbox.db")
     a = inbox.record(project="/p", title="t", signature="sig", card={"problem": "p"})
@@ -96,6 +110,40 @@ def test_ingest_notice_failure_on_second_entry_leaves_nothing(tmp_path, monkeypa
         run_id=RUN, client="trendlab", fingerprint="f", entries=[entry(1)], payload="{}"
     )
     assert inbox.counts() == {"open": 1}  # the connection is usable after the rollback
+
+
+def test_ingest_notice_never_ingests_twice(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    kw = {"run_id": RUN, "client": "trendlab", "fingerprint": "f", "payload": "{}"}
+    assert inbox.ingest_notice(entries=[entry(1)], **kw) is True
+    inbox.mark_report(RUN, sent=True, max_attempts=3)
+    assert inbox.ingest_notice(entries=[entry(1)], **kw) is False
+    assert inbox.list()[0]["occurrences"] == 1 and inbox.notice_row(RUN)["report_status"] == "sent"
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        lambda ib: ib.reject_notice(run_id=RUN, client="trendlab", fingerprint="g", detail="d"),
+        lambda ib: ib.note_unreadable(run_id=RUN, client="trendlab", threshold=1),
+        lambda ib: ib.mark_report(RUN, sent=False, max_attempts=1),
+    ],
+    ids=["reject_notice", "note_unreadable", "mark_report"],
+)
+def test_ledger_writes_roll_back_on_error(tmp_path, monkeypatch, action):
+    inbox = Inbox(tmp_path / "inbox.db")
+    inbox.ingest_notice(run_id=RUN, client="trendlab", fingerprint="f", entries=[], payload="{}")
+    before = inbox.notice_row(RUN)
+
+    def boom(**_kw):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(inbox, "_record_locked", boom)
+    with pytest.raises(RuntimeError):
+        action(inbox)
+    assert inbox.notice_row(RUN) == before and inbox.list(status=None) == []
+    monkeypatch.undo()
+    assert inbox.record(project="/p", title="t", signature="s")["occurrences"] == 1
 
 
 def test_reject_notice_records_one_item_and_a_rejected_row(tmp_path):
