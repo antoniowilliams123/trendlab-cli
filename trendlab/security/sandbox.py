@@ -26,6 +26,8 @@ class Sandbox:
     # IL-B (evals D-115): a caller that must never run unsandboxed pins the mode here, and the
     # TRENDLAB_SANDBOX environment variable is then ignored.
     force_mode: str | None = None
+    # Extra read-only binds made after the private /tmp, so a path under /tmp stays visible.
+    ro_paths: list[Path] = field(default_factory=list)
 
     @property
     def available(self) -> bool:
@@ -80,6 +82,8 @@ class Sandbox:
         ]
         # Private /tmp first; binds after it so a project under /tmp is still mounted rw.
         argv += ["--tmpfs", "/tmp"]
+        for p in self.ro_paths:
+            argv += ["--ro-bind", str(Path(p).resolve()), str(Path(p).resolve())]
         for p in self.writable_paths():
             argv += ["--bind", str(p), str(p)]
         argv += ["--unshare-user-try", "--unshare-pid", "--unshare-ipc", "--unshare-uts"]

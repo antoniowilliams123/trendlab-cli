@@ -162,13 +162,15 @@ def price_check(config: AppConfig) -> list[str]:
 
 
 # -- the sandbox gate -----------------------------------------------------------------------------
-def forced_sandbox(project_root: Path) -> Sandbox:
+def forced_sandbox(project_root: Path, ro_paths: list[Path] | None = None) -> Sandbox:
     """The only sandbox IL-B runs candidate code in: bubblewrap, no network, no persistent
-    writable path, and immune to TRENDLAB_SANDBOX in the engine's environment."""
+    writable path, and immune to TRENDLAB_SANDBOX in the engine's environment. ``ro_paths``
+    (the production checkout) stay readable even under the private /tmp."""
     return Sandbox(
         SandboxConfig(mode="on", writable_paths=[], allow_network=False),
         project_root,
         force_mode="on",
+        ro_paths=list(ro_paths or []),
     )
 
 
