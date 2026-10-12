@@ -29,7 +29,7 @@ from trendlab.config.schema import AppConfig, PermissionMode, SandboxConfig
 from trendlab.engine.inbox import Inbox, split_signature
 from trendlab.engine.meta import HARNESS_PROJECT
 from trendlab.engine.observe import CASE_ID_RE, RUN_ID_RE
-from trendlab.security.sandbox import Sandbox
+from trendlab.security.sandbox import GIT_HARDEN_ARGS, GIT_HARDEN_ENV, Sandbox, bwrap_position
 
 NY = ZoneInfo("America/New_York")
 SWITCH = "improve.json"
@@ -39,6 +39,8 @@ MIN_BUDGET_USD = 0.05
 BLACKOUT = (1, 5)  # 01:00-05:00 America/New_York: no loop activity
 PROBE_TIMEOUT_S = 20
 PROBE_FILE = ".ilb-sandbox-probe"
+SCRATCH_HOME = "/tmp/home"  # on the sandbox's private /tmp
+DENIED_TOOLS = ("delegate", "web_fetch", "web_search")
 SEVERITY_ORDER = {"high": 0, "med": 1, "low": 2}
 _REF = re.compile(r"^evals:([^:]+):([^:]+)$")
 _CID = re.compile(r"^cand-[A-Za-z0-9]+-\d+$")
@@ -122,8 +124,10 @@ def draft_config(config: AppConfig, budget_usd: float, minutes: int) -> AppConfi
     cfg.verification.workspace = "inplace"
     cfg.verification.second_opinion = None
     cfg.attempts.best_of = 1
-    if "delegate" not in cfg.tools.deny:
-        cfg.tools.deny.append("delegate")
+    # no sub-agents; no tool that reaches the network from the harness process (D-115)
+    for name in DENIED_TOOLS:
+        if name not in cfg.tools.deny:
+            cfg.tools.deny.append(name)
     cfg.planner.max_calls = 1
     cfg.routing.pop("router", None)
     cfg.limits.max_cost_usd = budget_usd
@@ -162,15 +166,56 @@ def price_check(config: AppConfig) -> list[str]:
 
 
 # -- the sandbox gate -----------------------------------------------------------------------------
-def forced_sandbox(project_root: Path, ro_paths: list[Path] | None = None) -> Sandbox:
-    """The only sandbox IL-B runs candidate code in: bubblewrap, no network, no persistent
-    writable path, and immune to TRENDLAB_SANDBOX in the engine's environment. ``ro_paths``
-    (the production checkout) stay readable even under the private /tmp."""
+def secret_masks() -> list[Path]:
+    """What no IL-B sandbox may see: the worker's TrendLab home (secrets, sessions, the engine
+    runtime folder and its ``engine.sock``), the locked runtime config, ``~/.ssh`` and every
+    user's runtime folder (``/run/user``: other sockets). Existing paths only."""
+    from trendlab.config.loader import trendlab_home
+    from trendlab.config.runtime import runtime_dir
+
+    home = Path.home()
+    paths = [trendlab_home(), home / ".trendlab", home / ".ssh", Path("/run/user")]
+    rt = runtime_dir()
+    if rt is not None:
+        paths.append(rt)
+    out: list[Path] = []
+    for p in paths:
+        with contextlib.suppress(OSError):
+            if p.exists() and p.resolve() not in out:
+                out.append(p.resolve())
+    return out
+
+
+def confined_env(prod_dir: Path | None = None) -> dict[str, str]:
+    """The whole environment of a confined sandbox: PATH (the production venv first), a scratch
+    HOME on the private /tmp, LANG and git hardening. No API key, no TRENDLAB_* variable."""
+    path = "/usr/local/bin:/usr/bin:/bin"
+    if prod_dir is not None:
+        path = f"{Path(prod_dir) / '.venv' / 'bin'}:{path}"
+    env = {"PATH": path, "HOME": SCRATCH_HOME, "LANG": "C.UTF-8", **GIT_HARDEN_ENV}
+    pairs = [(GIT_HARDEN_ARGS[i + 1].split("=", 1)) for i in range(0, len(GIT_HARDEN_ARGS), 2)]
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
+    for i, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = key, value
+    return env
+
+
+def forced_sandbox(
+    project_root: Path, ro_paths: list[Path] | None = None, prod_dir: Path | None = None
+) -> Sandbox:
+    """The only sandbox profile IL-B runs anything in (candidate tests and every drafting-agent
+    tool): bubblewrap, no network, no persistent writable path beyond ``project_root``, a
+    scrubbed environment, the secrets and sockets masked, and immune to TRENDLAB_SANDBOX in the
+    engine's environment. ``ro_paths`` (the production checkout) stay readable even under the
+    private /tmp."""
     return Sandbox(
         SandboxConfig(mode="on", writable_paths=[], allow_network=False),
         project_root,
         force_mode="on",
         ro_paths=list(ro_paths or []),
+        confined=True,
+        env=confined_env(prod_dir),
+        masks=secret_masks(),
     )
 
 
@@ -202,7 +247,8 @@ def sandbox_probe(home: Path, *, sandbox: Sandbox | None = None) -> tuple[bool, 
         except RuntimeError as exc:
             return False, str(exc)[:200]
         bwrap = sb.bwrap and shutil.which(sb.bwrap)
-        if not bwrap or not argv or shutil.which(argv[0]) != bwrap:
+        at = bwrap_position(argv, sb.bwrap)
+        if not bwrap or at is None or shutil.which(argv[at]) != bwrap:
             return False, "the probe would not run under bubblewrap"
         if "--unshare-net" not in argv:
             return False, "the probe sandbox keeps the network"

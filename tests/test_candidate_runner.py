@@ -467,6 +467,8 @@ def test_real_run_sandbox_blocks_writes_network_and_secrets(env, monkeypatch):
         (path / "tests" / "test_box.py").write_text(
             "import os, socket, pytest\n\n\ndef test_box():\n"
             "    assert 'TLE_FAKE_SECRET' not in os.environ\n"
+            "    with open('/proc/1/environ', 'rb') as fh:\n"
+            "        assert b'TLE_FAKE_SECRET' not in fh.read()\n"
             f"    for p in ({str(outside)!r}, {str(target)!r}):\n"
             "        with pytest.raises(OSError):\n"
             "            open(p, 'w').write('x')\n"

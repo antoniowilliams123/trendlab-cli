@@ -345,7 +345,8 @@ def test_forced_sandbox_ignores_the_environment(tmp_path, monkeypatch):
     sb = pol.forced_sandbox(tmp_path)
     assert sb.mode == "on"
     if sb.bwrap:
-        assert sb.wrap("true", cwd=tmp_path)[0] == sb.bwrap
+        argv = sb.wrap("true", cwd=tmp_path)
+        assert argv[:2] == ["/usr/bin/env", "-i"] and sb.bwrap_index(argv) is not None
 
 
 @pytest.mark.skipif(shutil.which("bwrap") is None, reason="bwrap is not installed here")

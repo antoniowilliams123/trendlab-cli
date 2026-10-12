@@ -44,6 +44,7 @@ from trendlab.engine.improve_policy import (
     read_switch,
 )
 from trendlab.engine.inbox import Inbox
+from trendlab.security.sandbox import GIT_HARDEN_ARGS, GIT_HARDEN_ENV
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 TEST_TIMEOUT_S = 20 * 60
@@ -144,10 +145,7 @@ async def git(root: Path, *args: str, check: bool = True, timeout: float = 120) 
 # Every git call on a candidate worktree pins the repository (the agent and the candidate's tests
 # can rewrite the worktree, including its .git file) and turns off anything that runs a command.
 SAFE_GIT = (
-    "-c",
-    "core.fsmonitor=false",
-    "-c",
-    "core.hooksPath=/dev/null",
+    *GIT_HARDEN_ARGS,
     "-c",
     "core.untrackedCache=false",
     "-c",
@@ -171,7 +169,9 @@ async def wt_git(
     gitdir: Path, path: Path, *args: str, check: bool = True, timeout: float = 120
 ) -> tuple[int, str]:
     argv = ["git", f"--git-dir={gitdir}", f"--work-tree={path}", *SAFE_GIT, *args]
-    code, out = await run_cmd(argv, cwd=gitdir, env=_git_env(), timeout=timeout)
+    code, out = await run_cmd(
+        argv, cwd=gitdir, env={**_git_env(), **GIT_HARDEN_ENV}, timeout=timeout
+    )
     if check and code != 0:
         raise DraftError(f"git {args[0]} failed ({code})")
     return code, out
@@ -305,7 +305,7 @@ async def run_tests_sandboxed(prod_dir: Path, worktree: Path, *, timeout: float)
         argv = sb.wrap(suite_command(prod_dir, worktree, home), cwd=worktree, allow_network=False)
     except RuntimeError as exc:
         raise DraftError(f"sandbox unavailable: {exc}") from exc
-    if not sb.bwrap or argv[0] != sb.bwrap or "--unshare-net" not in argv:
+    if sb.bwrap_index(argv) is None or "--unshare-net" not in argv:
         raise DraftError("the test run would not be sandboxed")
     try:
         code, out = await run_cmd(argv, cwd=worktree, timeout=timeout)
@@ -403,6 +403,9 @@ async def default_run_agent(path: Path, cfg, prompt: str, hooks: AgentHooks) -> 
     from trendlab.benchmarks.unattended import Unattended
 
     tl = TrendLabApp(path, cfg, console=Console(quiet=True))
+    prod = Path(cfg.improvement.prod_dir)
+    # every tool that executes anything runs in the candidate-test profile (D-115)
+    tl.sandbox_factory = lambda root: forced_sandbox(root, ro_paths=[prod], prod_dir=prod)
     unattended = Unattended(tl)
     try:
         await tl.start(interactive=False)
