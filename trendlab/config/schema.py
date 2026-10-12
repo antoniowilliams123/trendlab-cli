@@ -276,6 +276,8 @@ class ImprovementConfig(BaseModel):
     scheduled: bool = False  # unattended drafting; stays off until Tony settles Q13/Q14
     prod_dir: str = "/srv/trendlab/cli-prod"  # the referee-owned production checkout (read-only)
     candidates_dir: str = "/srv/trendlab/exchange/inbox/candidates"  # bundles + manifests
+    # IL-B spend summary for the referee's shared $10/month check, rewritten after every attempt
+    spend_path: str = "/srv/trendlab/exchange/inbox/il-b-spend.json"
     max_attempts_per_case: int = Field(default=3, ge=1)
     max_case_usd: float = Field(default=0.50, ge=0)
     max_day_usd: float = Field(default=0.50, ge=0)

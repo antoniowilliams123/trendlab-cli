@@ -377,7 +377,12 @@ async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -
     restart: remove their exact worktree and branch and their own temp files, true up the spend
     from ``sessions.db`` and the live charge (the reservation stays when neither is known),
     mark them ``error``."""
-    from trendlab.engine.candidate_runner import dev_clone_root, remove_worktree, session_spend
+    from trendlab.engine.candidate_runner import (
+        dev_clone_root,
+        remove_worktree,
+        session_spend,
+        write_spend_summary,
+    )
 
     out = []
     for row in inbox.drafting_rows():
@@ -404,6 +409,8 @@ async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -
             cid, status="error", spend_usd=max(known) if known else None, detail=RECOVERED
         )
         out.append(cid)
+    if out:
+        write_spend_summary(inbox, config)
     return out
 
 

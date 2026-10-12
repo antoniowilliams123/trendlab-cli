@@ -700,3 +700,55 @@ def test_crash_recovery_keeps_the_in_flight_charge(env):
     env.inbox.set_candidate_charge(row["id"], 0.07)  # a call was in flight when the engine died
     asyncio.run(recover_drafting(env.inbox, env.cfg))
     assert env.inbox.candidate(row["id"])["spend_usd"] == pytest.approx(0.07)
+
+
+# -- second review: the spend summary the referee reads -----------------------------------------
+def spend_summary(env):
+    return json.loads(Path(env.cfg.improvement.spend_path).read_text())
+
+
+def test_a_handed_off_attempt_writes_the_spend_summary(env, tmp_path):
+    env.cfg.improvement.spend_path = str(tmp_path / "exchange" / "inbox" / "il-b-spend.json")
+    (tmp_path / "exchange" / "inbox").mkdir(parents=True, exist_ok=True)
+    res = go(env, run_agent=agent(edit=fix_core, costs_usd=(0.02,)), clock=lambda: NOW)
+    doc = spend_summary(env)
+    path = Path(env.cfg.improvement.spend_path)
+    assert oct(path.stat().st_mode & 0o777) == "0o640"
+    assert doc["schema"] == 1 and doc["kind"] == "il_b_spend"
+    assert (doc["month"], doc["day"]) == ("2026-10", "2026-10-12")
+    assert doc["month_usd"] == pytest.approx(0.02) and doc["day_usd"] == pytest.approx(0.02)
+    (row,) = doc["attempts"]
+    assert row["candidate_id"] == res["candidate"] and row["status"] == "handed_off"
+    assert row["spend_usd"] == pytest.approx(0.02)
+
+
+def test_failed_attempts_are_in_the_spend_summary_too(env, tmp_path):
+    env.cfg.improvement.spend_path = str(tmp_path / "il-b-spend.json")
+    d = env.decision(budget_usd=0.1)
+    go(env, d, run_agent=agent(edit=fix_core, costs_usd=[0.03] * 50), clock=lambda: NOW)
+    go(env, run_agent=agent(), clock=lambda: NOW)  # no_change
+    doc = spend_summary(env)
+    assert [a["status"] for a in doc["attempts"]] == ["budget_stop", "no_change"]
+    assert doc["month_usd"] == pytest.approx(sum(a["spend_usd"] for a in doc["attempts"]))
+    assert doc["month_usd"] >= 0.1  # the failed draft's spend is counted, not dropped
+
+
+def test_crash_recovery_rewrites_the_spend_summary(env, tmp_path):
+    from trendlab.engine.jobs import recover_drafting
+
+    env.cfg.improvement.spend_path = str(tmp_path / "il-b-spend.json")
+    row = env.inbox.start_candidate(
+        item_id="c", case_prefix="evals|main|x|z", day="2026-10-12", base_sha=env.base,
+        reserved_usd=0.5, worktree="/nowhere", branch="improve/c",
+    )  # fmt: skip
+    env.inbox.set_candidate_charge(row["id"], 0.07)
+    asyncio.run(recover_drafting(env.inbox, env.cfg))
+    doc = spend_summary(env)
+    assert doc["attempts"][0]["status"] == "error"
+    assert doc["attempts"][0]["spend_usd"] == pytest.approx(0.07)
+
+
+def test_an_unwritable_spend_summary_never_breaks_a_draft(env, tmp_path):
+    env.cfg.improvement.spend_path = str(tmp_path / "no" / "such" / "dir" / "il-b-spend.json")
+    res = go(env, run_agent=agent(edit=fix_core), clock=lambda: NOW)
+    assert res["status"] == "handed_off"

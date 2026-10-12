@@ -505,6 +505,58 @@ def session_spend(session_id: str | None) -> float | None:
         return None
 
 
+SPEND_ROW_KEYS = (
+    "id",
+    "case_prefix",
+    "day",
+    "status",
+    "spend_usd",
+    "reserved_usd",
+    "started_at",
+    "finished_at",
+)
+MAX_SPEND_ROWS = 500
+
+
+def write_spend_summary(inbox: Inbox, config, now: datetime | None = None) -> bool:
+    """The worker's IL-B spend for the referee (evals D-115): month-to-date and day totals
+    (America/New_York; a draft still running counts its reservation) plus this month's rows,
+    failed attempts included, at ``[improvement] spend_path`` (atomic, mode 640). The referee
+    reads it for the loop's shared $10 a month. Never raises: False when it was not written."""
+    path = Path(config.improvement.spend_path)
+    tmp = None
+    try:
+        day = ny_day(now or ny_now())
+        month = day[:7]
+        rows = [r for r in inbox.candidates() if str(r.get("day", "")).startswith(month)]
+        attempts = []
+        for r in rows[-MAX_SPEND_ROWS:]:
+            a = {k: r.get(k) for k in SPEND_ROW_KEYS}
+            a["candidate_id"] = a.pop("id")
+            attempts.append(a)
+        data = {
+            "schema": 1,
+            "kind": "il_b_spend",
+            "updated_at": utc_now(),
+            "month": month,
+            "month_usd": round(inbox.spent_month(month), 6),
+            "day": day,
+            "day_usd": round(inbox.spent_today(day), 6),
+            "attempts": attempts,
+        }
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".il-b-spend-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), 0o640)
+            json.dump(data, fh, sort_keys=True)
+        os.replace(tmp, path)
+        return True
+    except Exception:  # noqa: BLE001 — a summary never breaks a draft
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)  # our own temp file only; the previous summary stays
+        return False
+
+
 class Draft:
     def __init__(
         self,
@@ -753,6 +805,7 @@ class Draft:
         self.cid = row["id"]
         if self.cid != cid:
             raise DraftError("candidate id changed under the runner")
+        write_spend_summary(self.inbox, self.config, self.clock())  # the reservation, in flight
         path.parent.mkdir(parents=True, exist_ok=True)
         await git(self.root, "worktree", "add", "-q", "-b", f"improve/{cid}", str(path), base)
         self.path = path
@@ -892,6 +945,8 @@ class Draft:
                 self.inbox.finish_candidate(
                     self.cid, status=self.status, spend_usd=self.fields["spend_usd"], **row_fields
                 )
+        if self.cid:
+            write_spend_summary(self.inbox, self.config, self.clock())
         for tmp in self.tmp_files:
             with contextlib.suppress(OSError):
                 tmp.unlink()  # our own exact temp files only
