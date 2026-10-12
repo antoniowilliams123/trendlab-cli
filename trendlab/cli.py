@@ -1266,6 +1266,11 @@ def meta_cmd(
     draft: bool = typer.Option(
         False, "--draft", help="Draft a fix for the top harness card in a worktree of trendlab-cli."
     ),
+    allow_unisolated: bool = typer.Option(
+        False,
+        "--allow-unisolated",
+        help="Draft even without a verified IL-0 boundary (Tony's explicit override).",
+    ),
 ) -> None:
     """Meta-loop: screen the harness's own sessions and file cards against the harness."""
     from trendlab.config.loader import load_config
@@ -1278,7 +1283,7 @@ def meta_cmd(
     try:
         res = asyncio.run(meta_scan(inbox, config, days=days))
         if draft:
-            res["draft"] = asyncio.run(meta_draft(inbox, config))
+            res["draft"] = asyncio.run(meta_draft(inbox, config, allow_unisolated=allow_unisolated))
     finally:
         inbox.close()
     typer.echo(json.dumps(res, indent=2, default=str))

@@ -252,6 +252,17 @@ class EngineConfig(BaseModel):
     canary_drop_alert: int = Field(default=2, ge=1)  # tasks lost vs the last canary → inbox card
     review_commits: bool = False  # review new commits on watched projects (U13, async review)
     review_minutes: int = Field(default=120, ge=15)
+    # IL-0: the dev clone the meta-loop drafts in. Empty = derive from the code location (the
+    # running checkout). On the VPS the code runs from a read-only production checkout, so the
+    # worker's dev clone is named here.
+    harness_root: str = ""
+
+
+class ImprovementConfig(BaseModel):
+    """Autonomous Improvement Loop, worker side (evals spec §30). The referee owns the
+    control dir."""
+
+    control_dir: str = "/srv/trendlab/exchange/control"
 
 
 class EconomicsConfig(BaseModel):
@@ -482,6 +493,7 @@ class AppConfig(BaseModel):
     planner: PlannerConfig = PlannerConfig()
     prompts: PromptsConfig = PromptsConfig()
     engine: EngineConfig = EngineConfig()
+    improvement: ImprovementConfig = Field(default_factory=ImprovementConfig)
     governance: GovernanceConfig = GovernanceConfig()
     sessions: SessionsConfig = SessionsConfig()
     economics: EconomicsConfig = EconomicsConfig()

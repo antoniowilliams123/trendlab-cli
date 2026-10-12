@@ -40,16 +40,31 @@ async def sleep_projects(projects: list[Path], config) -> list[dict[str, Any]]:
         store.close()
 
 
-async def meta_draft(inbox: Inbox, config, *, issue_id: str | None = None) -> dict[str, Any]:
+async def meta_draft(
+    inbox: Inbox, config, *, issue_id: str | None = None, allow_unisolated: bool = False
+) -> dict[str, Any]:
     """Draft a fix for the top harness card in a worktree of trendlab-cli (§7.4). The run uses
-    the worktree workspace, so only a verified diff is applied; otherwise the patch is parked."""
+    the worktree workspace, so only a verified diff is applied; otherwise the patch is parked.
+    It runs unattended, so it requires a verified IL-0 boundary unless Tony overrides it."""
     from rich.console import Console
 
     from trendlab.app import TrendLabApp
     from trendlab.config.schema import PermissionMode
+    from trendlab.engine.isolation import check_isolation
     from trendlab.engine.meta import HARNESS_PROJECT, harness_root
 
-    root = harness_root()
+    if not allow_unisolated:
+        status = check_isolation(config.improvement.control_dir)
+        if not status.ok:
+            return {
+                "ok": False,
+                "reason": "isolation not verified (IL-0): " + "; ".join(status.reasons),
+            }
+    root = (
+        Path(config.engine.harness_root).expanduser()
+        if config.engine.harness_root
+        else harness_root()
+    )
     if root is None:
         return {"ok": False, "reason": "not running from a trendlab-cli checkout"}
     item = (
