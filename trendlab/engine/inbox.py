@@ -332,14 +332,17 @@ class Inbox:
                 raise
         return status
 
-    def notice_summary(self, client: str) -> dict[str, Any]:
-        """The ledger as the referee sees it (the ack file): the last 20 run ids per list."""
+    def notice_summary(
+        self, client: str, *, threshold: int = UNREADABLE_THRESHOLD
+    ) -> dict[str, Any]:
+        """The ledger as the referee sees it (the ack file): the last 20 run ids per list.
+        ``threshold`` must match the one given to ``note_unreadable``."""
 
-        def last(where: str) -> list[str]:
+        def last(where: str, *args: Any) -> list[str]:
             rows = self._conn.execute(
                 f"SELECT run_id FROM notice WHERE client=? AND {where} "
                 "ORDER BY run_id DESC LIMIT 20",
-                (client,),
+                (client, *args),
             ).fetchall()
             return [r["run_id"] for r in reversed(rows)]
 
@@ -352,7 +355,7 @@ class Inbox:
                 "last_observed_run": top["run_id"],
                 "pending_reports": last("report_status='pending'"),
                 "abandoned_reports": last("report_status='abandoned'"),
-                "unreadable_notices": last(f"read_failures >= {UNREADABLE_THRESHOLD}"),
+                "unreadable_notices": last("read_failures >= ?", threshold),
                 "rejected_notices": last("status='rejected'"),
             }
 
@@ -406,13 +409,14 @@ class Inbox:
         *,
         status: str | None = "open",
         limit: int = 50,
-        exclude_source: str | None = None,
+        exclude_source: str | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         q = "SELECT * FROM issue WHERE 1=1"
         params: list[Any] = []
-        if exclude_source:  # filtered before the limit, so excluded items never crowd it out
-            q += " AND source!=?"
-            params.append(exclude_source)
+        excluded = (exclude_source,) if isinstance(exclude_source, str) else exclude_source or ()
+        if excluded:  # filtered before the limit, so excluded items never crowd it out
+            q += f" AND source NOT IN ({','.join('?' * len(excluded))})"
+            params.extend(excluded)
         if project:
             q += " AND project=?"
             params.append(project)

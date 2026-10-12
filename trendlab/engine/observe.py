@@ -346,7 +346,8 @@ def observer_report(notice: dict[str, Any], open_items: int) -> str:
 
 async def deliver_reports(inbox: Inbox, send, *, max_attempts: int = 24) -> dict:
     """Send every pending report; a failed send stays pending and is retried next cycle,
-    until ``max_attempts`` abandons it (with one escalation item)."""
+    until ``max_attempts`` abandons it (with one escalation item). Delivery is at-least-once:
+    a restart or timeout after Telegram accepted a report but before ``mark_report`` resends it."""
     out: dict[str, list[str]] = {"reported": [], "abandoned": []}
     for row in inbox.pending_reports():
         try:  # a bad payload or a transport error is a failed attempt, retried next cycle

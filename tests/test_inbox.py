@@ -215,3 +215,21 @@ def test_notice_summary_is_per_client_and_capped(tmp_path):
     assert summary["pending_reports"] == runs[-20:]
     assert summary["unreadable_notices"] == [] and summary["rejected_notices"] == []
     assert inbox.notice_summary("nobody")["last_observed_run"] is None
+
+
+def test_notice_summary_honors_a_custom_unreadable_threshold(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    assert inbox.note_unreadable(run_id=RUN, client="trendlab", threshold=1) is True
+    assert inbox.notice_summary("trendlab", threshold=1)["unreadable_notices"] == [RUN]
+    assert inbox.notice_summary("trendlab")["unreadable_notices"] == []
+
+
+def test_list_can_exclude_several_sources(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    for source in ("evals", "observe", "run"):
+        last = inbox.record(
+            project="harness:trendlab-cli", title=source, signature=source, source=source
+        )
+    run = last
+    assert [i["id"] for i in inbox.list(exclude_source=("evals", "observe"))] == [run["id"]]
+    assert len(inbox.list(exclude_source="evals")) == 2

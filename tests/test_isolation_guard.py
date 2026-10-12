@@ -263,3 +263,20 @@ def test_writable_by_each_class(who, bit_on):
 
 def test_writable_by_root_is_always_true():
     assert _writable_by(0o444, 1, 1, 0, [0])
+
+
+async def test_meta_draft_default_pick_skips_evals_and_observe_items(tmp_path):
+    from trendlab.config.schema import AppConfig
+    from trendlab.engine import jobs
+    from trendlab.engine.inbox import Inbox
+    from trendlab.engine.meta import HARNESS_PROJECT
+
+    inbox = Inbox(tmp_path / "inbox.db")
+    for source in ("evals", "observe"):
+        inbox.record(
+            project=HARNESS_PROJECT, title=f"{source} item", signature=source, source=source
+        )
+    config = AppConfig()
+    config.engine.harness_root = str(tmp_path)
+    res = await jobs.meta_draft(inbox, config, allow_unisolated=True)
+    assert res == {"ok": False, "reason": "no open harness cards"}

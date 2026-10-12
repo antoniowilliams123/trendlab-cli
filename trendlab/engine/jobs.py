@@ -70,8 +70,13 @@ async def meta_draft(
     )
     if root is None:
         return {"ok": False, "reason": "not running from a trendlab-cli checkout"}
+    # The default pick skips Evals and observer items: they are not harness bugs to auto-fix.
     item = (
-        inbox.get(issue_id) if issue_id else next(iter(inbox.list(HARNESS_PROJECT, limit=1)), None)
+        inbox.get(issue_id)
+        if issue_id
+        else next(
+            iter(inbox.list(HARNESS_PROJECT, limit=1, exclude_source=("evals", "observe"))), None
+        )
     )
     if item is None:
         return {"ok": False, "reason": "no open harness cards"}
