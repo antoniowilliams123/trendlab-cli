@@ -41,7 +41,9 @@ PROBE_TIMEOUT_S = 20
 PROBE_FILE = ".ilb-sandbox-probe"
 SCRATCH_HOME = "/tmp/home"  # on the sandbox's private /tmp
 DRAFT_MAX_OUTPUT_TOKENS = 8192  # every draft model call's hard output bound
-DENIED_TOOLS = ("delegate", "web_fetch", "web_search")
+# no sub-agents; nothing that reaches the network from the harness process; no long-lived
+# background process (it could race the in-process file tools with a symlink swap, I-5)
+DENIED_TOOLS = ("delegate", "web_fetch", "web_search", "background_process")
 SEVERITY_ORDER = {"high": 0, "med": 1, "low": 2}
 _REF = re.compile(r"^evals:([^:]+):([^:]+)$")
 _CID = re.compile(r"^cand-[A-Za-z0-9]+-\d+$")
@@ -125,7 +127,7 @@ def draft_config(config: AppConfig, budget_usd: float, minutes: int) -> AppConfi
     cfg.verification.workspace = "inplace"
     cfg.verification.second_opinion = None
     cfg.attempts.best_of = 1
-    # no sub-agents; no tool that reaches the network from the harness process (D-115)
+    # see DENIED_TOOLS (D-115)
     for name in DENIED_TOOLS:
         if name not in cfg.tools.deny:
             cfg.tools.deny.append(name)
@@ -170,15 +172,40 @@ def price_check(config: AppConfig) -> list[str]:
 
 
 # -- the sandbox gate -----------------------------------------------------------------------------
+# Folders an IL-B sandbox shows empty (read-only tmpfs; binds below them still show): every Unix
+# socket under /run (the tmux bridge, D-Bus, WSL interop, /run/user) and every home, the worker's
+# included wherever it lives. Nothing under /run is bound back: drafts have no network, no D-Bus
+# and no systemd, so no socket there is needed.
+HIDDEN_ROOTS = ("/run", "/home", "/root")
+# System files that stay masked inside the read-only /etc (most are root-only already).
+ETC_SECRETS = (
+    "/etc/shadow",
+    "/etc/shadow-",
+    "/etc/gshadow",
+    "/etc/gshadow-",
+    "/etc/sudoers",
+    "/etc/sudoers.d",
+    "/etc/ssh",
+    "/etc/ssl/private",
+    "/etc/credstore",
+    "/etc/credstore.encrypted",
+    "/etc/trendlab",
+)
+# Entries of the dev clone's git dir a sandbox never sees (a remote URL may carry a token).
+GIT_DIR_HIDDEN = ("config", "hooks")
+
+
 def secret_masks() -> list[Path]:
-    """What no IL-B sandbox may see: the worker's TrendLab home (secrets, sessions, the engine
-    runtime folder and its ``engine.sock``), the locked runtime config, ``~/.ssh`` and every
-    user's runtime folder (``/run/user``: other sockets). Existing paths only."""
+    """What no IL-B sandbox may see even where a bind would show it (masks are applied after
+    every bind): the worker's TrendLab home (secrets, sessions, the engine runtime folder and its
+    ``engine.sock``), the locked runtime config, ``~/.ssh``, ``/run/user`` and the secret files in
+    /etc. Existing paths only."""
     from trendlab.config.loader import trendlab_home
     from trendlab.config.runtime import runtime_dir
 
     home = Path.home()
     paths = [trendlab_home(), home / ".trendlab", home / ".ssh", Path("/run/user")]
+    paths += [Path(p) for p in ETC_SECRETS]
     rt = runtime_dir()
     if rt is not None:
         paths.append(rt)
@@ -187,6 +214,35 @@ def secret_masks() -> list[Path]:
         with contextlib.suppress(OSError):
             if p.exists() and p.resolve() not in out:
                 out.append(p.resolve())
+    return out
+
+
+def hidden_roots() -> list[Path]:
+    """HIDDEN_ROOTS plus the worker's own home when it lives elsewhere (e.g. under /srv)."""
+    out = [Path(h) for h in HIDDEN_ROOTS]
+    home = Path.home().resolve()
+    if not any(h == home or h in home.parents for h in out):
+        out.append(home)
+    return out
+
+
+def venv_paths(prod_dir: Path) -> list[Path]:
+    """What the production venv needs besides the checkout, read-only: the venv itself when
+    ``.venv`` points outside the checkout, and the base interpreter's prefix (``home`` in
+    ``pyvenv.cfg``) when it is not under a system folder already shown."""
+    out: list[Path] = []
+    venv = (Path(prod_dir) / ".venv").resolve()
+    prod = Path(prod_dir).resolve()
+    if venv.is_dir() and prod not in venv.parents:
+        out.append(venv)
+    with contextlib.suppress(OSError):
+        for line in (venv / "pyvenv.cfg").read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "home" and value.strip():
+                prefix = Path(value.strip()).resolve().parent
+                system = [Path(d).resolve() for d in ("/usr", "/bin", "/sbin", "/lib", "/lib64")]
+                if prefix.is_dir() and not any(s == prefix or s in prefix.parents for s in system):
+                    out.append(prefix)
     return out
 
 
@@ -205,21 +261,35 @@ def confined_env(prod_dir: Path | None = None) -> dict[str, str]:
 
 
 def forced_sandbox(
-    project_root: Path, ro_paths: list[Path] | None = None, prod_dir: Path | None = None
+    project_root: Path,
+    ro_paths: list[Path] | None = None,
+    prod_dir: Path | None = None,
+    git_dir: Path | None = None,
 ) -> Sandbox:
     """The only sandbox profile IL-B runs anything in (candidate tests and every drafting-agent
-    tool): bubblewrap, no network, no persistent writable path beyond ``project_root``, a
-    scrubbed environment, the secrets and sockets masked, and immune to TRENDLAB_SANDBOX in the
-    engine's environment. ``ro_paths`` (the production checkout) stay readable even under the
-    private /tmp."""
+    tool): bubblewrap, an allowlisted filesystem (system folders read-only, ``project_root``
+    read-write, ``ro_paths`` — the production checkout — and the production venv read-only,
+    every home and all of /run empty), no network, a scrubbed environment, the secrets masked,
+    and immune to TRENDLAB_SANDBOX in the engine's environment. ``git_dir`` (the dev clone's
+    ``.git``, which a worktree's ``.git`` file points into) is shown read-only without its
+    ``config`` (it may hold a remote URL with a token) and ``hooks``."""
+    ro = list(ro_paths or [])
+    masks = secret_masks()
+    if prod_dir is not None:
+        ro += venv_paths(prod_dir)
+    if git_dir is not None:
+        # every entry but ``config`` (a missing config is fine to git) and ``hooks``
+        with contextlib.suppress(OSError):
+            ro += [e for e in sorted(Path(git_dir).iterdir()) if e.name not in GIT_DIR_HIDDEN]
     return Sandbox(
         SandboxConfig(mode="on", writable_paths=[], allow_network=False),
         project_root,
         force_mode="on",
-        ro_paths=list(ro_paths or []),
+        ro_paths=ro,
         confined=True,
         env=confined_env(prod_dir),
-        masks=secret_masks(),
+        masks=masks,
+        hidden=hidden_roots(),
     )
 
 

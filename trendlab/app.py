@@ -160,6 +160,9 @@ class TrendLabApp:
         self.custom_commands: Any = None
         self._token: str | None = None
         self._run_checkpoint: dict[str, Any] | None = None
+        # A caller that knows the worktree's HEAD (an IL-B draft: its base SHA) sets this, so the
+        # checkpoint never runs git in a tree the agent controls (evals D-115).
+        self.checkpoint_head: str | None = None
         self._reminder_task: asyncio.Task | None = None
         self.pending_images: list[Path] = []  # attached via /paste or /image for the next prompt
         self.current_issue: dict[str, Any] | None = None
@@ -1141,7 +1144,7 @@ class TrendLabApp:
         if self._run_checkpoint is None:
             from trendlab.tools.git import git_head
 
-            head = await git_head(self.project_root)
+            head = self.checkpoint_head or await git_head(self.project_root)
             self._run_checkpoint = self.checkpoints.create(files, label="auto", git_head=head)
             self._checkpoint_step = None
             self.events.emit(

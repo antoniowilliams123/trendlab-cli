@@ -45,6 +45,7 @@ from trendlab.engine.improve_policy import (
     read_switch,
 )
 from trendlab.engine.inbox import Inbox
+from trendlab.engine.meta import HARNESS_PROJECT
 from trendlab.providers.base import (
     ModelProvider,
     ProviderAuthenticationError,
@@ -299,7 +300,20 @@ def suite_command(prod_dir: Path, worktree: Path, home: Path) -> str:
     )
 
 
-async def run_tests_sandboxed(prod_dir: Path, worktree: Path, *, timeout: float) -> SuiteResult:
+def test_sandbox(prod_dir: Path, worktree: Path, git_dir: Path | None = None):
+    """The candidate-test sandbox: the forced profile with the production checkout and its venv
+    read-only (and the dev clone's git dir, for tests that run git in the worktree)."""
+    return forced_sandbox(
+        Path(worktree), ro_paths=[Path(prod_dir)], prod_dir=Path(prod_dir), git_dir=git_dir
+    )
+
+
+test_sandbox.__test__ = False  # not a pytest test
+
+
+async def run_tests_sandboxed(
+    prod_dir: Path, worktree: Path, *, timeout: float, git_dir: Path | None = None
+) -> SuiteResult:
     """The candidate's tests in the forced sandbox. A fresh test home per run, so the base run
     leaves nothing behind for the candidate run."""
     worktree = Path(worktree)
@@ -307,7 +321,7 @@ async def run_tests_sandboxed(prod_dir: Path, worktree: Path, *, timeout: float)
     state.mkdir(exist_ok=True)
     home = Path(tempfile.mkdtemp(prefix="test-home-", dir=state))
     (home / "th").mkdir()
-    sb = forced_sandbox(worktree, ro_paths=[Path(prod_dir)])
+    sb = test_sandbox(prod_dir, worktree, git_dir)
     try:
         argv = sb.wrap(suite_command(prod_dir, worktree, home), cwd=worktree, allow_network=False)
     except RuntimeError as exc:
@@ -399,6 +413,9 @@ class AgentHooks:
     ``started(session_id, costs, gateway=None)``."""
 
     started: Callable[..., None]
+    # the draft's base commit: the agent's checkpoint records it instead of asking git in a
+    # worktree the agent controls (D-115 residual 2)
+    base_sha: str | None = None
 
 
 class SpendCapRefused(ProviderError):
@@ -413,10 +430,12 @@ UNBILLED = (ProviderRateLimitError, ProviderAuthenticationError)
 
 
 def input_estimate(messages: Any, tools: Any) -> int:
-    """A deliberately high input-token estimate: one token per two bytes of the request, plus
-    1000 for framing (real tokenizers average 3-4 bytes a token)."""
+    """An upper bound on input tokens: the UTF-8 byte count of the request, plus 1000 for
+    framing. Byte-level tokenizers never emit more than one token per byte of text (real text
+    averages 3-4 bytes a token), JSON escaping only adds bytes, and images cost far less than
+    their base64 size."""
     raw = json.dumps([messages, tools], default=str, ensure_ascii=False).encode()
-    return -(-len(raw) // 2) + 1000
+    return len(raw) + 1000
 
 
 class ReservingProvider(ModelProvider):
@@ -474,7 +493,11 @@ async def default_run_agent(path: Path, cfg, prompt: str, hooks: AgentHooks) -> 
     tl = TrendLabApp(path, cfg, console=Console(quiet=True))
     prod = Path(cfg.improvement.prod_dir)
     # every tool that executes anything runs in the candidate-test profile (D-115)
-    tl.sandbox_factory = lambda root: forced_sandbox(root, ro_paths=[prod], prod_dir=prod)
+    git_dir = dev_clone_root(cfg) / ".git"
+    tl.sandbox_factory = lambda root: forced_sandbox(
+        root, ro_paths=[prod], prod_dir=prod, git_dir=git_dir
+    )
+    tl.checkpoint_head = hooks.base_sha
     unattended = Unattended(tl)
     try:
         await tl.start(interactive=False)
@@ -522,7 +545,9 @@ def write_spend_summary(inbox: Inbox, config, now: datetime | None = None) -> bo
     """The worker's IL-B spend for the referee (evals D-115): month-to-date and day totals
     (America/New_York; a draft still running counts its reservation) plus this month's rows,
     failed attempts included, at ``[improvement] spend_path`` (atomic, mode 640). The referee
-    reads it for the loop's shared $10 a month. Never raises: False when it was not written."""
+    reads it for the loop's shared $10 a month. Never raises: False when it was not written, and
+    then a high-severity inbox item says so (the referee treats a stale summary as budget
+    unknown)."""
     path = Path(config.improvement.spend_path)
     tmp = None
     try:
@@ -550,10 +575,19 @@ def write_spend_summary(inbox: Inbox, config, now: datetime | None = None) -> bo
             json.dump(data, fh, sort_keys=True)
         os.replace(tmp, path)
         return True
-    except Exception:  # noqa: BLE001 — a summary never breaks a draft
+    except Exception as exc:  # noqa: BLE001 — reported below, never raised
         if tmp is not None:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)  # our own temp file only; the previous summary stays
+        with contextlib.suppress(Exception):
+            inbox.record(
+                project=HARNESS_PROJECT,
+                title="IL-B spend summary write failed: the referee will see budget unknown",
+                signature="improve|spend summary write failed",
+                source="improve",
+                evidence=[f"{path.name}: {exc.__class__.__name__}"],
+                severity="high",
+            )
         return False
 
 
@@ -731,7 +765,8 @@ class Draft:
         timeout = min(TEST_TIMEOUT_S, self._remaining())
         if self._run_tests is not None:
             return await self._run_tests(path)
-        return await run_tests_sandboxed(self.prod, path, timeout=timeout)
+        git_dir = self.root / ".git" if self.root else None
+        return await run_tests_sandboxed(self.prod, path, timeout=timeout, git_dir=git_dir)
 
     async def run(self) -> dict[str, Any]:
         self.task = asyncio.current_task()
@@ -805,7 +840,9 @@ class Draft:
         self.cid = row["id"]
         if self.cid != cid:
             raise DraftError("candidate id changed under the runner")
-        write_spend_summary(self.inbox, self.config, self.clock())  # the reservation, in flight
+        # the reservation, in flight: a draft the referee cannot see never starts
+        if not write_spend_summary(self.inbox, self.config, self.clock()):
+            raise DraftError("the spend summary could not be written; the draft did not start")
         path.parent.mkdir(parents=True, exist_ok=True)
         await git(self.root, "worktree", "add", "-q", "-b", f"improve/{cid}", str(path), base)
         self.path = path
@@ -825,7 +862,7 @@ class Draft:
         prompt = build_prompt(
             d.item, finding_payload(self.inbox, d.item), self.inbox.lessons_for(d.case_prefix)
         )
-        await self.run_agent(path, cfg, prompt, AgentHooks(started=self._started))
+        await self.run_agent(path, cfg, prompt, AgentHooks(started=self._started, base_sha=base))
 
         gd = self.gitdir
         await wt_git(gd, path, "add", "-A")

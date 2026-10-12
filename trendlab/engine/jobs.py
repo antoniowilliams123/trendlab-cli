@@ -409,7 +409,9 @@ async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -
             cid, status="error", spend_usd=max(known) if known else None, detail=RECOVERED
         )
         out.append(cid)
-    if out:
+    # with IL-B on, every tick (engine start, observe, improve) refreshes it, so the referee can
+    # tell a live worker from a summary that stopped being written (older than 26 h = unknown)
+    if out or config.improvement.propose:
         write_spend_summary(inbox, config)
     return out
 

@@ -118,6 +118,7 @@ class Env:
         imp.prod_dir = str(self.prod)
         imp.candidates_dir = str(self.out)
         imp.control_dir = str(self.control)
+        imp.spend_path = str(tmp / "il-b-spend.json")  # a draft never starts without it
         self.cfg.engine.harness_root = str(self.dev)
         self.dev_main = sh("git", "rev-parse", "main", cwd=self.dev).strip()
 
@@ -748,7 +749,32 @@ def test_crash_recovery_rewrites_the_spend_summary(env, tmp_path):
     assert doc["attempts"][0]["spend_usd"] == pytest.approx(0.07)
 
 
-def test_an_unwritable_spend_summary_never_breaks_a_draft(env, tmp_path):
+def test_an_unwritable_spend_summary_stops_the_draft_and_alerts(env, tmp_path):
+    # the referee would not see this draft's spend: it must not start, and Tony must hear of it
     env.cfg.improvement.spend_path = str(tmp_path / "no" / "such" / "dir" / "il-b-spend.json")
-    res = go(env, run_agent=agent(edit=fix_core), clock=lambda: NOW)
-    assert res["status"] == "handed_off"
+    ran = []
+
+    async def run(path, cfg, prompt, hooks):
+        ran.append(path)
+
+    res = go(env, run_agent=run, clock=lambda: NOW)
+    row = env.inbox.candidate(res["candidate"])
+    assert res["status"] == "error" and ran == [] and "spend summary" in row["detail"]
+    alerts = [i for i in env.inbox.list() if "spend summary" in i["title"]]
+    assert alerts and alerts[0]["severity"] == "high"
+
+
+def test_every_recovery_tick_refreshes_the_spend_summary(env, tmp_path):
+    from trendlab.engine.jobs import recover_drafting
+
+    env.cfg.improvement.spend_path = str(tmp_path / "il-b-spend.json")
+    asyncio.run(recover_drafting(env.inbox, env.cfg))  # nothing to recover, still rewritten
+    assert spend_summary(env)["month_usd"] == 0
+
+
+def test_the_input_estimate_is_the_utf8_byte_count():
+    from trendlab.engine.candidate_runner import input_estimate
+
+    messages = [{"role": "user", "content": "\u00e9\u4e2d\U0001f600 odd text " * 200}]
+    raw = json.dumps([messages, None], default=str, ensure_ascii=False).encode()
+    assert input_estimate(messages, None) == len(raw) + 1000  # one token per byte at most
