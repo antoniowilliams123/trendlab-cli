@@ -439,3 +439,201 @@ def test_the_checkpoint_uses_the_draft_base_sha_not_git(tmp_path, monkeypatch):
     )
     asyncio.run(TrendLabApp._checkpoint_before_mutation(fake, ["a.py"]))
     assert made["head"] == "b" * 40
+
+
+# -- fix round 3: in-process file tools never follow a symlink in a draft ------------------------
+def draft_ctx(root: Path) -> ToolContext:
+    return ToolContext(project_root=root, session_id="s", sandbox=forced_sandbox(root))
+
+
+def call(tool, args: dict, ctx: ToolContext):
+    """The tool's result, or None when it refused the path (raised PathOutsideProjectError)."""
+    from trendlab.tools.base import PathOutsideProjectError
+
+    try:
+        return asyncio.run(tool.run(tool.parse(args), ctx))
+    except PathOutsideProjectError:
+        return None
+
+
+def refused(res) -> bool:
+    return res is None or (not res.ok and "symlink" in res.output)
+
+
+@pytest.fixture
+def planted(repo, tmp_path):
+    """What sandboxed test code could plant: a link to a worker secret outside the worktree, a
+    linked folder out of the worktree, and links that stay inside it."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("TOP-SECRET-VALUE\n")
+    (repo / "leak.txt").symlink_to(secret)
+    (repo / "linkdir").symlink_to(outside, target_is_directory=True)
+    (repo / "sub").mkdir()
+    (repo / "sub" / "x.py").write_text("X = 1\n")
+    (repo / "alias").symlink_to(repo / "sub", target_is_directory=True)
+    (repo / "inner.py").symlink_to(repo / "a.py")
+    return {"outside": outside, "secret": secret}
+
+
+def test_a_planted_symlink_to_an_outside_file_is_never_read(repo, planted):
+    from trendlab.tools.files import ReadFileTool, SearchTextTool
+
+    ctx = draft_ctx(repo)
+    for path in ("leak.txt", "inner.py"):
+        res = call(ReadFileTool(), {"path": path}, ctx)
+        assert refused(res), (path, res)
+    res = call(SearchTextTool(), {"pattern": "TOP-SECRET", "path": "leak.txt"}, ctx)
+    assert res is None or "TOP-SECRET" not in res.output
+
+
+def test_a_planted_symlink_to_an_outside_file_is_never_written(repo, planted):
+    from trendlab.tools.apply_patch import ApplyPatchTool
+    from trendlab.tools.files import DeleteFileTool, PatchFileTool, WriteFileTool
+
+    ctx = draft_ctx(repo)
+    secret = planted["secret"]
+    attempts = [
+        (WriteFileTool(), {"path": "leak.txt", "content": "pwned\n"}),
+        (PatchFileTool(), {"path": "leak.txt", "old_text": "TOP", "new_text": "pwned"}),
+        (WriteFileTool(), {"path": "linkdir/new.txt", "content": "pwned\n"}),
+        (WriteFileTool(), {"path": "inner.py", "content": "pwned\n"}),
+        (DeleteFileTool(), {"path": "leak.txt"}),
+        (
+            ApplyPatchTool(),
+            {"diff": "--- a/leak.txt\n+++ b/leak.txt\n@@ -1 +1 @@\n-TOP-SECRET-VALUE\n+pwned\n"},
+        ),
+    ]
+    for tool, args in attempts:
+        res = call(tool, args, ctx)
+        assert refused(res), (tool.name, args, res)
+    assert secret.read_text() == "TOP-SECRET-VALUE\n"
+    assert sorted(p.name for p in planted["outside"].iterdir()) == ["secret.txt"]
+    assert (repo / "a.py").read_text() == "A = 1\n"
+    assert (repo / "leak.txt").is_symlink()
+
+
+def test_a_symlinked_folder_component_is_refused(repo, planted):
+    from trendlab.tools.files import ReadFileTool, WriteFileTool
+
+    ctx = draft_ctx(repo)
+    for path in ("linkdir/secret.txt", "alias/x.py"):
+        assert refused(call(ReadFileTool(), {"path": path}, ctx)), path
+    assert refused(call(WriteFileTool(), {"path": "alias/x.py", "content": "Y = 2\n"}, ctx))
+    assert (repo / "sub" / "x.py").read_text() == "X = 1\n"
+    for raw in ("sub/../a.py", str(repo / "alias" / "x.py")):
+        assert refused(call(ReadFileTool(), {"path": raw}, ctx)), raw
+
+
+def test_a_symlink_swapped_in_after_the_check_is_still_not_followed(repo, planted, monkeypatch):
+    # the race: a sandboxed process swaps a path for a symlink between check and open, so
+    # the open itself must refuse (O_NOFOLLOW on every component)
+    from trendlab.tools.files import ReadFileTool, WriteFileTool
+
+    monkeypatch.setattr(ToolContext, "resolve", lambda self, raw: self.project_root / raw)
+    ctx = draft_ctx(repo)
+    for path in ("leak.txt", "linkdir/secret.txt"):
+        res = call(ReadFileTool(), {"path": path}, ctx)
+        assert refused(res) and (res is None or "TOP-SECRET" not in res.output), (path, res)
+    for path in ("leak.txt", "linkdir/new.txt"):
+        assert refused(call(WriteFileTool(), {"path": path, "content": "pwned\n"}, ctx)), path
+    assert planted["secret"].read_text() == "TOP-SECRET-VALUE\n"
+    assert sorted(p.name for p in planted["outside"].iterdir()) == ["secret.txt"]
+
+
+def test_normal_files_are_still_read_written_patched_and_deleted(repo, planted):
+    from trendlab.tools.apply_patch import ApplyPatchTool
+    from trendlab.tools.files import (
+        DeleteFileTool,
+        PatchFileTool,
+        ReadFileTool,
+        SearchTextTool,
+        WriteFileTool,
+    )
+
+    ctx = draft_ctx(repo)
+    res = call(ReadFileTool(), {"path": "a.py"}, ctx)
+    assert res and res.ok and "A = 1" in res.output
+    res = call(WriteFileTool(), {"path": "pkg/deep/new.py", "content": "N = 1\n"}, ctx)
+    assert res and res.ok, res
+    assert (repo / "pkg" / "deep" / "new.py").read_text() == "N = 1\n"
+    res = call(PatchFileTool(), {"path": "sub/x.py", "old_text": "X = 1", "new_text": "X = 2"}, ctx)
+    assert res and res.ok and (repo / "sub" / "x.py").read_text() == "X = 2\n"
+    diff = "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-A = 1\n+A = 3\n"
+    res = call(ApplyPatchTool(), {"diff": diff}, ctx)
+    assert res and res.ok and (repo / "a.py").read_text() == "A = 3\n"
+    res = call(SearchTextTool(), {"pattern": "X = 2"}, ctx)
+    assert res and "sub/x.py" in res.output
+    res = call(DeleteFileTool(), {"path": "pkg/deep/new.py"}, ctx)
+    assert res and res.ok and not (repo / "pkg" / "deep" / "new.py").exists()
+
+
+def test_interactive_sessions_keep_following_links_inside_the_project(repo, planted):
+    from trendlab.tools.files import ReadFileTool
+
+    ctx = ToolContext(project_root=repo, session_id="s")  # no confined sandbox
+    res = call(ReadFileTool(), {"path": "inner.py"}, ctx)
+    assert res and res.ok and "A = 1" in res.output
+
+
+# -- fix round 3: ripgrep never follows a symlink out of the worktree ----------------------------
+REAL_RG = shutil.which("rg")
+
+
+@pytest.mark.skipif(not REAL_RG, reason="ripgrep not installed")
+def test_ripgrep_does_not_follow_a_symlink_out_of_the_worktree(
+    repo, planted, tmp_path, monkeypatch
+):
+    from trendlab.tools.files import SearchTextTool
+
+    rc = tmp_path / "rgrc"
+    rc.write_text("--follow\n--hidden\n")  # a hostile config would turn following on
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(rc))
+    (repo / "plain.txt").write_text("TOP-SECRET-VALUE is mentioned here\n")
+    res = call(SearchTextTool(), {"pattern": "TOP-SECRET"}, draft_ctx(repo))
+    assert res and res.ok, res
+    assert "plain.txt" in res.output
+    assert "linkdir" not in res.output and "leak.txt" not in res.output, res.output
+    assert res.output.count("TOP-SECRET") == 1
+
+
+def test_ripgrep_runs_hardened_and_inside_the_sandbox_when_it_can(repo, monkeypatch):
+    from trendlab.tools import files
+
+    seen = {}
+
+    async def fake_exec(*argv, **kw):
+        seen["argv"], seen["env"] = list(argv), kw.get("env")
+        raise OSError("not really")
+
+    monkeypatch.setattr(files.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", "/nowhere/rgrc")
+    monkeypatch.setattr("trendlab.security.sandbox.shutil.which", lambda n: f"/usr/bin/{n}")
+    ctx = draft_ctx(repo)
+    # ripgrep visible inside the sandbox (under /usr): it runs there
+    monkeypatch.setattr(files.shutil, "which", lambda n: "/usr/bin/rg")
+    call(files.SearchTextTool(), {"pattern": "A"}, ctx)
+    argv = seen["argv"]
+    assert argv[:2] == ["/usr/bin/env", "-i"] and "/usr/bin/bwrap" in argv, argv
+    assert "--no-follow" in argv[-1] and "--no-config" in argv[-1], argv[-1]
+    # ripgrep outside the sandbox's view (a home folder): hardened, no config, worktree only
+    seen.clear()
+    monkeypatch.setattr(files.shutil, "which", lambda n: "/home/u/.local/bin/rg")
+    call(files.SearchTextTool(), {"pattern": "A"}, ctx)
+    argv = seen["argv"]
+    assert argv[0] == "/home/u/.local/bin/rg"
+    assert "--no-follow" in argv and "--no-config" in argv and "--follow" not in argv
+    assert argv[-1] == str(repo.resolve())
+    assert seen["env"] is not None and "RIPGREP_CONFIG_PATH" not in seen["env"]
+
+
+# -- fix round 3: sandboxed processes never outlive the call or reach the terminal ---------------
+def test_both_profiles_start_a_new_session_and_die_with_the_parent(repo, tmp_path, monkeypatch):
+    monkeypatch.setattr("trendlab.security.sandbox.shutil.which", lambda n: f"/usr/bin/{n}")
+    prod = prod_checkout(tmp_path)
+    for name, sb in both_sandboxes(repo, prod).items():
+        argv = sb.wrap("true", cwd=repo)
+        cut = argv.index("--")
+        assert "--new-session" in argv[:cut], name  # no TIOCSTI into the tmux terminal
+        assert "--die-with-parent" in argv[:cut], name  # nothing outlives the engine

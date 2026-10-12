@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import hashlib
 import os
 import re
+import secrets
+import shlex
 import shutil
+import stat
 import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import NoReturn
 
 from pydantic import BaseModel, Field
 
 from trendlab.context.ignore import IgnoreRules
 from trendlab.permissions.engine import PermissionRequest
 from trendlab.permissions.models import OperationCategory
+from trendlab.security.sandbox import SYSTEM_RO
 from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, ToolResult
 from trendlab.ui.diff_view import diff_stats, unified_diff
 
@@ -140,6 +147,124 @@ def _perm_or_outside(
     )
 
 
+# -- confined file access (IL-B drafts, evals D-115) ---------------------------------------------
+# Sandboxed test code may plant symlinks in the worktree, or swap a folder for one while a tool
+# runs. In a confined session every in-process read, write and delete walks the path one folder
+# at a time from the project root with O_NOFOLLOW, so no symlink is ever followed, even one
+# swapped in after ``ctx.resolve`` checked the path. Other sessions keep plain file access.
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _refuse(path: Path) -> NoReturn:
+    raise PathOutsideProjectError(f"path refused (symlink in path): {path}")
+
+
+def _open_parent(ctx: ToolContext, path: Path, *, create: bool = False) -> tuple[int, str]:
+    """A descriptor of ``path``'s folder, opened component by component without following a
+    symlink (``create`` makes missing folders), and the final name."""
+    root = ctx.project_root.resolve()
+    try:
+        parts = Path(path).relative_to(root).parts
+    except ValueError:
+        _refuse(path)
+    if not parts or ".." in parts:
+        _refuse(path)
+    fd = os.open(root, _DIR_FLAGS)
+    try:
+        for part in parts[:-1]:
+            try:
+                nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(part, 0o777, dir_fd=fd)
+                nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    _refuse(path)
+                raise
+            os.close(fd)
+            fd = nxt
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, parts[-1]
+
+
+def _is_link(dfd: int, name: str) -> bool:
+    try:
+        return stat.S_ISLNK(os.stat(name, dir_fd=dfd, follow_symlinks=False).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def read_bytes(ctx: ToolContext, path: Path) -> bytes:
+    """``path``'s bytes; in a confined session never through a symlink, and only from a
+    regular file (a planted FIFO cannot block)."""
+    if not ctx.confined:
+        return Path(path).read_bytes()
+    dfd, name = _open_parent(ctx, path)
+    try:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                         dir_fd=dfd)  # fmt: skip
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                _refuse(path)
+            raise
+    finally:
+        os.close(dfd)
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise IsADirectoryError(f"not a regular file: {path}")
+        return fh.read()
+
+
+def read_text(ctx: ToolContext, path: Path) -> str:
+    return read_bytes(ctx, path).decode("utf-8", errors="replace")
+
+
+def write_text(ctx: ToolContext, path: Path, content: str) -> None:
+    """Atomic write; in a confined session the temp file is created and renamed inside a
+    folder opened without following symlinks, and a symlink at ``path`` is refused."""
+    if not ctx.confined:
+        _atomic_write(Path(path), content)
+        return
+    dfd, name = _open_parent(ctx, path, create=True)
+    tmp = f".trendlab-{secrets.token_hex(8)}"
+    try:
+        if _is_link(dfd, name):
+            _refuse(path)
+        try:
+            mode = os.stat(name, dir_fd=dfd, follow_symlinks=False).st_mode & 0o777
+        except FileNotFoundError:
+            mode = 0o644
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(tmp, flags, mode, dir_fd=dfd)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp, dir_fd=dfd)
+    finally:
+        os.close(dfd)
+
+
+def unlink(ctx: ToolContext, path: Path) -> None:
+    if not ctx.confined:
+        Path(path).unlink()
+        return
+    dfd, name = _open_parent(ctx, path)
+    try:
+        if _is_link(dfd, name):
+            _refuse(path)
+        os.unlink(name, dir_fd=dfd)
+    finally:
+        os.close(dfd)
+
+
 # -- read-only -------------------------------------------------------------------------------
 class ReadFileInput(BaseModel):
     path: str
@@ -169,7 +294,7 @@ class ReadFileTool(Tool):
         path = ctx.resolve(args.path)
         if not path.is_file():
             return ToolResult(ok=False, output=f"not a file: {args.path}")
-        raw = path.read_bytes()
+        raw = read_bytes(ctx, path)
         if _is_binary(raw):
             return ToolResult(
                 ok=False, output=f"{args.path} is binary ({len(raw)} bytes); not readable as text"
@@ -319,7 +444,7 @@ class SearchTextTool(Tool):
             return ToolResult(ok=False, output=f"invalid regex: {exc}")
         rg = shutil.which("rg")
         if rg and root.is_dir():
-            found = await _rg_search(rg, args, root, project)
+            found = await _rg_search(rg, args, root, project, ctx)
             if found is not None:
                 return _timed(_search_result(found[0], args.max_results), found[1], None)
         rules = ctx.ignore_rules or IgnoreRules([])
@@ -344,8 +469,8 @@ class SearchTextTool(Tool):
                 try:
                     if file.stat().st_size > MAX_SEARCH_BYTES:
                         continue
-                    raw = file.read_bytes()
-                except OSError:
+                    raw = read_bytes(ctx, file)
+                except (OSError, PathOutsideProjectError):
                     continue
                 state["scanned"] += 1
                 if _is_binary(raw):
@@ -362,9 +487,23 @@ class SearchTextTool(Tool):
         return _timed(_search_result(hits, args.max_results), state["timed_out"], state["scanned"])
 
 
-async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) -> list[str] | None:
+# ripgrep reads only what it is pointed at: never a config file (RIPGREP_CONFIG_PATH could add
+# --follow or --pre) and never through a symlink.
+RG_HARDEN = ("--no-config", "--no-follow")
+
+
+def _rg_in_sandbox(rg: str) -> bool:
+    """Is this ripgrep binary visible inside the confined sandbox (a system folder)?"""
+    real = os.path.realpath(rg)
+    return any(real.startswith(f"{d}/") for d in SYSTEM_RO if d != "/etc")
+
+
+async def _rg_search(
+    rg: str, args: SearchTextInput, root: Path, project: Path, ctx: ToolContext
+) -> tuple[list[str], bool] | None:
     cmd = [
         rg,
+        *RG_HARDEN,
         "--no-heading",
         "--line-number",
         "--color",
@@ -379,9 +518,20 @@ async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) 
     for ex in ("node_modules", ".venv", ".git", "__pycache__", ".trendlab", "dist", "build"):
         cmd += ["--glob", f"!{ex}"]
     cmd += ["-e", args.pattern, str(root)]
+    env = {k: v for k, v in os.environ.items() if k != "RIPGREP_CONFIG_PATH"}
+    if ctx.confined and _rg_in_sandbox(rg):
+        # a draft (evals D-115): ripgrep runs inside the tool sandbox like every other command
+        try:
+            cmd = ctx.sandbox.wrap(shlex.join(cmd), cwd=project)
+        except RuntimeError:
+            return None  # the Python search (no symlinks, confined reads) answers instead
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+            start_new_session=ctx.confined,
         )
     except OSError:
         return None
@@ -415,7 +565,7 @@ async def _rg_search(rg: str, args: SearchTextInput, root: Path, project: Path) 
     for line in raw:
         path, _, rest = line.partition(":")
         try:
-            rel = Path(path).resolve().relative_to(project).as_posix()
+            rel = Path(path).relative_to(project).as_posix()
         except ValueError:
             rel = path
         hits.append(f"{rel}:{rest[:220]}")
@@ -479,7 +629,7 @@ class WriteFileTool(Tool):
         preview = None
         try:
             target = ctx.resolve(args.path)
-            old = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
+            old = read_text(ctx, target) if target.is_file() else ""
             preview = unified_diff(args.path, old, args.content)
             added, removed = diff_stats(preview)
             summary = f"{'Edit' if old else 'Create'} {args.path} (+{added} -{removed})"
@@ -500,7 +650,7 @@ class WriteFileTool(Tool):
         path = ctx.resolve(args.path)
         old = ""
         if path.exists():
-            current = path.read_bytes()
+            current = read_bytes(ctx, path)
             if args.expected_sha256 and _sha256(current) != args.expected_sha256:
                 return ToolResult(
                     ok=False, output="conflict: file changed since it was read; read it again"
@@ -512,7 +662,7 @@ class WriteFileTool(Tool):
                     output=f"{args.path} already has exactly this content (no change)",
                     data={"sha256": _sha256(current), "unchanged": True, "path": args.path},
                 )
-        _atomic_write(path, args.content)
+        write_text(ctx, path, args.content)
         diff = unified_diff(args.path, old, args.content)
         added, removed = diff_stats(diff)
         return ToolResult(
@@ -560,7 +710,7 @@ class PatchFileTool(Tool):
         try:
             target = ctx.resolve(args.path)
             if target.is_file():
-                old = target.read_text(encoding="utf-8", errors="replace")
+                old = read_text(ctx, target)
                 new, err = self._apply(old, args)
                 if new is not None:
                     preview = unified_diff(args.path, old, new)
@@ -585,7 +735,7 @@ class PatchFileTool(Tool):
         path = ctx.resolve(args.path)
         if not path.is_file():
             return ToolResult(ok=False, output=f"not a file: {args.path}")
-        raw = path.read_bytes()
+        raw = read_bytes(ctx, path)
         if args.expected_sha256 and _sha256(raw) != args.expected_sha256:
             return ToolResult(
                 ok=False, output="conflict: file changed since it was read; read it again"
@@ -606,7 +756,7 @@ class PatchFileTool(Tool):
         new, err = self._apply(old, args)
         if new is None:
             return ToolResult(ok=False, output=f"patch failed: {err}")
-        _atomic_write(path, new)
+        write_text(ctx, path, new)
         diff = unified_diff(args.path, old, new)
         added, removed = diff_stats(diff)
         return ToolResult(
@@ -639,5 +789,5 @@ class DeleteFileTool(Tool):
         path: Path = ctx.resolve(args.path)
         if not path.is_file():
             return ToolResult(ok=False, output=f"not a file: {args.path}")
-        path.unlink()
+        unlink(ctx, path)
         return ToolResult(ok=True, output=f"deleted {args.path}", data={"path": args.path})

@@ -169,7 +169,9 @@ class Sandbox:
             argv += ["--remount-ro", h]  # after the binds below it were made
         argv += ["--remount-ro", "/"]
         argv += ["--unshare-user-try", "--unshare-pid", "--unshare-ipc", "--unshare-uts"]
-        argv += ["--unshare-net", "--die-with-parent", "--chdir", str(cwd), "--"]
+        # --new-session: no TIOCSTI into a terminal (the tmux bridge); --die-with-parent:
+        # nothing started inside outlives the call
+        argv += ["--unshare-net", "--new-session", "--die-with-parent", "--chdir", str(cwd), "--"]
         argv += ["/bin/sh", "-c", command]
         return argv
 
