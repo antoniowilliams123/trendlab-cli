@@ -22,7 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from trendlab.config.loader import _read_toml, global_config_path
+from trendlab.config.loader import CONFIG_FILE_NAME, _read_toml, global_config_path
+from trendlab.config.runtime import runtime_dir
 
 SAMPLE_SCRIPT = r"""#!/bin/sh
 # TrendLab status line: print ONE line. The session arrives as JSON on stdin.
@@ -46,8 +47,11 @@ MAX_CHARS = 400
 
 
 def configured_command() -> tuple[str, float]:
-    """(command, interval) from the user's global config; ('', 0) when unset."""
-    ui = _read_toml(global_config_path()).get("ui") or {}
+    """(command, interval) from the user's global config; ('', 0) when unset.
+
+    A locked runtime (IL-0) reads only the referee-owned runtime config."""
+    rt = runtime_dir()
+    ui = _read_toml(rt / CONFIG_FILE_NAME if rt else global_config_path()).get("ui") or {}
     cmd = str(ui.get("statusline") or "").strip()
     try:
         interval = max(0.5, float(ui.get("statusline_interval_s") or 2.0))

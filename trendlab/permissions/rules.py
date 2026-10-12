@@ -8,6 +8,7 @@ from pathlib import Path
 
 import tomli_w
 
+from trendlab.config import runtime
 from trendlab.permissions.models import Decision
 
 FILE_NAME = "permissions.toml"
@@ -40,6 +41,8 @@ class ProjectRules:
     def add(self, key: str, decision: Decision) -> None:
         with self._lock:
             self._rules[key] = decision
+            if runtime.locked():  # IL-0: kept for this session only, never written
+                return
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("wb") as fh:
                 tomli_w.dump({"rules": {k: v.value for k, v in self._rules.items()}}, fh)
@@ -49,6 +52,8 @@ class ProjectRules:
             if key not in self._rules:
                 return False
             del self._rules[key]
+            if runtime.locked():
+                return True
             with self.path.open("wb") as fh:
                 tomli_w.dump({"rules": {k: v.value for k, v in self._rules.items()}}, fh)
             return True

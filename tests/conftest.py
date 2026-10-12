@@ -26,6 +26,9 @@ def _trendlab_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # cannot see; sandbox-specific tests opt back in with TRENDLAB_SANDBOX=on.
     monkeypatch.setenv("TRENDLAB_SANDBOX", "off")
     monkeypatch.setenv("TRENDLAB_NO_UPDATE_CHECK", "1")  # no network from CLI tests
+    # a locked live worker runs this suite in its dev clone; tests opt into the lock themselves
+    monkeypatch.delenv("TRENDLAB_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("TRENDLAB_PROJECT_CONTEXT", raising=False)
     return home
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from trendlab import PRODUCT_NAME
 from trendlab.config.loader import PROJECT_INSTRUCTIONS_FILE
+from trendlab.config.runtime import context_root
 
 _POLICY = f"""You are {PRODUCT_NAME}, an autonomous, resourceful agent. You usually work inside a
 software repository, but the user may ask you anything. Your job is to get them the right answer
@@ -66,7 +67,7 @@ def project_instructions(project_root: Path, *, max_chars: int = 8000) -> list[t
 
 def build_system_prompt(project_root: Path) -> str:
     parts = [_POLICY]
-    for name, text in project_instructions(project_root):
+    for name, text in project_instructions(context_root(project_root)):
         parts.append(f"\nProject instructions from {name}:\n{text}")
     parts.append(f"\nProject root: {project_root}")
     return "\n".join(parts)

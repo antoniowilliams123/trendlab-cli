@@ -23,6 +23,7 @@ from typing import Any
 import tomli_w
 from pydantic import ValidationError
 
+from trendlab.config import runtime
 from trendlab.config.schema import AppConfig
 
 GLOBAL_DIR_NAME = ".trendlab"
@@ -166,6 +167,15 @@ def describe_risky(risky: dict[str, Any]) -> list[str]:
 
 
 def load_config(project_root: Path | None = None) -> AppConfig:
+    rt = runtime.runtime_dir()
+    # IL-0: only the referee-owned runtime config; the home, project and trust store are ignored
+    if rt is not None:
+        try:
+            cfg = AppConfig.model_validate(_read_toml(rt / CONFIG_FILE_NAME))
+        except ValidationError as exc:
+            raise ConfigError(f"invalid runtime configuration: {exc}") from exc
+        cfg.untrusted_project = []
+        return cfg
     data = _read_toml(global_config_path())
     pending: list[str] = []
     if project_root is not None:
@@ -198,6 +208,10 @@ def update_project_config(project_root: Path, section: str, values: dict[str, An
 
 
 def _update_config_file(path: Path, section: str, values: dict[str, Any]) -> Path:
+    if runtime.locked():
+        raise ConfigError(
+            "the runtime is locked (IL-0): change the referee-owned runtime config instead"
+        )
     data = _read_toml(path)
     data[section] = _deep_merge(data.get(section, {}), values)
     # Validate the merged result before persisting.
