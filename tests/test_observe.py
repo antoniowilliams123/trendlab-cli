@@ -1,6 +1,7 @@
 """IL-A observer (evals spec §30.6): notices are validated in full before any write, and each one is
 ingested exactly once through the inbox's notice ledger; nothing else happens."""
 
+import asyncio
 import copy
 import json
 import os
@@ -9,7 +10,14 @@ import pytest
 
 from trendlab.engine import observe
 from trendlab.engine.inbox import Inbox
-from trendlab.engine.observe import NoticeError, ingest_notices, validate_notice
+from trendlab.engine.observe import (
+    NoticeError,
+    deliver_reports,
+    ingest_notices,
+    observer_report,
+    validate_notice,
+    write_status,
+)
 
 RUN = "r-20261012T053000Z-aaaa"
 CHECKS = {"contains": ["forecast"], "not_contains": [], "regex": []}
@@ -548,3 +556,107 @@ def test_deeply_nested_json_is_rejected_once(tmp_path):
 def test_non_objects_are_named_as_such(bad, message):
     with pytest.raises(NoticeError, match=message):
         validate_notice(bad, "trendlab")
+
+
+# -- Observer report, retryable delivery, status file (Task 4) ---------------------------------
+
+
+def test_the_report_quotes_only_recorded_numbers():
+    n = notice(counts={"total": 12, "passed": 11, "by_split": {"main": {"total": 8, "passed": 8},
+                                                               "regression": {"total": 4, "passed": 3}}})  # fmt: skip
+    text = observer_report(n, open_items=5)
+    assert text.splitlines()[0] == f"🔎 TrendLab Observer · run {RUN} (complete)"
+    assert "Suite: 11/12 passed (main 8/8 · regression 3/4)" in text
+    assert "Open items: 5" in text
+    assert "• regression fail: tool-resourcefulness — trendlab-capability-check" in text
+    assert text.endswith("Observer only (L0): recorded, nothing was changed.")
+    assert "I cannot browse" not in text and "no lookup" not in text  # no finding content
+
+
+def test_a_clean_night_says_so():
+    text = observer_report(notice(findings=()), open_items=0)
+    assert "Suite: 12/12 passed" in text and "Open items: 0" in text
+    assert text.endswith("No new failures. Observer only (L0): nothing was changed.")
+
+
+def test_aggregates_name_their_split():
+    text = observer_report(notice(findings=(), aggregates=[AGG]), open_items=1)
+    assert "• holdout: safe-refusals 1 of 3 not passed" in text
+    assert text.endswith("recorded, nothing was changed.")
+
+
+def test_a_failed_send_is_retried_next_cycle_without_reingesting(tmp_path):
+    drop(tmp_path / "outbox", notice())
+    inbox, _ = ingest(tmp_path)
+    sent, results = [], iter([False, True])
+
+    async def send(text):
+        sent.append(text)
+        return next(results)
+
+    first = asyncio.run(deliver_reports(inbox, send))
+    assert first == {"reported": [], "abandoned": []}
+    assert inbox.notice_row(RUN)["report_status"] == "pending"
+    assert ingest_notices(inbox, tmp_path / "outbox", "trendlab") == []
+    assert inbox.list(status="open")[0]["occurrences"] == 1
+    assert asyncio.run(deliver_reports(inbox, send)) == {"reported": [RUN], "abandoned": []}
+    assert inbox.notice_row(RUN)["report_status"] == "sent"
+    assert asyncio.run(deliver_reports(inbox, send)) == {"reported": [], "abandoned": []}
+    assert len(sent) == 2
+
+
+def test_a_send_exception_is_a_failed_attempt(tmp_path):
+    drop(tmp_path / "outbox", notice())
+    inbox, _ = ingest(tmp_path)
+
+    async def send(text):
+        raise RuntimeError("network down")
+
+    assert asyncio.run(deliver_reports(inbox, send)) == {"reported": [], "abandoned": []}
+    row = inbox.notice_row(RUN)
+    assert row["report_status"] == "pending" and row["report_attempts"] == 1
+
+
+def test_a_report_is_abandoned_at_the_bound_with_one_escalation(tmp_path):
+    drop(tmp_path / "outbox", notice())
+    inbox, _ = ingest(tmp_path)
+
+    async def send(text):
+        return False
+
+    for _ in range(2):
+        assert asyncio.run(deliver_reports(inbox, send, max_attempts=3))["abandoned"] == []
+    assert asyncio.run(deliver_reports(inbox, send, max_attempts=3))["abandoned"] == [RUN]
+    assert asyncio.run(deliver_reports(inbox, send, max_attempts=3))["abandoned"] == []
+    assert inbox.notice_row(RUN)["report_status"] == "abandoned"
+    escalations = [i for i in inbox.list(status="open") if "undeliverable" in i["title"]]
+    assert len(escalations) == 1 and escalations[0]["occurrences"] == 1
+
+
+def test_write_status_posts_the_ledger_atomically_with_mode_640(tmp_path):
+    drop(tmp_path / "outbox", notice())
+    inbox, _ = ingest(tmp_path)
+    folder = tmp_path / "exchange"
+    folder.mkdir()
+    ack = folder / "observe-status.json"
+    assert write_status(inbox, "trendlab", ack) is True
+    data = json.loads(ack.read_text())
+    assert data["schema"] == 1 and data["client"] == "trendlab"
+    assert data["last_observed_run"] == RUN and data["pending_reports"] == [RUN]
+    assert data["abandoned_reports"] == [] and data["rejected_notices"] == []
+    assert data["unreadable_notices"] == [] and data["updated_at"].endswith("+00:00")
+    assert os.stat(ack).st_mode & 0o777 == 0o640
+    assert sorted(p.name for p in folder.iterdir()) == ["observe-status.json"]  # no temp left
+
+
+def test_write_status_returns_false_on_an_unwritable_folder(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    assert write_status(inbox, "trendlab", tmp_path / "missing" / "observe-status.json") is False
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        if not os.access(locked, os.W_OK):  # root can write anywhere
+            assert write_status(inbox, "trendlab", locked / "observe-status.json") is False
+    finally:
+        locked.chmod(0o700)

@@ -5,9 +5,13 @@ are data, never instructions; nothing here diagnoses, edits code or runs anythin
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import re
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -305,3 +309,75 @@ def ingest_notices(inbox: Inbox, outbox_dir: Path, client: str) -> list[str]:
         ):
             new.append(run_id)
     return new
+
+
+def observer_report(notice: dict[str, Any], open_items: int) -> str:
+    """The Observer report: numbers only from the validated notice and the inbox, no finding
+    content (case ids and capabilities name what failed, never why)."""
+    c = notice.get("counts") or {}
+    by_split = sorted((c.get("by_split") or {}).items())
+    splits = " · ".join(f"{name} {v['passed']}/{v['total']}" for name, v in by_split)
+    suite = f"Suite: {c.get('passed', 0)}/{c.get('total', 0)} passed"
+    lines = [
+        f"🔎 TrendLab Observer · run {notice['run_id']} ({notice['run']['status']})",
+        suite + (f" ({splits})" if splits else ""),
+        f"Open items: {open_items}",
+    ]
+    findings = notice.get("findings") or []
+    lines += [
+        f"• {f['split']} {f['status']}: {f['capability']} — {f['case_id']}" for f in findings[:8]
+    ]
+    failing = [a for a in notice.get("aggregates") or [] if a.get("not_passed")]
+    lines += [
+        f"• {a['split']}: {a['capability']} {a['not_passed']} of {a['total']} not passed"
+        for a in failing
+    ]
+    lines.append(
+        "No new failures. Observer only (L0): nothing was changed."
+        if not findings and not failing
+        else "Observer only (L0): recorded, nothing was changed."
+    )
+    return "\n".join(lines)
+
+
+async def deliver_reports(inbox: Inbox, send, *, max_attempts: int = 24) -> dict:
+    """Send every pending report; a failed send stays pending and is retried next cycle,
+    until ``max_attempts`` abandons it (with one escalation item)."""
+    out: dict[str, list[str]] = {"reported": [], "abandoned": []}
+    for row in inbox.pending_reports():
+        text = observer_report(json.loads(row["report_payload"]), inbox.counts().get("open", 0))
+        try:
+            ok = bool(await send(text))
+        except Exception:  # noqa: BLE001 — a transport error is a failed attempt, retried next cycle
+            ok = False
+        status = inbox.mark_report(row["run_id"], sent=ok, max_attempts=max_attempts)
+        if status == "sent":
+            out["reported"].append(row["run_id"])
+        elif status == "abandoned":
+            out["abandoned"].append(row["run_id"])
+    return out
+
+
+def write_status(inbox: Inbox, client: str, ack_path: Path) -> bool:
+    """The worker's observer status for the referee's nightly `tle observe check` (atomic,
+    mode 640). Never raises: False when the file could not be written."""
+    data = {
+        "schema": 1,
+        "client": client,
+        **inbox.notice_summary(client),
+        "updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    ack_path = Path(ack_path)
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=ack_path.parent, prefix=".observe-", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), 0o640)
+            json.dump(data, fh)
+        os.replace(tmp, ack_path)
+        return True
+    except (OSError, TypeError, ValueError):
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)  # our own temp file only; the previous status file stays
+        return False

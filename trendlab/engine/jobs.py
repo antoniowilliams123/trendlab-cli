@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -309,3 +310,24 @@ async def meta_scan(inbox: Inbox, config, *, days: int = 7) -> dict[str, Any]:
         "by_kind": counter_summary(clusters),
         "cards": [c["id"] for c in cards],
     }
+
+
+# Serializes observe runs (schedule and socket trigger). Created lazily inside the running loop.
+_OBSERVE_LOCK: asyncio.Lock | None = None
+
+
+async def observe_job(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, Any]:
+    """IL-A observer (evals spec §30.6): ingest new notices exactly once, deliver pending reports
+    with retry, and post the status file the referee checks. Serialized: one observe at a time."""
+    global _OBSERVE_LOCK
+    from trendlab.engine.notify import send_telegram
+    from trendlab.engine.observe import deliver_reports, ingest_notices, write_status
+
+    if _OBSERVE_LOCK is None:
+        _OBSERVE_LOCK = asyncio.Lock()
+    async with _OBSERVE_LOCK:
+        imp = config.improvement
+        new = ingest_notices(inbox, Path(imp.outbox_dir), imp.client)
+        out = await deliver_reports(inbox, lambda text: send_telegram(config, text))
+        status_ok = write_status(inbox, imp.client, Path(imp.ack_path))
+    return {"ingested": len(new), **out, "status_written": status_ok}

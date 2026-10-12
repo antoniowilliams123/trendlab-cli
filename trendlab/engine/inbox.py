@@ -401,10 +401,18 @@ class Inbox:
         return self._row(rows[0]) if len(rows) == 1 else None
 
     def list(
-        self, project: str | None = None, *, status: str | None = "open", limit: int = 50
+        self,
+        project: str | None = None,
+        *,
+        status: str | None = "open",
+        limit: int = 50,
+        exclude_source: str | None = None,
     ) -> list[dict[str, Any]]:
         q = "SELECT * FROM issue WHERE 1=1"
         params: list[Any] = []
+        if exclude_source:  # filtered before the limit, so excluded items never crowd it out
+            q += " AND source!=?"
+            params.append(exclude_source)
         if project:
             q += " AND project=?"
             params.append(project)

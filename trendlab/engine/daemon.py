@@ -73,7 +73,15 @@ class Engine:
             return {}
 
     def _save_state(self) -> None:
-        state_path().write_text(json.dumps(self.state, indent=1))
+        """Atomic: a crash or failed write leaves the previous state file whole."""
+        path = state_path()
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(self.state, indent=1))
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # our own temp file only
+            raise
 
     # -- schedule ----------------------------------------------------------------------------
     def due(self, job: str, now: datetime) -> bool:
@@ -91,6 +99,13 @@ class Engine:
         if job == "meta":
             return not warm and (
                 not last or (now.timestamp() - float(last)) >= ecfg.meta_days * 86400
+            )
+        if job == "observe":
+            last = self.state.get("last_observe")
+            return (
+                bool(self.config.improvement.observe)
+                and not warm
+                and (not last or time.time() - last >= 1800)
             )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
@@ -146,6 +161,10 @@ class Engine:
                 result["meta"] = await meta_scan(self.inbox, self.config)
             elif job == "digest":
                 result["sent"] = await self.send_digest()
+            elif job == "observe":
+                from trendlab.engine.jobs import observe_job
+
+                result["observe"] = await observe_job(self.inbox, self.config, self.state)
             elif job == "prune":
                 from trendlab.sessions.store import SessionStore
 
@@ -190,8 +209,9 @@ class Engine:
         return result
 
     async def send_digest(self) -> bool:
-        """One plain-English message per cycle (§7.2), only for open issues not reported yet."""
-        open_items = self.inbox.list(status="open")
+        """One plain-English message per cycle (§7.2), only for open issues not reported yet.
+        Evals items are left out: the Observer report covers them."""
+        open_items = self.inbox.list(status="open", exclude_source="evals")
         open_ids = {it["id"] for it in open_items}
         reported = set(self.state.get("digest_reported_ids", [])) & open_ids
         new = [it for it in open_items if it["id"] not in reported]
@@ -226,7 +246,10 @@ class Engine:
                 resp = self.status()
             elif cmd == "digest":
                 resp = {
-                    "text": digest(self.inbox.list(status="open", limit=3), self.inbox.counts())
+                    "text": digest(
+                        self.inbox.list(status="open", limit=3, exclude_source="evals"),
+                        self.inbox.counts(),
+                    )
                 }
             elif cmd == "run" and req.get("job") in {
                 "watch",
@@ -238,6 +261,7 @@ class Engine:
                 "budget",
                 "health",
                 "review",
+                "observe",
             }:
                 resp = await self.run_job(req["job"])
             elif cmd == "stop":
@@ -276,6 +300,7 @@ class Engine:
                     "budget",
                     "health",
                     "review",
+                    "observe",
                 ):
                     if self.due(job, now):
                         await self.run_job(job)

@@ -3,6 +3,7 @@ meta-loop scan, daemon scheduling and socket, watch, failed runs filed automatic
 
 import asyncio
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -315,3 +316,145 @@ def test_narrow_exclude_is_idempotent(tmp_path: Path):
         and "foo" in text
         and "\n.trendlab/\n" not in "\n" + text
     )
+
+
+# -- IL-A observe job (evals spec §30.6) ---------------------------------------------------------
+
+OBS_RUN = "r-20261012T053000Z-aaaa"
+
+
+def _observe_engine(tmp_path: Path) -> Engine:
+    from tests.test_observe import drop, notice
+    from trendlab.engine import jobs
+
+    jobs._OBSERVE_LOCK = None  # created lazily inside the running loop
+    cfg = AppConfig()
+    cfg.improvement.observe = True
+    cfg.improvement.outbox_dir = str(tmp_path / "outbox")
+    (tmp_path / "exchange").mkdir()
+    cfg.improvement.ack_path = str(tmp_path / "exchange" / "observe-status.json")
+    drop(tmp_path / "outbox", notice())
+    return Engine(projects=[tmp_path], config=cfg, tick_seconds=0.05)
+
+
+def _fake_sends(monkeypatch, results):
+    from trendlab.engine import notify
+
+    sent, it = [], iter(results)
+
+    async def fake(config, text):
+        sent.append(text)
+        await asyncio.sleep(0)  # yield, so an unserialized second job could interleave
+        return next(it)
+
+    monkeypatch.setattr(notify, "send_telegram", fake)
+    return sent
+
+
+def test_observe_due_rules(tmp_path: Path):
+    cfg = AppConfig()
+    eng = Engine(projects=[tmp_path], config=cfg)
+    now = datetime(2026, 10, 12, 6, 0, tzinfo=UTC)
+    eng.started -= 1000
+    assert not eng.due("observe", now)  # off unless configured
+    cfg.improvement.observe = True
+    assert eng.due("observe", now)
+    eng.state["last_observe"] = datetime.now(UTC).timestamp() - 600
+    assert not eng.due("observe", now)  # every 30 minutes at most
+    eng.state["last_observe"] -= 1800
+    assert eng.due("observe", now)
+    eng.started = datetime.now(UTC).timestamp()
+    assert not eng.due("observe", now)  # waits out the warm-up like the other jobs
+    eng.inbox.close()
+
+
+async def test_observe_job_retries_the_report_through_run_job(tmp_path: Path, monkeypatch):
+    eng = _observe_engine(tmp_path)
+    sent = _fake_sends(monkeypatch, [False, True])
+    first = await eng.run_job("observe")
+    assert "error" not in first, first
+    assert first["observe"] == {"ingested": 1, "reported": [], "abandoned": [],
+                                "status_written": True}  # fmt: skip
+    second = await eng.run_job("observe")
+    assert second["observe"]["ingested"] == 0 and second["observe"]["reported"] == [OBS_RUN]
+    assert len(sent) == 2 and len(eng.inbox.list(status="open")) == 1
+    status = json.loads((tmp_path / "exchange" / "observe-status.json").read_text())
+    assert status["last_observed_run"] == OBS_RUN and status["pending_reports"] == []
+    assert "last_observe" in eng.state
+    eng.inbox.close()
+
+
+async def test_concurrent_observe_jobs_send_at_most_one_report(tmp_path: Path, monkeypatch):
+    from trendlab.engine.jobs import observe_job
+
+    eng = _observe_engine(tmp_path)
+    sent = _fake_sends(monkeypatch, [True, True])
+    a, b = await asyncio.gather(
+        observe_job(eng.inbox, eng.config, eng.state),
+        observe_job(eng.inbox, eng.config, eng.state),
+    )
+    assert len(sent) == 1 and a["ingested"] + b["ingested"] == 1
+    assert a["reported"] + b["reported"] == [OBS_RUN]
+    eng.inbox.close()
+
+
+async def test_the_digest_skips_evals_items(tmp_path: Path, monkeypatch):
+    eng = Engine(projects=[tmp_path], config=AppConfig())
+    sent = []
+
+    async def fake_send(config, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(daemon_mod, "send_telegram", fake_send)
+    for name in ("alpha", "beta", "gamma", "delta"):  # evals items that would fill a short list
+        eng.inbox.record(project="/h", title=f"Evals main fail {name}", signature=name,
+                         severity="high", source="evals")  # fmt: skip
+    assert await eng.send_digest() is False  # the Observer report covers evals items
+    eng.inbox.record(project="/p", title="broken thing", signature="x", severity="low")
+    assert await eng.send_digest() is True
+    assert "broken thing" in sent[0] and "Evals" not in sent[0]
+    task = asyncio.create_task(eng.run())
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if daemon_mod.socket_path().exists():
+            break
+    dg = await client("digest")
+    assert "broken thing" in dg["text"] and "Evals" not in dg["text"]
+    await client("stop")
+    await asyncio.wait_for(task, timeout=5)
+
+
+def test_save_state_leaves_no_partial_file(tmp_path: Path, monkeypatch):
+    eng = Engine(projects=[tmp_path], config=AppConfig())
+    eng.state = {"last_watch": 1.0}
+    eng._save_state()
+    eng.state = {"last_watch": 2.0, "big": "x" * 10000}
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(daemon_mod.os, "replace", boom)
+    try:
+        eng._save_state()
+    except OSError:
+        pass
+    assert json.loads(daemon_mod.state_path().read_text()) == {"last_watch": 1.0}
+    assert sorted(p.name for p in daemon_mod.state_path().parent.iterdir()
+                  if p.name.startswith(("state", ".state"))) == ["state.json"]  # fmt: skip
+    eng.inbox.close()
+
+
+def test_engine_run_observe_is_socket_only(tmp_path: Path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from trendlab.cli import app
+
+    async def never(self, job):
+        raise AssertionError("observe must never run in-process")
+
+    monkeypatch.setattr(Engine, "run_job", never)
+    daemon_mod.pid_path().write_text(str(os.getpid()))  # even a live pid file changes nothing
+    r = CliRunner().invoke(app, ["engine", "run", "observe"])
+    assert r.exit_code == 1
+    assert "the engine is not running; observe runs inside the engine" in r.output
