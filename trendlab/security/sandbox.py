@@ -23,6 +23,9 @@ class Sandbox:
     bwrap: str | None = field(default_factory=lambda: shutil.which("bwrap"))
 
     docker: str | None = field(default_factory=lambda: shutil.which("docker"))
+    # IL-B (evals D-115): a caller that must never run unsandboxed pins the mode here, and the
+    # TRENDLAB_SANDBOX environment variable is then ignored.
+    force_mode: str | None = None
 
     @property
     def available(self) -> bool:
@@ -32,7 +35,10 @@ class Sandbox:
 
     @property
     def mode(self) -> str:
-        """Effective mode: the TRENDLAB_SANDBOX env var (off/on/auto) overrides the config."""
+        """Effective mode: ``force_mode`` when set; otherwise the TRENDLAB_SANDBOX env var
+        (off/on/auto) overrides the config."""
+        if self.force_mode is not None:
+            return self.force_mode
         env = os.environ.get("TRENDLAB_SANDBOX", "").strip().lower()
         return env if env in {"off", "on", "auto", "docker"} else self.config.mode
 

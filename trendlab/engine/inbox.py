@@ -239,8 +239,10 @@ class Inbox:
         evidence: list[str] | None = None,
         severity: str = "med",
         card: dict[str, Any] | None = None,
+        cluster: str | None = None,
     ) -> dict[str, Any]:
-        """Insert or merge into the cluster; silenced clusters stay silenced but count."""
+        """Insert or merge into the cluster; silenced clusters stay silenced but count.
+        ``cluster`` names the cluster explicitly instead of hashing the signature."""
         with self._lock:
             issue_id = self._record_locked(
                 project=project,
@@ -252,6 +254,7 @@ class Inbox:
                 evidence=evidence,
                 severity=severity,
                 card=card,
+                cluster=cluster,
             )
             self._conn.commit()
         return self.get(issue_id)
