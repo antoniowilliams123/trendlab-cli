@@ -318,16 +318,37 @@ _OBSERVE_LOCK: asyncio.Lock | None = None
 
 async def observe_job(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, Any]:
     """IL-A observer (evals spec §30.6): ingest new notices exactly once, deliver pending reports
-    with retry, and post the status file the referee checks. Serialized: one observe at a time."""
+    with retry, and post the status file the referee checks. Serialized: one observe at a time.
+    A failure in ingest or delivery is recorded and never stops the status file."""
     global _OBSERVE_LOCK
     from trendlab.engine.notify import send_telegram
     from trendlab.engine.observe import deliver_reports, ingest_notices, write_status
 
+    imp = config.improvement
+    if not imp.observe:
+        return {"skipped": "observe is off"}
     if _OBSERVE_LOCK is None:
         _OBSERVE_LOCK = asyncio.Lock()
+    result: dict[str, Any] = {"ingested": 0, "reported": [], "abandoned": []}
+    errors: list[str] = []
+    readable = False
     async with _OBSERVE_LOCK:
-        imp = config.improvement
-        new = ingest_notices(inbox, Path(imp.outbox_dir), imp.client)
-        out = await deliver_reports(inbox, lambda text: send_telegram(config, text))
-        status_ok = write_status(inbox, imp.client, Path(imp.ack_path))
-    return {"ingested": len(new), **out, "status_written": status_ok}
+        try:
+            try:
+                result["ingested"] = len(ingest_notices(inbox, Path(imp.outbox_dir), imp.client))
+                readable = (Path(imp.outbox_dir) / imp.client).is_dir()
+            except Exception as exc:  # noqa: BLE001 — recorded; delivery and status still run
+                errors.append(f"ingest: {exc.__class__.__name__}: {exc}"[:200])
+            try:
+                out = await deliver_reports(inbox, lambda text: send_telegram(config, text))
+                result.update(out)
+            except Exception as exc:  # noqa: BLE001 — recorded; the status file still posts
+                errors.append(f"deliver: {exc.__class__.__name__}: {exc}"[:200])
+        finally:
+            result["status_written"] = write_status(
+                inbox, imp.client, Path(imp.ack_path), outbox_readable=readable
+            )
+    result["outbox_readable"] = readable
+    if errors:
+        result["errors"] = errors
+    return result

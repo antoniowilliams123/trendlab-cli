@@ -660,3 +660,51 @@ def test_write_status_returns_false_on_an_unwritable_folder(tmp_path):
             assert write_status(inbox, "trendlab", locked / "observe-status.json") is False
     finally:
         locked.chmod(0o700)
+
+
+def test_a_poison_report_row_is_a_failed_attempt_and_is_abandoned(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    bad, good = "r-20261011T053000Z-aaaa", RUN
+    inbox.ingest_notice(run_id=bad, client="trendlab", fingerprint="f", entries=[],
+                        payload=json.dumps({"no": "run id"}))  # fmt: skip
+    drop(tmp_path / "outbox", notice())
+    ingest_notices(inbox, tmp_path / "outbox", "trendlab")
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        return True
+
+    first = asyncio.run(deliver_reports(inbox, send, max_attempts=2))
+    assert first == {"reported": [good], "abandoned": []}  # the bad row blocks nothing behind it
+    assert inbox.notice_row(bad)["report_attempts"] == 1
+    assert asyncio.run(deliver_reports(inbox, send, max_attempts=2))["abandoned"] == [bad]
+    assert len(sent) == 1
+
+
+def test_write_status_never_raises_on_a_database_error(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    inbox.close()  # any query now raises sqlite3.ProgrammingError
+    ack = tmp_path / "observe-status.json"
+    assert write_status(inbox, "trendlab", ack) is False
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["inbox.db"]
+
+
+def test_write_status_reports_outbox_readability(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    ack = tmp_path / "observe-status.json"
+    assert write_status(inbox, "trendlab", ack, outbox_readable=False) is True
+    assert json.loads(ack.read_text())["outbox_readable"] is False
+
+
+def test_an_unreadable_outbox_raises_instead_of_looking_empty(tmp_path):
+    drop(tmp_path / "outbox", notice())
+    folder = tmp_path / "outbox" / "trendlab"
+    folder.chmod(0o300)  # traversable, not listable
+    try:
+        if os.access(folder, os.R_OK):
+            pytest.skip("running as root")
+        with pytest.raises(PermissionError):
+            ingest_notices(Inbox(tmp_path / "inbox.db"), tmp_path / "outbox", "trendlab")
+    finally:
+        folder.chmod(0o700)

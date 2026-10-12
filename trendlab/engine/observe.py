@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -262,10 +263,13 @@ def ingest_notices(inbox: Inbox, outbox_dir: Path, client: str) -> list[str]:
     ingested. The inbox's notice ledger is the only record of what was seen, written in the same
     transaction as the items, so a crash or restart can never re-ingest or half-ingest one."""
     folder = Path(outbox_dir) / client
-    if not folder.is_dir():
-        return []
+    try:  # os.scandir, unlike glob, raises on a folder it cannot read
+        with os.scandir(folder) as entries:
+            names = sorted(e.name for e in entries if e.name.startswith("r-"))
+    except (FileNotFoundError, NotADirectoryError):
+        return []  # no outbox yet: a quiet no-op; any other OSError reaches the caller
     new: list[str] = []
-    for path in sorted(folder.glob("r-*.json")):
+    for path in (folder / name for name in names if name.endswith(".json")):
         run_id = path.stem
         if not RUN_ID_RE.match(run_id):
             continue
@@ -345,10 +349,10 @@ async def deliver_reports(inbox: Inbox, send, *, max_attempts: int = 24) -> dict
     until ``max_attempts`` abandons it (with one escalation item)."""
     out: dict[str, list[str]] = {"reported": [], "abandoned": []}
     for row in inbox.pending_reports():
-        text = observer_report(json.loads(row["report_payload"]), inbox.counts().get("open", 0))
-        try:
+        try:  # a bad payload or a transport error is a failed attempt, retried next cycle
+            text = observer_report(json.loads(row["report_payload"]), inbox.counts().get("open", 0))
             ok = bool(await send(text))
-        except Exception:  # noqa: BLE001 — a transport error is a failed attempt, retried next cycle
+        except Exception:  # noqa: BLE001 — so a poison row is eventually abandoned, never stuck
             ok = False
         status = inbox.mark_report(row["run_id"], sent=ok, max_attempts=max_attempts)
         if status == "sent":
@@ -358,25 +362,29 @@ async def deliver_reports(inbox: Inbox, send, *, max_attempts: int = 24) -> dict
     return out
 
 
-def write_status(inbox: Inbox, client: str, ack_path: Path) -> bool:
+def write_status(
+    inbox: Inbox, client: str, ack_path: Path, *, outbox_readable: bool | None = None
+) -> bool:
     """The worker's observer status for the referee's nightly `tle observe check` (atomic,
-    mode 640). Never raises: False when the file could not be written."""
-    data = {
-        "schema": 1,
-        "client": client,
-        **inbox.notice_summary(client),
-        "updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
+    mode 640). Never raises: False when the status could not be read or written."""
     ack_path = Path(ack_path)
     tmp = None
     try:
+        data = {
+            "schema": 1,
+            "client": client,
+            **inbox.notice_summary(client),
+            "updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+        if outbox_readable is not None:
+            data["outbox_readable"] = outbox_readable
         fd, tmp = tempfile.mkstemp(dir=ack_path.parent, prefix=".observe-", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             os.fchmod(fh.fileno(), 0o640)
             json.dump(data, fh)
         os.replace(tmp, ack_path)
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, sqlite3.Error):
         if tmp is not None:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)  # our own temp file only; the previous status file stays

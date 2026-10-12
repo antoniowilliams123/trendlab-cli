@@ -105,7 +105,7 @@ class Engine:
             return (
                 bool(self.config.improvement.observe)
                 and not warm
-                and (not last or time.time() - last >= 1800)
+                and (not last or time.time() - float(last) >= 1800)
             )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60

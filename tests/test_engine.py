@@ -374,7 +374,7 @@ async def test_observe_job_retries_the_report_through_run_job(tmp_path: Path, mo
     first = await eng.run_job("observe")
     assert "error" not in first, first
     assert first["observe"] == {"ingested": 1, "reported": [], "abandoned": [],
-                                "status_written": True}  # fmt: skip
+                                "status_written": True, "outbox_readable": True}  # fmt: skip
     second = await eng.run_job("observe")
     assert second["observe"]["ingested"] == 0 and second["observe"]["reported"] == [OBS_RUN]
     assert len(sent) == 2 and len(eng.inbox.list(status="open")) == 1
@@ -458,3 +458,54 @@ def test_engine_run_observe_is_socket_only(tmp_path: Path, monkeypatch):
     r = CliRunner().invoke(app, ["engine", "run", "observe"])
     assert r.exit_code == 1
     assert "the engine is not running; observe runs inside the engine" in r.output
+
+
+async def test_observe_is_skipped_when_off_even_from_the_socket(tmp_path: Path, monkeypatch):
+    eng = _observe_engine(tmp_path)
+    eng.config.improvement.observe = False
+    sent = _fake_sends(monkeypatch, [True])
+    res = await eng.run_job("observe")
+    assert res["observe"] == {"skipped": "observe is off"} and sent == []
+    assert eng.inbox.notice_row(OBS_RUN) is None
+    assert not (tmp_path / "exchange" / "observe-status.json").exists()
+    eng.inbox.close()
+
+
+async def test_an_ingest_failure_still_delivers_and_posts_the_status(tmp_path: Path, monkeypatch):
+    from trendlab.engine import observe
+
+    eng = _observe_engine(tmp_path)
+    sent = _fake_sends(monkeypatch, [True])
+    eng.inbox.ingest_notice(run_id="r-20261011T053000Z-zzzz", client="trendlab",
+                            fingerprint="f", entries=[], payload=json.dumps(
+                                {"run_id": "r-20261011T053000Z-zzzz", "run": {"status": "complete"},
+                                 "counts": {}, "findings": [], "aggregates": []}))  # fmt: skip
+
+    def boom(*a, **k):
+        raise PermissionError("outbox parent not traversable")
+
+    monkeypatch.setattr(observe, "ingest_notices", boom)
+    res = (await eng.run_job("observe"))["observe"]
+    assert res["ingested"] == 0 and res["outbox_readable"] is False
+    assert res["reported"] == ["r-20261011T053000Z-zzzz"] and len(sent) == 1
+    assert res["status_written"] is True and res["errors"][0].startswith("ingest: PermissionError")
+    status = json.loads((tmp_path / "exchange" / "observe-status.json").read_text())
+    assert status["outbox_readable"] is False
+    eng.inbox.close()
+
+
+async def test_a_delivery_failure_still_posts_the_status(tmp_path: Path, monkeypatch):
+    from trendlab.engine import observe
+
+    eng = _observe_engine(tmp_path)
+
+    async def boom(*a, **k):
+        raise RuntimeError("inbox locked")
+
+    monkeypatch.setattr(observe, "deliver_reports", boom)
+    res = (await eng.run_job("observe"))["observe"]
+    assert res["ingested"] == 1 and res["status_written"] is True
+    assert res["errors"] == ["deliver: RuntimeError: inbox locked"]
+    status = json.loads((tmp_path / "exchange" / "observe-status.json").read_text())
+    assert status["pending_reports"] == [OBS_RUN] and status["outbox_readable"] is True
+    eng.inbox.close()
