@@ -13,6 +13,8 @@ import re
 from datetime import date
 from pathlib import Path
 
+from trendlab.config import runtime
+
 HEADER = (
     "# TrendLab project memory\n\nOne durable fact per line. Edit freely; /memory in TrendLab.\n\n"
 )
@@ -31,8 +33,11 @@ class ProjectMemory:
         path: Path | None = None,
         max_entries: int = 60,
         max_prompt_chars: int = 6000,
+        locked: bool | None = None,
     ) -> None:
         self.path = path or (project_root / ".trendlab" / "memory.md")
+        # IL-0: a locked runtime reads the referee-owned memory and never changes it
+        self.locked = runtime.locked() if locked is None else locked
         self.max_entries = max_entries
         self.max_prompt_chars = max_prompt_chars
         self.entries: list[tuple[str, str]] = []  # (date, fact)
@@ -61,12 +66,19 @@ class ProjectMemory:
         except OSError:
             pass
 
+    def _refuse_if_locked(self) -> None:
+        if self.locked:
+            raise runtime.LockedError(
+                "the runtime is locked (IL-0): project memory cannot be changed here"
+            )
+
     @property
     def facts(self) -> list[str]:
         return [f for _, f in self.entries]
 
     def add(self, fact: str, *, when: str | None = None) -> bool:
         """Add one fact; False when an equivalent one is already stored."""
+        self._refuse_if_locked()
         fact = " ".join(fact.strip().lstrip("-*• ").split())
         if len(fact) < 8:
             return False
@@ -83,6 +95,7 @@ class ProjectMemory:
 
     def forget(self, index: int) -> str | None:
         """Remove the 1-based entry; returns the removed fact."""
+        self._refuse_if_locked()
         if 1 <= index <= len(self.entries):
             _, fact = self.entries.pop(index - 1)
             self.save()
@@ -90,6 +103,7 @@ class ProjectMemory:
         return None
 
     def clear(self) -> int:
+        self._refuse_if_locked()
         n = len(self.entries)
         self.entries = []
         self.save()

@@ -58,6 +58,7 @@ async def run_fixture(
             provider=provider,
             console=Console(quiet=True),
             data_dir=home,
+            isolated=True,
         )
         tool_calls = 0
         guards: dict[str, int] = {}
@@ -268,6 +269,7 @@ async def run_task(
             provider=provider,
             console=Console(quiet=True),
             data_dir=home,
+            isolated=True,
         )
         chaos_wrappers: list[Any] = []
         guards: dict[str, int] = {}
@@ -803,6 +805,7 @@ async def planning_eval_task(
             provider=provider,
             console=Console(quiet=True),
             data_dir=home,
+            isolated=True,
         )
         await tl.start(interactive=False)
         try:
@@ -1244,6 +1247,7 @@ async def delegate_eval_task(
             provider=provider,
             console=Console(quiet=True),
             data_dir=home,
+            isolated=True,
         )
         await tl.start(interactive=False)
         try:

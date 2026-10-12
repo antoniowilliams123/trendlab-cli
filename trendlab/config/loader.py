@@ -36,6 +36,10 @@ class ConfigError(Exception):
     """Raised when configuration cannot be loaded or is invalid."""
 
 
+class LockedConfigError(ConfigError, runtime.LockedError):
+    """A config write refused because the runtime is locked (IL-0)."""
+
+
 def trendlab_home() -> Path:
     override = os.environ.get("TRENDLAB_HOME")
     return Path(override).expanduser() if override else Path.home() / GLOBAL_DIR_NAME
@@ -166,10 +170,24 @@ def describe_risky(risky: dict[str, Any]) -> list[str]:
     return out
 
 
+def _check_locked_runtime(rt: Path, project_root: Path | None) -> None:
+    """A misconfigured locked runtime stops the service instead of running on defaults."""
+    if not rt.is_dir():
+        raise ConfigError(
+            f"locked runtime misconfigured: {runtime.RUNTIME_ENV}={rt} is not a directory"
+        )
+    if not (rt / CONFIG_FILE_NAME).is_file():
+        raise ConfigError(f"locked runtime misconfigured: {rt / CONFIG_FILE_NAME} is missing")
+    ctx = runtime.context_root(project_root or Path.cwd())
+    if not ctx.is_dir():
+        raise ConfigError(f"locked runtime misconfigured: project context {ctx} is not a directory")
+
+
 def load_config(project_root: Path | None = None) -> AppConfig:
     rt = runtime.runtime_dir()
     # IL-0: only the referee-owned runtime config; the home, project and trust store are ignored
     if rt is not None:
+        _check_locked_runtime(rt, project_root)
         try:
             cfg = AppConfig.model_validate(_read_toml(rt / CONFIG_FILE_NAME))
         except ValidationError as exc:
@@ -209,7 +227,7 @@ def update_project_config(project_root: Path, section: str, values: dict[str, An
 
 def _update_config_file(path: Path, section: str, values: dict[str, Any]) -> Path:
     if runtime.locked():
-        raise ConfigError(
+        raise LockedConfigError(
             "the runtime is locked (IL-0): change the referee-owned runtime config instead"
         )
     data = _read_toml(path)

@@ -95,6 +95,7 @@ class TrendLabApp:
         on_token: Callable[[str], None] | None = None,
         on_thinking: Callable[[str], None] | None = None,
         allow_destructive: bool = False,
+        isolated: bool = False,
     ) -> None:
         self.project_root = project_root.resolve()
         self.config = config
@@ -104,6 +105,17 @@ class TrendLabApp:
         self.console_input = console_input or ConsoleInput()
         self.permission_mode = PermissionMode(permission_mode or config.defaults.permission_mode)
         self.data_dir = data_dir or trendlab_home()
+        # IL-0: a live session under a locked runtime reads behavior only from referee-owned
+        # places. An isolated harness app (a benchmark fixture) reads its own project and the
+        # home it was given instead, and may write to them.
+        self.isolated = isolated
+        self._locked = runtime.locked() and not isolated
+        if not isolated:
+            self._behavior_home = behavior_home(self.data_dir)
+        elif data_dir is None and runtime.locked():
+            self._behavior_home = runtime.isolated_home()
+        else:
+            self._behavior_home = self.data_dir
         self.resume_target = resume
         self.on_token = on_token
         self.on_thinking = on_thinking
@@ -199,7 +211,9 @@ class TrendLabApp:
             self.gateway.register(self.model_ref, self._provider_override)
         self.costs = CostTracker(self.config)
         self.costs.on_record = self._persist_cost
-        self.engine.project_rules = ProjectRules(context_root(self.project_root))
+        self.engine.project_rules = ProjectRules(
+            self._context_root(self.project_root), persist=not self._locked
+        )
 
         rules = IgnoreRules.for_project(
             self.project_root, respect_gitignore=self.config.git.respect_gitignore
@@ -399,7 +413,7 @@ class TrendLabApp:
         from trendlab.config.schema import HookConfig, McpServerConfig
         from trendlab.extensions.plugins import PluginManager
 
-        self.plugins = PluginManager(behavior_home(self.data_dir))
+        self.plugins = PluginManager(self._behavior_home)
         try:
             plugin_hooks = [HookConfig(**h) for h in self.plugins.hooks()]
             plugin_mcp = {k: McpServerConfig(**v) for k, v in self.plugins.mcp_servers().items()}
@@ -422,7 +436,7 @@ class TrendLabApp:
             from trendlab.extensions.skills import SkillLibrary
 
             self.skills = SkillLibrary(
-                context_root(self.project_root), behavior_home(self.data_dir), skill_dirs
+                self._context_root(self.project_root), self._behavior_home, skill_dirs
             )
             if self.agent is not None:
                 self.agent.skills = self.skills
@@ -432,7 +446,7 @@ class TrendLabApp:
             from trendlab.extensions.commands import CustomCommandLibrary
 
             self.custom_commands = CustomCommandLibrary(
-                context_root(self.project_root), behavior_home(self.data_dir), command_dirs
+                self._context_root(self.project_root), self._behavior_home, command_dirs
             )
         except ImportError:
             pass
@@ -1018,17 +1032,23 @@ class TrendLabApp:
         await self._checkpoint_before_mutation(files)
 
     # -- project memory --------------------------------------------------------------------------
+    def _context_root(self, root: Path) -> Path:
+        """Where project instructions, memory, skills, commands, drivers and rules are read."""
+        return root if self.isolated else context_root(root)
+
     def _system_prompt_for(self, root: Path) -> str:
-        base = build_system_prompt(root)
-        ctx = context_root(root)
+        ctx = self._context_root(root)
+        base = build_system_prompt(root, instructions_root=ctx)
         if self.config.memory.enabled:
             if self.memory is None or self.memory.path.parent.parent != ctx:
-                self.memory = ProjectMemory(ctx, max_entries=self.config.memory.max_entries)
+                self.memory = ProjectMemory(
+                    ctx, max_entries=self.config.memory.max_entries, locked=self._locked
+                )
             base += self.memory.render_for_prompt()
         if self.config.prompts.drivers:
             from trendlab.prompts.drivers import driver_text
 
-            base += driver_text(self.config, self.model_ref, ctx, behavior_home(self.data_dir))
+            base += driver_text(self.config, self.model_ref, ctx, self._behavior_home)
         from trendlab.agent.style import rules_text
 
         base += rules_text(self.config.governance)  # U9: stated before, checked after
@@ -1066,7 +1086,7 @@ class TrendLabApp:
 
     async def learn_from_run(self, result: RunResult) -> list[str]:
         """Extract durable project facts from a finished run into .trendlab/memory.md."""
-        if runtime.locked():  # IL-0: live memory is the referee-owned context, never written
+        if self._locked:  # IL-0: live memory is the referee-owned context, never written
             return []
         if self.memory is None or not (self.config.memory.enabled and self.config.memory.learn):
             return []
@@ -1406,13 +1426,15 @@ class TrendLabApp:
         self.tools.ctx.project_root = new_root
         self.tools.ctx.ignore_rules = rules
         self.tools.ctx.validation_commands = validation_commands(self.config, new_root)
-        self.engine.project_rules = ProjectRules(context_root(new_root))
+        self.engine.project_rules = ProjectRules(
+            self._context_root(new_root), persist=not self._locked
+        )
         self.sandbox = Sandbox(self.config.sandbox, new_root)
         self.tools.ctx.sandbox = self.sandbox
         self.background = self.tools.ctx.background = BackgroundProcessManager(new_root)
         if self.custom_commands is not None:
             self.custom_commands = type(self.custom_commands)(
-                context_root(new_root), behavior_home(self.data_dir)
+                self._context_root(new_root), self._behavior_home
             )
         self.tools.diagnostics = Diagnostics(self.config.diagnostics, new_root)
         self.repo_map = RepositoryMap(

@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from trendlab.config import runtime
-from trendlab.config.loader import ConfigError, load_config, update_global_config
+from trendlab.config.loader import (
+    ConfigError,
+    _read_toml,
+    fingerprint,
+    load_config,
+    split_project_config,
+    update_global_config,
+)
 
 POISON = "POISON-FROM-WRITABLE-PLACE"
 
@@ -55,7 +62,9 @@ def places(tmp_path, monkeypatch):
     )
     write(home / "commands" / "home-poison.md", f"{POISON}\n")
     write(home / "skills" / "_model" / "scripted-m.md", f"{POISON} driver\n")
-    write(home / "trusted_projects.json", json.dumps({str(dev.resolve()): "x"}))
+    # the real fingerprint, so the trust entry would apply the planted hook if it were consulted
+    risky = split_project_config(_read_toml(dev / ".trendlab" / "config.toml"))[1]
+    write(home / "trusted_projects.json", json.dumps({str(dev.resolve()): fingerprint(risky)}))
     # referee-owned runtime and production context
     write(runtime_dir / "config.toml", "[limits]\nmax_cost_usd = 5.0\n")
     write(
@@ -71,13 +80,29 @@ def places(tmp_path, monkeypatch):
     return dev, home, runtime_dir, prod
 
 
-def test_locked_config_comes_only_from_the_runtime(places):
+def test_locked_config_comes_only_from_the_runtime(places, monkeypatch):
     dev, *_ = places
     cfg = load_config(dev)
     assert runtime.locked()
     assert cfg.limits.max_cost_usd == 5.0
     assert not cfg.hooks
     assert cfg.untrusted_project == []
+    assert cfg.defaults.permission_mode != "plan"  # the worker home's setting is ignored
+    monkeypatch.delenv("TRENDLAB_RUNTIME_DIR")
+    assert load_config(dev).hooks  # the trust entry is genuine: unlocked, the hook applies
+
+
+@pytest.mark.parametrize("broken", ["runtime-dir", "runtime-config", "context"])
+def test_misconfigured_locked_runtime_fails_visibly(places, monkeypatch, broken):
+    dev, _home, runtime_dir, _prod = places
+    if broken == "runtime-dir":
+        monkeypatch.setenv("TRENDLAB_RUNTIME_DIR", str(runtime_dir / "missing"))
+    elif broken == "runtime-config":
+        (runtime_dir / "config.toml").unlink()
+    else:
+        monkeypatch.setenv("TRENDLAB_PROJECT_CONTEXT", str(dev.parent / "no-such-checkout"))
+    with pytest.raises(ConfigError, match="locked runtime misconfigured"):
+        load_config(dev)
 
 
 def test_locked_prompt_uses_production_instructions_not_the_dev_clone(places):
@@ -116,6 +141,29 @@ def test_locked_project_rules_are_never_written(places):
     rules.add("shell:echo hi", Decision.ALLOW)
     assert rules.lookup("shell:echo hi") == Decision.ALLOW  # this session only
     assert not (runtime.context_root(dev) / ".trendlab" / "permissions.toml").exists()
+    assert rules.remove("shell:echo hi") and rules.lookup("shell:echo hi") is None
+    assert not (runtime.context_root(dev) / ".trendlab" / "permissions.toml").exists()
+
+
+def test_locked_memory_and_command_scaffold_refuse_writes(places):
+    from trendlab.context.project_memory import ProjectMemory
+    from trendlab.extensions.commands import CustomCommandLibrary
+
+    dev, home, *_ = places
+    ctx = runtime.context_root(dev)
+    before = (ctx / ".trendlab" / "memory.md").read_text()
+    memory = ProjectMemory(ctx)
+    for change in (
+        lambda: memory.add("a fact the worker wants kept"),
+        lambda: memory.forget(1),
+        memory.clear,
+    ):
+        with pytest.raises(runtime.LockedError, match=r"locked \(IL-0\)"):
+            change()
+    assert (ctx / ".trendlab" / "memory.md").read_text() == before
+    with pytest.raises(runtime.LockedError, match=r"locked \(IL-0\)"):
+        CustomCommandLibrary(ctx, runtime.behavior_home(home)).scaffold("newcmd")
+    assert not (ctx / ".trendlab" / "commands").exists()
 
 
 def test_locked_runtime_refuses_to_persist_global_settings(places):
@@ -181,6 +229,74 @@ async def test_started_live_app_loads_extensions_only_from_locked_places(places)
         assert not any("poison" in c.name for c in app.custom_commands.list())
     finally:
         await app.stop()
+
+
+def _locked_app(root, **kw):
+    from rich.console import Console
+
+    from trendlab.app import TrendLabApp
+    from trendlab.config.schema import PermissionMode, RemoteApprovalConfig
+    from trendlab.providers.scripted import ScriptedProvider
+
+    cfg = load_config(root)
+    cfg.remote_approval = RemoteApprovalConfig(enabled=False)
+    cfg.memory.enabled = cfg.memory.learn = True
+    responses = kw.pop("responses", [])
+    return TrendLabApp(
+        root,
+        cfg,
+        provider=ScriptedProvider(responses),
+        model_ref="scripted:m",
+        permission_mode=PermissionMode.UNSAFE,
+        console=Console(quiet=True),
+        **kw,
+    )
+
+
+async def test_locked_learn_from_run_never_writes_memory(places):
+    from trendlab.agent.runtime import RunResult
+    from trendlab.providers.base import ModelResponse
+
+    dev, _home, _rt, prod = places
+    prod_before = (prod / ".trendlab" / "memory.md").read_text()
+    dev_before = (dev / ".trendlab" / "memory.md").read_text()
+    app = _locked_app(dev, responses=[ModelResponse(text="- Tests run with `pytest -q` here.")])
+    await app.start(interactive=False)
+    try:
+        result = RunResult(
+            status="COMPLETED",
+            text="done",
+            report="",
+            changed_files=["a.py"],
+            validation_runs=[{"ok": True, "command": "pytest -q"}],
+            model_calls=3,
+        )
+        assert await app.learn_from_run(result) == []
+    finally:
+        await app.stop()
+    assert (prod / ".trendlab" / "memory.md").read_text() == prod_before
+    assert (dev / ".trendlab" / "memory.md").read_text() == dev_before
+
+
+async def test_isolated_harness_app_reads_its_own_fixture_under_the_lock(places, tmp_path):
+    """The benchmark runner's app (fixture root + its own home) is not redirected to production."""
+    _dev, _home, runtime_dir, _prod = places
+    write(runtime_dir / "plugins" / "state.json", "{}")
+    fixture = tmp_path / "fixture"
+    write(fixture / "TRENDLAB.md", "# FIXTURE-RULES\n")
+    bench_home = tmp_path / "bench-home"
+    app = _locked_app(fixture, data_dir=bench_home, isolated=True)
+    await app.start(interactive=False)
+    try:
+        assert app.plugins.root == bench_home / "plugins"
+        assert "FIXTURE-RULES" in app.context.system_prompt
+        assert "PROD-RULES" not in app.context.system_prompt
+        assert "runtime-skill" not in [s.name for s in app.skills.list()]
+    finally:
+        await app.stop()
+    # an isolated app given no home sees neither the worker home nor the runtime's extensions
+    bare = _locked_app(fixture, isolated=True)
+    assert bare._behavior_home == runtime_dir / "isolated-home"
 
 
 def test_locked_statusline_command_ignores_the_worker_home(places):

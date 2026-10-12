@@ -178,7 +178,12 @@ class CommandRouter:
                 return
             self.console.print(f"[red]unknown command {cmd}[/red] — try /help")
             return
-        await handler(args)
+        from trendlab.config.runtime import LockedError
+
+        try:
+            await handler(args)
+        except LockedError as exc:  # IL-0: referee-owned inputs are read-only in a live session
+            self.console.print(f"[red]{exc}[/red]")
 
     async def _run_custom(self, cmd: str, text: str) -> bool:
         lib = self.app.custom_commands
@@ -1125,6 +1130,9 @@ class CommandRouter:
 
         sub = args[0].lower() if args else ""
         if sub == "init":
+            from trendlab.config.runtime import refuse_if_locked
+
+            refuse_if_locked("the status line")
             script = global_config_path().parent / "statusline.sh"
             if not script.exists():
                 script.parent.mkdir(parents=True, exist_ok=True)

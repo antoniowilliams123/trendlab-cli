@@ -243,7 +243,12 @@ async def deterministic_replay(
         config.defaults.permission_mode = PermissionMode.UNSAFE
         config.sessions.record_cassettes = False  # do not record the replay itself
         tl = TrendLabApp(
-            root, config, model_ref=rec.model or None, console=Console(quiet=True), data_dir=home
+            root,
+            config,
+            model_ref=rec.model or None,
+            console=Console(quiet=True),
+            data_dir=home,
+            isolated=True,
         )
         Unattended(tl)
         await tl.start(interactive=False)

@@ -25,6 +25,8 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from trendlab.config import runtime
+
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 
@@ -129,6 +131,7 @@ class CustomCommandLibrary:
 
     def scaffold(self, name: str, *, project: bool = True) -> Path:
         """Write a starter command file and return its path."""
+        runtime.refuse_if_locked("custom commands")
         if not _NAME.match(name):
             raise ValueError("command names are lowercase letters, digits, '-' or '_'")
         base = self.project_dir if project else self.global_dir

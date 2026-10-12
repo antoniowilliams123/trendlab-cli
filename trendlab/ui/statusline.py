@@ -47,9 +47,8 @@ MAX_CHARS = 400
 
 
 def configured_command() -> tuple[str, float]:
-    """(command, interval) from the user's global config; ('', 0) when unset.
-
-    A locked runtime (IL-0) reads only the referee-owned runtime config."""
+    """(command, interval) from the global config (the runtime config when locked, IL-0);
+    ('', 0) when unset."""
     rt = runtime_dir()
     ui = _read_toml(rt / CONFIG_FILE_NAME if rt else global_config_path()).get("ui") or {}
     cmd = str(ui.get("statusline") or "").strip()

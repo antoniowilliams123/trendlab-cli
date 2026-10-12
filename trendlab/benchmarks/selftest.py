@@ -108,6 +108,7 @@ async def run() -> list[dict[str, Any]]:
                     model_ref="scripted:m",
                     permission_mode=PermissionMode.UNSAFE,
                     console=Console(quiet=True),
+                    isolated=True,
                 )
                 await tl.start(interactive=False)
                 try:

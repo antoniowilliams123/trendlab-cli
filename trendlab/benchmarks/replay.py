@@ -166,6 +166,7 @@ async def replay_session(
             provider=provider,
             console=Console(quiet=True),
             data_dir=home,
+            isolated=True,
         )
         from trendlab.benchmarks.unattended import Unattended
 

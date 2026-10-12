@@ -15,8 +15,10 @@ FILE_NAME = "permissions.toml"
 
 
 class ProjectRules:
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, persist: bool | None = None) -> None:
         self.path = project_root / ".trendlab" / FILE_NAME
+        # IL-0: a locked runtime keeps new rules for the session only
+        self.persist = not runtime.locked() if persist is None else persist
         self._rules: dict[str, Decision] = {}
         self._lock = threading.Lock()
         self._load()
@@ -41,7 +43,7 @@ class ProjectRules:
     def add(self, key: str, decision: Decision) -> None:
         with self._lock:
             self._rules[key] = decision
-            if runtime.locked():  # IL-0: kept for this session only, never written
+            if not self.persist:  # IL-0: kept for this session only, never written
                 return
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("wb") as fh:
@@ -52,7 +54,7 @@ class ProjectRules:
             if key not in self._rules:
                 return False
             del self._rules[key]
-            if runtime.locked():
+            if not self.persist:
                 return True
             with self.path.open("wb") as fh:
                 tomli_w.dump({"rules": {k: v.value for k, v in self._rules.items()}}, fh)

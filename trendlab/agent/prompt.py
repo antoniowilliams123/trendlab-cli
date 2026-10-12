@@ -65,9 +65,10 @@ def project_instructions(project_root: Path, *, max_chars: int = 8000) -> list[t
     return found
 
 
-def build_system_prompt(project_root: Path) -> str:
+def build_system_prompt(project_root: Path, *, instructions_root: Path | None = None) -> str:
+    """``instructions_root`` overrides where instruction files are read (an isolated app)."""
     parts = [_POLICY]
-    for name, text in project_instructions(context_root(project_root)):
+    for name, text in project_instructions(instructions_root or context_root(project_root)):
         parts.append(f"\nProject instructions from {name}:\n{text}")
     parts.append(f"\nProject root: {project_root}")
     return "\n".join(parts)
