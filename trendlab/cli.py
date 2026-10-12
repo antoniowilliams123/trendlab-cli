@@ -1197,24 +1197,49 @@ def engine_status() -> None:
     typer.echo(json.dumps(resp, indent=2))
 
 
+SOCKET_ONLY_JOBS = ("observe", "improve", "improve_prune")
+
+
 @engine_app.command("run")
 def engine_run(
-    job: str = typer.Argument(..., help="watch | sleep | meta | digest | observe"),
+    job: str = typer.Argument(..., help="watch | sleep | meta | digest | observe | improve"),
+    item: str | None = typer.Option(
+        None, "--item", help="improve only: draft for this inbox item id."
+    ),
 ) -> None:
-    """Run one engine job now (through the daemon when it runs, else in-process; observe only
-    ever runs inside the engine)."""
+    """Run one engine job now (through the daemon when it runs, else in-process; observe and
+    improve only ever run inside the engine, and improve returns at once: started or
+    skipped)."""
     from trendlab.config.loader import load_config
     from trendlab.engine.daemon import Engine, client
 
-    resp = asyncio.run(client("run", job=job))
-    if resp is None and job == "observe":
-        typer.echo("the engine is not running; observe runs inside the engine", err=True)
+    kw = {"item": item} if item else {}
+    resp = asyncio.run(client("run", job=job, **kw))
+    if resp is None and job in SOCKET_ONLY_JOBS:
+        typer.echo(f"the engine is not running; {job} runs inside the engine", err=True)
         raise typer.Exit(1)
     if resp is None:
         config = load_config()
         eng = Engine(projects=_engine_projects(config, None), config=config)
         resp = asyncio.run(eng.run_job(job))
         eng.inbox.close()
+    typer.echo(json.dumps(resp, indent=2, default=str))
+
+
+improve_app = typer.Typer(help="IL-B candidate drafts, worker side (evals spec §30).")
+app.add_typer(improve_app, name="improve")
+
+
+@improve_app.command("prune")
+def improve_prune() -> None:
+    """Prune old candidates now (exact files, worktrees and improve/ branches). Runs inside
+    the engine, which also prunes daily from the observe job."""
+    from trendlab.engine.daemon import client
+
+    resp = asyncio.run(client("run", job="improve_prune"))
+    if resp is None:
+        typer.echo("the engine is not running; improve prune runs inside the engine", err=True)
+        raise typer.Exit(1)
     typer.echo(json.dumps(resp, indent=2, default=str))
 
 

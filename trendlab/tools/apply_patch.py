@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from trendlab.permissions.engine import PermissionRequest
 from trendlab.permissions.models import OperationCategory
 from trendlab.tools.base import PathOutsideProjectError, Tool, ToolContext, ToolResult
-from trendlab.tools.files import _atomic_write, _perm_or_outside, _sha256
+from trendlab.tools.files import _perm_or_outside, _sha256, read_text, unlink, write_text
 from trendlab.ui.diff_view import diff_stats, unified_diff
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -157,16 +157,12 @@ class ApplyPatchTool(Tool):
             assert rel is not None
             target = ctx.resolve(rel)
             if fp.new_path is None:  # deletion
-                old = (
-                    target.read_text(encoding="utf-8", errors="replace")
-                    if target.is_file()
-                    else None
-                )
+                old = read_text(ctx, target) if target.is_file() else None
                 if old is None:
                     raise PatchError(f"cannot delete {rel}: not a file")
                 plan.append((rel, old, None))
                 continue
-            old = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
+            old = read_text(ctx, target) if target.is_file() else ""
             if fp.old_path is None and old:
                 raise PatchError(f"{rel} already exists but the patch creates it")
             new = apply_hunks(old, fp.hunks)
@@ -228,9 +224,9 @@ class ApplyPatchTool(Tool):
         for rel, old, new in plan:
             target = ctx.resolve(rel)
             if new is None:
-                target.unlink()
+                unlink(ctx, target)
             else:
-                _atomic_write(target, new)
+                write_text(ctx, target, new)
             diffs.append(unified_diff(rel, old or "", new or ""))
         full = "\n".join(diffs)
         added, removed = diff_stats(full)

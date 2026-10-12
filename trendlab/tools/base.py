@@ -3,6 +3,8 @@ it needs for a given call; it never checks permissions itself."""
 
 from __future__ import annotations
 
+import os
+import stat
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,7 +54,38 @@ class ToolContext:
         root = self.project_root.resolve()
         if candidate != root and root not in candidate.parents:
             raise PathOutsideProjectError(f"path outside project boundary: {raw}")
+        if self.confined:
+            return self._no_symlinks(raw, given, root)
         return candidate
+
+    @property
+    def confined(self) -> bool:
+        """An IL-B draft (evals D-115): the sandbox is the confined profile."""
+        return bool(getattr(self.sandbox, "confined", False))
+
+    def _no_symlinks(self, raw: str, given: Path, root: Path) -> Path:
+        """Confined sessions: no ``..`` and no symlink at any component below the project root,
+        so the checked path is the real path (the open then refuses symlinks again)."""
+        lexical = given if given.is_absolute() else self.project_root / given
+        rel = None
+        for base in (self.project_root, root):
+            try:
+                rel = Path(os.path.normpath(lexical)).relative_to(base)
+                break
+            except ValueError:
+                continue
+        if rel is None or ".." in given.parts:
+            raise PathOutsideProjectError(f"path refused (symlink or '..' in path): {raw}")
+        current = root
+        for part in rel.parts:
+            current = current / part
+            try:
+                mode = os.lstat(current).st_mode
+            except FileNotFoundError:
+                break  # the rest does not exist yet (a new file or folder)
+            if stat.S_ISLNK(mode):
+                raise PathOutsideProjectError(f"path refused (symlink in path): {raw}")
+        return root.joinpath(*rel.parts)
 
 
 class Tool(ABC):

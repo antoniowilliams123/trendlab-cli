@@ -270,6 +270,23 @@ class ImprovementConfig(BaseModel):
     # IL-A: the engine's observe job ingests notices and sends the Observer report
     observe: bool = False
     client: str = "trendlab"  # the Evals workspace whose notices describe this agent
+    # IL-B candidate generator (evals spec §30.5, D-110). Budgets are referee-pinned in the
+    # deploy patch; only Tony changes them. The loop as a whole costs at most $10 a month.
+    propose: bool = False  # L2: draft candidates when triggered
+    scheduled: bool = False  # unattended drafting; stays off until Tony settles Q13/Q14
+    prod_dir: str = "/srv/trendlab/cli-prod"  # the referee-owned production checkout (read-only)
+    candidates_dir: str = "/srv/trendlab/exchange/inbox/candidates"  # bundles + manifests
+    # IL-B spend summary for the referee's shared $10/month check, rewritten after every attempt
+    spend_path: str = "/srv/trendlab/exchange/inbox/il-b-spend.json"
+    max_attempts_per_case: int = Field(default=3, ge=1)
+    max_case_usd: float = Field(default=0.50, ge=0)
+    max_day_usd: float = Field(default=0.50, ge=0)
+    max_month_usd: float = Field(default=10.0, ge=0)  # month-to-date, America/New_York
+    max_draft_minutes: int = Field(default=60, ge=20)
+    cooldown_days: int = Field(default=7, ge=0)
+    max_pending_handoffs: int = Field(default=10, ge=0)
+    recent_days: int = Field(default=7, ge=1)
+    prune_after_days: int = Field(default=14, ge=1)
 
 
 class EconomicsConfig(BaseModel):
@@ -385,6 +402,7 @@ class ProviderConfig(BaseModel):
     effort: str | None = None  # low | medium | high | xhigh | max
     refusal_fallbacks: str = "auto"  # auto | on | off (server-side fallbacks on Fable 5.x / Opus 5)
     prompt_caching: bool = True  # Anthropic: cache_control breakpoints on system + latest turn
+    max_retries: int | None = Field(default=None, ge=0)  # Anthropic SDK retries; None = SDK default
 
     @field_validator("tool_calling")
     @classmethod

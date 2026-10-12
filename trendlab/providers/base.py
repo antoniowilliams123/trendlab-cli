@@ -49,6 +49,9 @@ class TokenUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
+    # tokens written to the prompt cache (Anthropic bills them at 1.25x the input price); they
+    # are already counted in input_tokens
+    cache_write_tokens: int = 0
 
 
 class ModelResponse(BaseModel):

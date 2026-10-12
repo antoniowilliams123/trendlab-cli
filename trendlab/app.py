@@ -154,10 +154,15 @@ class TrendLabApp:
         self.notifier: NotificationProvider | None = None
         self.subagents: SubAgentRunner | None = None
         self.sandbox: Sandbox | None = None
+        # set before start() to give every tool another sandbox (IL-B drafts, evals D-115)
+        self.sandbox_factory: Any = None
         self.background: BackgroundProcessManager | None = None
         self.custom_commands: Any = None
         self._token: str | None = None
         self._run_checkpoint: dict[str, Any] | None = None
+        # A caller that knows the worktree's HEAD (an IL-B draft: its base SHA) sets this, so the
+        # checkpoint never runs git in a tree the agent controls (evals D-115).
+        self.checkpoint_head: str | None = None
         self._reminder_task: asyncio.Task | None = None
         self.pending_images: list[Path] = []  # attached via /paste or /image for the next prompt
         self.current_issue: dict[str, Any] | None = None
@@ -243,7 +248,7 @@ class TrendLabApp:
         if self.resumed:
             self._restore_state()
 
-        self.sandbox = Sandbox(self.config.sandbox, self.project_root)
+        self.sandbox = self._make_sandbox(self.project_root)
         ctx = ToolContext(
             project_root=self.project_root,
             session_id=self.session_id,
@@ -1139,7 +1144,7 @@ class TrendLabApp:
         if self._run_checkpoint is None:
             from trendlab.tools.git import git_head
 
-            head = await git_head(self.project_root)
+            head = self.checkpoint_head or await git_head(self.project_root)
             self._run_checkpoint = self.checkpoints.create(files, label="auto", git_head=head)
             self._checkpoint_step = None
             self.events.emit(
@@ -1415,6 +1420,11 @@ class TrendLabApp:
         return path
 
     # -- worktrees ------------------------------------------------------------------------------
+    def _make_sandbox(self, root: Path) -> Sandbox:
+        if self.sandbox_factory is not None:
+            return self.sandbox_factory(root)
+        return Sandbox(self.config.sandbox, root)
+
     def switch_project_root(self, new_root: Path) -> None:
         """Point tools, checkpoints, repo map and permissions at another checkout (a worktree)."""
         assert self.tools and self.context and self.store
@@ -1429,7 +1439,7 @@ class TrendLabApp:
         self.engine.project_rules = ProjectRules(
             self._context_root(new_root), persist=not self._locked
         )
-        self.sandbox = Sandbox(self.config.sandbox, new_root)
+        self.sandbox = self._make_sandbox(new_root)
         self.tools.ctx.sandbox = self.sandbox
         self.background = self.tools.ctx.background = BackgroundProcessManager(new_root)
         if self.custom_commands is not None:

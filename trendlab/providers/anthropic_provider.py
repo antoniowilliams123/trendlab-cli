@@ -180,6 +180,7 @@ class AnthropicProvider(ModelProvider):
         timeout: float = 600.0,
         context_window: int | None = None,
         client: Any = None,
+        max_retries: int | None = None,
     ) -> None:
         self.name = provider_name
         self.model = model
@@ -191,6 +192,7 @@ class AnthropicProvider(ModelProvider):
         self._cache = cache
         self._timeout = timeout
         self._client = client
+        self._max_retries = max_retries
         self._caps = ModelCapabilities(
             native_tools=True,
             streaming=True,
@@ -210,10 +212,13 @@ class AnthropicProvider(ModelProvider):
                 raise ProviderError("the 'anthropic' package is not installed") from exc
             key = resolve_secret(self._api_key_env)
             # Without a key the SDK still resolves `ant auth login` profiles / WIF on its own.
+            opts: dict[str, Any] = {"timeout": self._timeout}
+            if self._max_retries is not None:
+                opts["max_retries"] = self._max_retries
             self._client = (
-                anthropic.AsyncAnthropic(api_key=key, timeout=self._timeout)
+                anthropic.AsyncAnthropic(api_key=key, **opts)
                 if key
-                else anthropic.AsyncAnthropic(timeout=self._timeout)
+                else anthropic.AsyncAnthropic(**opts)
             )
         return self._client
 
@@ -338,6 +343,7 @@ def _to_response(message: Any) -> ModelResponse:
             input_tokens=in_tokens + cache_read + cache_write,
             output_tokens=int(getattr(usage, "output_tokens", 0) or 0) if usage else 0,
             cached_input_tokens=cache_read,
+            cache_write_tokens=cache_write,
         ),
         finish_reason={"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length"}.get(
             stop, stop

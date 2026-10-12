@@ -5,6 +5,7 @@ Commits are a slash command, never a model-callable tool."""
 from __future__ import annotations
 
 import asyncio
+import shlex
 import shutil
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from trendlab.permissions.engine import PermissionRequest
 from trendlab.permissions.models import OperationCategory
+from trendlab.security.sandbox import GIT_HARDEN_ARGS, GIT_HARDEN_ENV
 from trendlab.tools.base import Tool, ToolContext, ToolResult
 
 
@@ -25,6 +27,37 @@ async def run_git(root: Path, *args: str, timeout: int = 30) -> tuple[int, str]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.kill()
+        return 124, "git timed out"
+    return proc.returncode or 0, out.decode("utf-8", "replace")
+
+
+async def tool_git(ctx: ToolContext, *args: str, timeout: int = 30) -> tuple[int, str]:
+    """A model-callable git command. Under a confined sandbox (an IL-B draft, evals D-115) it
+    runs inside that sandbox, hardened, so nothing the tree configures (fsmonitor, hooks)
+    runs outside it; otherwise as before."""
+    sb = ctx.sandbox
+    if sb is None or not getattr(sb, "confined", False):
+        return await run_git(ctx.project_root, *args, timeout=timeout)
+    env = [f"{k}={v}" for k, v in GIT_HARDEN_ENV.items()]
+    command = shlex.join([*env, "git", *GIT_HARDEN_ARGS, *args])
+    try:
+        argv = sb.wrap(command, cwd=ctx.project_root)
+    except RuntimeError as exc:
+        return 126, f"sandbox unavailable: {exc}"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(ctx.project_root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return 126, f"git did not start in the sandbox: {exc.__class__.__name__}"
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
@@ -68,7 +101,7 @@ class GitStatusTool(Tool):
         return _perm(self.name, ctx, "Git status", {})
 
     async def run(self, args, ctx: ToolContext) -> ToolResult:
-        code, out = await run_git(ctx.project_root, "status", "--short", "--branch")
+        code, out = await tool_git(ctx, "status", "--short", "--branch")
         return ToolResult(ok=code == 0, output=out.strip() or "clean", data={"exit_code": code})
 
 
@@ -94,7 +127,7 @@ class GitDiffTool(Tool):
             cmd.append("--stat")
         if args.path:
             cmd += ["--", str(ctx.resolve(args.path).relative_to(ctx.project_root.resolve()))]
-        code, out = await run_git(ctx.project_root, *cmd)
+        code, out = await tool_git(ctx, *cmd)
         if len(out) > 30_000:
             out = out[:30_000] + "\n... diff truncated"
         return ToolResult(
@@ -124,7 +157,7 @@ class GitLogTool(Tool):
         ]
         if args.path:
             cmd += ["--", str(ctx.resolve(args.path).relative_to(ctx.project_root.resolve()))]
-        code, out = await run_git(ctx.project_root, *cmd)
+        code, out = await tool_git(ctx, *cmd)
         return ToolResult(
             ok=code == 0, output=out.strip() or "no commits", data={"exit_code": code}
         )

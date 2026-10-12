@@ -144,6 +144,8 @@ class OllamaProvider(ModelProvider):
             payload["options"].update(
                 {k: v for k, v in sampling.items() if k in {"temperature", "top_p"}}
             )
+            if "max_tokens" in sampling:  # the IL-B call bound
+                payload["options"]["num_predict"] = sampling["max_tokens"]
         if tools and self._caps.native_tools:
             payload["tools"] = tools
         elif any(m.get("_json_mode") for m in messages):
