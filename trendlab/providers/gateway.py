@@ -51,6 +51,14 @@ class ModelGateway:
     def register(self, model_ref: str, provider: ModelProvider) -> None:
         self._providers[model_ref] = provider
 
+    def wrap_providers(self, wrap: Callable[[str, ModelProvider], ModelProvider]) -> None:
+        """Route every provider, made now or later, through ``wrap(ref, provider)`` (the IL-B
+        spend reservation, evals D-115)."""
+        factory = self._factory
+        self._factory = lambda ref: wrap(ref, factory(ref))
+        for ref, provider in list(self._providers.items()):
+            self._providers[ref] = wrap(ref, provider)
+
     async def complete(
         self, model_ref: str, messages, tools=None, *, role: str | None = None
     ) -> tuple[ModelResponse, str]:

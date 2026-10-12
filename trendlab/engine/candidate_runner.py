@@ -33,6 +33,7 @@ from typing import Any
 from trendlab.config.loader import trendlab_home
 from trendlab.engine.improve_policy import (
     BLACKOUT,
+    DRAFT_MAX_OUTPUT_TOKENS,
     NY,
     Decision,
     draft_config,
@@ -44,6 +45,12 @@ from trendlab.engine.improve_policy import (
     read_switch,
 )
 from trendlab.engine.inbox import Inbox
+from trendlab.providers.base import (
+    ModelProvider,
+    ProviderAuthenticationError,
+    ProviderError,
+    ProviderRateLimitError,
+)
 from trendlab.security.sandbox import GIT_HARDEN_ARGS, GIT_HARDEN_ENV
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -387,9 +394,71 @@ def build_prompt(
 # -- the draft -------------------------------------------------------------------------------------
 @dataclass
 class AgentHooks:
-    """What the agent runner reports back: the session id, and the cost tracker to guard."""
+    """What the agent runner reports back: the session id, the cost tracker to guard and the
+    model gateway whose every call must first reserve its worst case:
+    ``started(session_id, costs, gateway=None)``."""
 
-    started: Callable[[str, Any], None]
+    started: Callable[..., None]
+
+
+class SpendCapRefused(ProviderError):
+    """A draft model call refused before it was made: its worst case could cross a cap."""
+
+    retryable = False
+
+
+# Errors a provider returns before any work is billed; every other failure (a timeout, a
+# dropped stream, a cancel, a crash) keeps the whole reservation charged.
+UNBILLED = (ProviderRateLimitError, ProviderAuthenticationError)
+
+
+def input_estimate(messages: Any, tools: Any) -> int:
+    """A deliberately high input-token estimate: one token per two bytes of the request, plus
+    1000 for framing (real tokenizers average 3-4 bytes a token)."""
+    raw = json.dumps([messages, tools], default=str, ensure_ascii=False).encode()
+    return -(-len(raw) // 2) + 1000
+
+
+class ReservingProvider(ModelProvider):
+    """Wraps a draft provider: reserve the call's worst case first, book its real cost after;
+    with no usage back (cancel, timeout, crash) the whole reservation stays booked."""
+
+    def __init__(self, inner: ModelProvider, model_ref: str, draft: Draft) -> None:
+        self.inner, self.model_ref, self.draft = inner, model_ref, draft
+        self.name, self.model = inner.name, inner.model
+
+    def capabilities(self):
+        return self.inner.capabilities()
+
+    async def close(self) -> None:
+        await self.inner.close()
+
+    async def complete(self, messages, tools=None):
+        messages, hold = self.draft.reserve(self.model_ref, messages, tools)
+        usage, billed = None, True
+        try:
+            response = await self.inner.complete(messages, tools)
+            usage = response.usage
+            return response
+        except UNBILLED:
+            billed = False
+            raise
+        finally:
+            self.draft.settle(self.model_ref, hold, usage, billed)
+
+    async def stream(self, messages, tools=None):
+        messages, hold = self.draft.reserve(self.model_ref, messages, tools)
+        usage, billed = None, True
+        try:
+            async for chunk in self.inner.stream(messages, tools):
+                if chunk.final is not None:
+                    usage = chunk.final.usage
+                yield chunk
+        except UNBILLED:
+            billed = usage is not None
+            raise
+        finally:
+            self.draft.settle(self.model_ref, hold, usage, billed)
 
 
 RunAgent = Callable[[Path, Any, str, AgentHooks], Awaitable[None]]
@@ -409,7 +478,9 @@ async def default_run_agent(path: Path, cfg, prompt: str, hooks: AgentHooks) -> 
     unattended = Unattended(tl)
     try:
         await tl.start(interactive=False)
-        hooks.started(tl.session_id, tl.costs)
+        if tl.gateway is None:
+            raise DraftError("no model gateway to guard")
+        hooks.started(tl.session_id, tl.costs, tl.gateway)
         await tl.run_prompt(prompt)
     finally:
         unattended.close()
@@ -457,6 +528,13 @@ class Draft:
         self.task: asyncio.Task | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.total: float | None = None  # the live total once the agent started
+        # the reservation ledger: booked calls (real cost, or the reservation when no usage
+        # came back) and the reservations of calls still in flight
+        self.booked = 0.0
+        self.in_flight = 0.0
+        self.guarded_gateway = False
+        self.draft_cfg = None
+        self.day: str | None = None
         self.session_id: str | None = None
         self.cid: str | None = None
         self.path: Path | None = None
@@ -495,11 +573,93 @@ class Draft:
 
         costs.on_record = guarded  # sub-agents copy on_record when created, so they share it
 
-    def _started(self, session_id: str, costs) -> None:
+    def _started(self, session_id: str, costs, gateway=None) -> None:
         self.session_id = session_id
         if self.cid:
             self.inbox.set_candidate_session(self.cid, session_id)
         self._guard(costs)
+        if gateway is not None:
+            gateway.wrap_providers(lambda ref, p: ReservingProvider(p, ref, self))
+            self.guarded_gateway = True
+
+    # -- the reservation (D-115, second review) -------------------------------------------------
+    def _worst_case(self, model_ref: str, messages, tools) -> tuple[Any, float]:
+        cfg = self.draft_cfg or self.config
+        pricing = cfg.pricing.get(model_ref)
+        if pricing is None:
+            raise SpendCapRefused(f"unpriced model {model_ref}")
+        pcfg = cfg.providers.get(model_ref.split(":", 1)[0])
+        max_out = min(pcfg.max_tokens, DRAFT_MAX_OUTPUT_TOKENS) if pcfg else DRAFT_MAX_OUTPUT_TOKENS
+        if pcfg is None or pcfg.type != "anthropic":  # Anthropic sends its configured bound
+            messages = [dict(m) for m in messages]
+            messages[0]["_sampling"] = {
+                **(messages[0].get("_sampling") or {}),
+                "max_tokens": max_out,
+            }
+        usd = (
+            input_estimate(messages, tools) * pricing.input_per_million
+            + max_out * pricing.output_per_million
+        ) / 1_000_000
+        return messages, usd
+
+    def _caps_crossed(self, extra: float) -> str | None:
+        """The first cap that ``extra`` more would cross: this draft's budget, then the
+        finding, day and month caps over every other row plus this draft's charge."""
+        mine = self.booked + self.in_flight + extra
+        if mine > self.budget:
+            return "draft budget"
+        if self.cid and self.day and self.decision.case_prefix:
+            imp, cid = self.imp, self.cid
+            others = (
+                (
+                    "finding",
+                    self.inbox.prefix_spend(self.decision.case_prefix, cid),
+                    imp.max_case_usd,
+                ),
+                ("daily", self.inbox.spent_today(self.day, cid), imp.max_day_usd),
+                ("monthly", self.inbox.spent_month(self.day[:7], cid), imp.max_month_usd),
+            )
+            for name, other, cap in others:
+                if other + mine > cap:
+                    return f"{name} cap"
+        return None
+
+    def reserve(self, model_ref: str, messages, tools) -> tuple[Any, float]:
+        """Before a call: its worst case (input estimate plus the output bound, at the model's
+        price) must fit under every cap, or the call is refused and the draft stops."""
+        if self.stop_reason is not None:
+            raise SpendCapRefused(f"draft stopping ({self.stop_reason})")
+        messages, hold = self._worst_case(model_ref, messages, tools)
+        crossed = self._caps_crossed(hold)
+        if crossed:
+            self.request_stop("budget_stop")
+            raise SpendCapRefused(f"the next call could cross the {crossed}")
+        self.in_flight += hold
+        self._save_charge()
+        return messages, hold
+
+    def settle(self, model_ref: str, hold: float, usage, billed: bool) -> None:
+        """After a call: book its real cost; no usage back means the whole reservation."""
+        self.in_flight = max(0.0, self.in_flight - hold)
+        if usage is not None:
+            pricing = (self.draft_cfg or self.config).pricing.get(model_ref)
+            cost = 0.0
+            if pricing is not None:
+                cost = (
+                    usage.input_tokens * pricing.input_per_million
+                    + usage.output_tokens * pricing.output_per_million
+                ) / 1_000_000
+            self.booked += cost
+        elif billed:
+            self.booked += hold
+        self._save_charge()
+        if self.booked >= self.budget:
+            self.request_stop("budget_stop")
+
+    def _save_charge(self) -> None:
+        if self.cid:
+            with contextlib.suppress(Exception):
+                self.inbox.set_candidate_charge(self.cid, round(self.booked + self.in_flight, 6))
 
     async def _ticker(self) -> None:
         while True:
@@ -568,6 +728,7 @@ class Draft:
         if d.item is None or d.case_prefix is None:
             raise DraftError("no item in the decision")
         cfg = draft_config(self.config, self.budget, d.deadline_minutes)
+        self.draft_cfg = cfg
         unpriced = price_check(cfg)
         if unpriced:
             raise DraftError("unpriced model: " + ", ".join(unpriced[:5]))
@@ -579,10 +740,11 @@ class Draft:
         n = self.inbox.prefix_attempts(d.case_prefix) + 1
         cid = f"cand-{item_id}-{n}"
         path = self.root / ".trendlab" / "worktrees" / cid
+        self.day = ny_day(self.clock())
         row = self.inbox.start_candidate(
             item_id=item_id,
             case_prefix=d.case_prefix,
-            day=ny_day(self.clock()),
+            day=self.day,
             base_sha=base,
             reserved_usd=self.budget,
             worktree=str(path),
@@ -644,10 +806,12 @@ class Draft:
         self.status = "handed_off"
 
     def _spend(self) -> float | None:
-        """From the session's call records; the live total when they are missing. The larger
-        of the two when both exist, so the totals never under-count."""
+        """The largest of the session's call records, the live total over the cost records and
+        the reservation ledger (which keeps the reservation of any call that returned no
+        usage), so the totals never under-count."""
         stored = session_spend(self.session_id)
-        known = [v for v in (stored, self.total) if v is not None]
+        charge = self.booked + self.in_flight if self.guarded_gateway else None
+        known = [v for v in (stored, self.total, charge) if v is not None]
         return max(known) if known else None
 
     async def _hand_off(self, base: str, head: str) -> None:

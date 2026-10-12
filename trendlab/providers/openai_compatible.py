@@ -98,7 +98,8 @@ class OpenAICompatibleProvider(ModelProvider):
             payload["temperature"] = self.temperature
         sampling = next((m["_sampling"] for m in messages if m.get("_sampling")), None)
         if sampling:  # per-role sampling policy (U18) wins over the provider default
-            payload.update({k: v for k, v in sampling.items() if k in {"temperature", "top_p"}})
+            keys = {"temperature", "top_p", "max_tokens"}  # max_tokens: the IL-B call bound
+            payload.update({k: v for k, v in sampling.items() if k in keys})
         if tools and self._caps.native_tools:
             payload["tools"] = tools
         if stream:

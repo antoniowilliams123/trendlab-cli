@@ -562,3 +562,141 @@ def test_an_agent_that_swallows_a_cancel_is_cancelled_again(env):
     res = go(env, env.decision(budget_usd=0.1), run_agent=run)
     assert res["status"] == "budget_stop"
     assert env.inbox.candidate(res["candidate"])["spend_usd"] < 0.2
+
+
+# -- second review: a hard cap reserves before every call --------------------------------------
+class WorstCaseProvider:
+    """Bills the most a call may cost: every token of the request, and every output token the
+    call was allowed (the max_tokens the reservation injected)."""
+
+    name, model = "deepseek", "flash"
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def capabilities(self):
+        from trendlab.providers.base import ModelCapabilities
+
+        return ModelCapabilities()
+
+    async def complete(self, messages, tools=None):
+        from trendlab.providers.base import ModelResponse
+
+        max_out = messages[0]["_sampling"]["max_tokens"]
+        raw = json.dumps([messages, tools], default=str, ensure_ascii=False).encode()
+        self.calls.append(max_out)
+        return ModelResponse(
+            text="x", usage=TokenUsage(input_tokens=len(raw) // 2, output_tokens=max_out)
+        )
+
+    async def close(self):
+        pass
+
+
+def gateway_agent(provider_factory, *, prompt_chars=4000):
+    """A fake TrendLabApp run that calls the model through a real gateway until refused."""
+    from trendlab.providers.base import ProviderError
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    async def run(path, cfg, prompt, hooks):
+        tracker = CostTracker(cfg)
+        gw = ModelGateway(cfg, EventBus(), "s", provider_factory=provider_factory)
+        hooks.started("sess-res", tracker, gw)
+        messages = [{"role": "user", "content": "y" * prompt_chars}]
+        try:
+            for _ in range(500):
+                resp, used = await gw.complete("deepseek:flash", messages)
+                tracker.record(used, resp.usage, 1)
+        except ProviderError as exc:
+            run.refused = str(exc)
+
+    run.refused = None
+    return run
+
+
+def test_overshoot_is_impossible_even_at_the_worst_case(env):
+    calls = []
+    run = gateway_agent(lambda ref: WorstCaseProvider(calls))
+    res = go(env, env.decision(budget_usd=0.05), run_agent=run)
+    row = env.inbox.candidate(res["candidate"])
+    assert res["status"] == "budget_stop" and run.refused and "could cross" in run.refused
+    assert len(calls) >= 2
+    assert row["spend_usd"] <= 0.05  # never past the cap, not even by one call
+    assert all(c <= 8192 for c in calls)  # every call carried a hard output bound
+
+
+def test_a_call_that_would_cross_any_cap_is_refused(env):
+    # a day already almost spent by other drafts: the first call alone would cross the day cap
+    env.inbox.start_candidate(
+        item_id="old", case_prefix="evals|main|x|y", day="2026-10-12", base_sha=env.base,
+        reserved_usd=0.0, worktree="/nowhere", branch="improve/old",
+    )  # fmt: skip
+    env.inbox.finish_candidate("cand-old-1", status="no_change", spend_usd=0.0)
+    d = env.decision(budget_usd=0.05)
+    with env.inbox._lock:
+        env.inbox._conn.execute("UPDATE candidate SET spend_usd=0.495 WHERE id='cand-old-1'")
+        env.inbox._conn.commit()
+    calls = []
+    res = go(env, d, run_agent=gateway_agent(lambda ref: WorstCaseProvider(calls)))
+    assert res["status"] == "budget_stop" and calls == []
+    assert env.inbox.candidate(res["candidate"])["spend_usd"] == 0
+
+
+class HangingProvider(WorstCaseProvider):
+    async def complete(self, messages, tools=None):
+        self.calls.append("started")
+        await asyncio.sleep(3600)
+
+
+def test_a_cancelled_call_records_its_reservation(env):
+    calls = []
+    run = gateway_agent(lambda ref: HangingProvider(calls))
+
+    async def pausing(path, cfg, prompt, hooks):
+        async def pause_soon():
+            await asyncio.sleep(0.2)
+            env.switch(paused=True)
+
+        asyncio.get_running_loop().create_task(pause_soon())
+        await run(path, cfg, prompt, hooks)
+
+    res = go(env, run_agent=pausing, tick_s=0.05, clock=lambda: NOW)
+    row = env.inbox.candidate(res["candidate"])
+    assert res["status"] == "paused" and calls == ["started"]
+    # no usage came back and no cost was recorded, yet the full reservation is on the ledger
+    assert row["spend_usd"] >= 8192 / 1_000_000
+    assert row["spend_usd"] <= row["reserved_usd"]
+
+
+def test_an_abandoned_stream_charges_its_reservation(env):
+    from trendlab.providers.base import StreamChunk
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    class Streamer(WorstCaseProvider):
+        async def stream(self, messages, tools=None):
+            yield StreamChunk(text="partial")
+            await asyncio.sleep(3600)
+
+    async def run(path, cfg, prompt, hooks):
+        gw = ModelGateway(cfg, EventBus(), "s", provider_factory=lambda ref: Streamer([]))
+        hooks.started("sess-st", CostTracker(cfg), gw)
+        agen = gw.stream("deepseek:flash", [{"role": "user", "content": "hi"}])
+        await agen.__anext__()
+        await agen.aclose()  # the consumer walks away mid-stream: no final usage
+
+    res = go(env, run_agent=run)
+    assert env.inbox.candidate(res["candidate"])["spend_usd"] >= 8192 / 1_000_000
+
+
+def test_crash_recovery_keeps_the_in_flight_charge(env):
+    from trendlab.engine.jobs import recover_drafting
+
+    row = env.inbox.start_candidate(
+        item_id="c", case_prefix="evals|main|x|z", day="2026-10-12", base_sha=env.base,
+        reserved_usd=0.5, worktree="/nowhere", branch="improve/c",
+    )  # fmt: skip
+    env.inbox.set_candidate_charge(row["id"], 0.07)  # a call was in flight when the engine died
+    asyncio.run(recover_drafting(env.inbox, env.cfg))
+    assert env.inbox.candidate(row["id"])["spend_usd"] == pytest.approx(0.07)

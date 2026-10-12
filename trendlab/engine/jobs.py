@@ -375,7 +375,8 @@ def _exact_unlink(path: Path) -> bool:
 async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -> list[str]:
     """``drafting`` rows whose draft is not running in this process were left by a crash or a
     restart: remove their exact worktree and branch and their own temp files, true up the spend
-    from ``sessions.db`` (the reservation stays when there is no record), mark them ``error``."""
+    from ``sessions.db`` and the live charge (the reservation stays when neither is known),
+    mark them ``error``."""
     from trendlab.engine.candidate_runner import dev_clone_root, remove_worktree, session_spend
 
     out = []
@@ -392,8 +393,15 @@ async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -
             root = None
         if root is not None:
             await remove_worktree(root, row.get("worktree"), f"improve/{cid}", drop_branch=True)
+        # the larger of the call records and the live charge (which holds any in-flight
+        # reservation); neither known keeps the reservation
+        known = [
+            v
+            for v in (session_spend(row.get("session_id")), row.get("charged_usd"))
+            if v is not None
+        ]
         inbox.finish_candidate(
-            cid, status="error", spend_usd=session_spend(row.get("session_id")), detail=RECOVERED
+            cid, status="error", spend_usd=max(known) if known else None, detail=RECOVERED
         )
         out.append(cid)
     return out

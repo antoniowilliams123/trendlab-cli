@@ -94,6 +94,9 @@ def _rewrite(messages: list[dict[str, Any]], tools) -> list[dict[str, Any]]:
             out.append({"role": role, "content": text_of(m.get("content"))})
     if not any(m["role"] == "system" for m in out):
         out.insert(0, {"role": "system", "content": _INSTRUCTIONS + _tool_catalog(tools)})
+    sampling = next((m["_sampling"] for m in messages if m.get("_sampling")), None)
+    if sampling:  # per-role sampling and the IL-B call bound survive the rewrite
+        out[0]["_sampling"] = sampling
     return out
 
 

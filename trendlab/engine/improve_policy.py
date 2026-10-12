@@ -40,6 +40,7 @@ BLACKOUT = (1, 5)  # 01:00-05:00 America/New_York: no loop activity
 PROBE_TIMEOUT_S = 20
 PROBE_FILE = ".ilb-sandbox-probe"
 SCRATCH_HOME = "/tmp/home"  # on the sandbox's private /tmp
+DRAFT_MAX_OUTPUT_TOKENS = 8192  # every draft model call's hard output bound
 DENIED_TOOLS = ("delegate", "web_fetch", "web_search")
 SEVERITY_ORDER = {"high": 0, "med": 1, "low": 2}
 _REF = re.compile(r"^evals:([^:]+):([^:]+)$")
@@ -145,6 +146,9 @@ def draft_config(config: AppConfig, budget_usd: float, minutes: int) -> AppConfi
     cfg.hooks = []
     cfg.mcp = {}
     cfg.sandbox = SandboxConfig(mode="on", writable_paths=[], allow_network=False)
+    # a hard output bound per call, so each call's worst case is known before it is made
+    for pcfg in cfg.providers.values():
+        pcfg.max_tokens = min(pcfg.max_tokens, DRAFT_MAX_OUTPUT_TOKENS)
     return cfg
 
 

@@ -231,7 +231,7 @@ def test_the_drafting_app_uses_the_confined_sandbox(tmp_path, monkeypatch):
 
         async def start(self, interactive=False):
             seen["sandbox"] = self.sandbox_factory(tmp_path)
-            self.session_id, self.costs, self.gateway = "s", None, None
+            self.session_id, self.costs, self.gateway = "s", None, object()
 
         async def run_prompt(self, prompt):
             return None

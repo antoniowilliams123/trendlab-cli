@@ -3,6 +3,7 @@ UI exposes (apply / test / dismiss / silence / open)."""
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS candidate (
     session_id TEXT,
     reserved_usd REAL NOT NULL,        -- reserved at start
     spend_usd REAL,                    -- final, from the call records, at finish or recovery
+    charged_usd REAL,                  -- live: booked calls plus in-flight reservations
     day TEXT NOT NULL,                 -- America/New_York date of the start
     started_at TEXT NOT NULL,
     finished_at TEXT,
@@ -177,6 +179,7 @@ class Inbox:
         with self._lock:
             self._conn.executescript(SCHEMA)
             added = self._migrate_locked()
+            self._migrate_candidate_locked()
         if added:
             self._backfill_signatures()
 
@@ -191,6 +194,14 @@ class Inbox:
         except sqlite3.OperationalError:  # a concurrent process added it first
             return False
         return True
+
+    def _migrate_candidate_locked(self) -> None:
+        """Add ``candidate.charged_usd`` to a database made before it existed."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(candidate)")}
+        if "charged_usd" not in cols:
+            with contextlib.suppress(sqlite3.OperationalError):  # a concurrent process did it
+                self._conn.execute("ALTER TABLE candidate ADD COLUMN charged_usd REAL")
+                self._conn.commit()
 
     def _backfill_signatures(self) -> None:
         """Recover the signatures of evals items stored before the column existed, from the
@@ -579,6 +590,11 @@ class Inbox:
     def set_candidate_session(self, cid: str, session_id: str) -> None:
         self._update_candidate(cid, {"session_id": session_id})
 
+    def set_candidate_charge(self, cid: str, usd: float) -> None:
+        """The draft's live charge (booked calls plus in-flight reservations), kept current so
+        crash recovery never records less than was possibly billed."""
+        self._update_candidate(cid, {"charged_usd": float(usd)})
+
     def finish_candidate(
         self, cid: str, *, status: str, spend_usd: float | None, **fields: Any
     ) -> None:
@@ -595,7 +611,7 @@ class Inbox:
         self._update_candidate(cid, {"status": status, **fields})
 
     def _update_candidate(self, cid: str, sets: dict[str, Any]) -> None:
-        allowed = set(CANDIDATE_FIELDS) | {"status", "spend_usd", "finished_at"}
+        allowed = set(CANDIDATE_FIELDS) | {"status", "spend_usd", "finished_at", "charged_usd"}
         extra = sorted(k for k in sets if k not in allowed)
         if extra:
             raise ValueError(f"unknown candidate fields: {', '.join(extra)}")
@@ -642,7 +658,9 @@ class Inbox:
         with self._lock:
             return self._prefix_attempts_locked(case_prefix)
 
-    def _spend(self, where: str, params: tuple) -> float:
+    def _spend(self, where: str, params: tuple, exclude: str | None = None) -> float:
+        if exclude is not None:  # every other row (a running draft checks its own calls)
+            where, params = f"({where}) AND id != ?", (*params, exclude)
         with self._lock:
             row = self._conn.execute(
                 "SELECT COALESCE(SUM(COALESCE(spend_usd, reserved_usd)), 0) AS usd "
@@ -651,15 +669,15 @@ class Inbox:
             ).fetchone()
         return float(row["usd"])
 
-    def prefix_spend(self, case_prefix: str) -> float:
-        return self._spend("case_prefix=?", (case_prefix,))
+    def prefix_spend(self, case_prefix: str, exclude: str | None = None) -> float:
+        return self._spend("case_prefix=?", (case_prefix,), exclude)
 
-    def spent_today(self, day: str) -> float:
-        return self._spend("day=?", (day,))
+    def spent_today(self, day: str, exclude: str | None = None) -> float:
+        return self._spend("day=?", (day,), exclude)
 
-    def spent_month(self, month: str) -> float:
+    def spent_month(self, month: str, exclude: str | None = None) -> float:
         """Month-to-date spend for ``YYYY-MM`` (days are America/New_York dates)."""
-        return self._spend("substr(day, 1, 7)=?", (month,))
+        return self._spend("substr(day, 1, 7)=?", (month,), exclude)
 
     def prefix_has_handoff(self, case_prefix: str) -> bool:
         with self._lock:
