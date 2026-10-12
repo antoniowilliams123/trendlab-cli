@@ -263,6 +263,13 @@ class ImprovementConfig(BaseModel):
     control dir."""
 
     control_dir: str = "/srv/trendlab/exchange/control"
+    # referee-written finding notices (read-only here)
+    outbox_dir: str = "/srv/trendlab/exchange/outbox"
+    # worker status the referee checks
+    ack_path: str = "/srv/trendlab/exchange/inbox/observe-status.json"
+    # IL-A: the engine's observe job ingests notices and sends the Observer report
+    observe: bool = False
+    client: str = "trendlab"  # the Evals workspace whose notices describe this agent
 
 
 class EconomicsConfig(BaseModel):
