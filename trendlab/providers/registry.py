@@ -57,6 +57,7 @@ def create_provider(config: AppConfig, model_ref: str) -> ModelProvider:
             cache=pcfg.prompt_caching,
             timeout=pcfg.timeout_seconds,
             context_window=info.context_window,
+            max_retries=pcfg.max_retries,
         )
     if pcfg.type not in {"openai_compatible", "openai", "ollama"}:
         raise ProviderError(f"unknown provider type {pcfg.type!r}")

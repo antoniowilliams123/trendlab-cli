@@ -778,3 +778,112 @@ def test_the_input_estimate_is_the_utf8_byte_count():
     messages = [{"role": "user", "content": "\u00e9\u4e2d\U0001f600 odd text " * 200}]
     raw = json.dumps([messages, None], default=str, ensure_ascii=False).encode()
     assert input_estimate(messages, None) == len(raw) + 1000  # one token per byte at most
+
+
+# -- fix round 3: the last one-call leaks (re-review 2, M-2..M-4) -------------------------------
+def test_a_rate_limit_after_streamed_output_charges_the_reservation(env):
+    # M-2: output already came back, so the call was billed even though no usage arrived
+    from trendlab.providers.base import ProviderRateLimitError, StreamChunk
+    from trendlab.providers.gateway import ModelGateway
+    from trendlab.telemetry.events import EventBus
+
+    class Streamer(WorstCaseProvider):
+        async def stream(self, messages, tools=None):
+            yield StreamChunk(text="partial output")
+            raise ProviderRateLimitError("429 mid-stream")
+
+    async def run(path, cfg, prompt, hooks):
+        gw = ModelGateway(cfg, EventBus(), "s", provider_factory=lambda ref: Streamer([]))
+        hooks.started("sess-rl", CostTracker(cfg), gw)
+        with pytest.raises(ProviderRateLimitError):
+            async for _ in gw.stream("deepseek:flash", [{"role": "user", "content": "hi"}]):
+                pass
+
+    res = go(env, run_agent=run)
+    assert env.inbox.candidate(res["candidate"])["spend_usd"] >= 8192 / 1_000_000
+
+
+def test_draft_providers_never_retry_or_fall_back_inside_one_reservation():
+    # M-3: every attempt goes back through the gateway, so each one reserves
+    from trendlab.config.schema import ProviderConfig
+    from trendlab.engine.improve_policy import draft_config
+
+    cfg = AppConfig()
+    cfg.providers["anthropic"] = ProviderConfig(type="anthropic", refusal_fallbacks="on")
+    cfg.providers["deepseek"] = ProviderConfig()
+    dcfg = draft_config(cfg, 0.5, 60)
+    for pcfg in dcfg.providers.values():
+        assert pcfg.max_retries == 0 and pcfg.refusal_fallbacks == "off"
+    assert cfg.providers["anthropic"].max_retries is None  # the daemon's config is untouched
+
+
+def test_the_anthropic_client_gets_the_configured_retry_count(monkeypatch):
+    import anthropic
+
+    from trendlab.config.schema import ProviderConfig
+    from trendlab.providers.registry import create_provider
+
+    seen = {}
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+    cfg = AppConfig()
+    cfg.providers["anthropic"] = ProviderConfig(
+        type="anthropic", api_key_env="ANTHROPIC_API_KEY", max_retries=0, refusal_fallbacks="off"
+    )
+    provider = create_provider(cfg, "anthropic:claude-opus-5")
+    provider._get_client()
+    assert seen["max_retries"] == 0
+    params = provider._params([{"role": "user", "content": "hi"}], None)
+    assert "extra_body" not in params  # no server-side refusal fallback
+
+
+def test_cache_writes_are_reserved_and_booked_at_their_premium(env):
+    # M-4: Anthropic bills a cache write at 1.25x the input price
+    from trendlab.config.schema import ProviderConfig
+    from trendlab.providers.anthropic_provider import _to_response
+
+    env.cfg.providers["anthropic"] = ProviderConfig(type="anthropic", max_tokens=8192)
+    env.cfg.pricing["anthropic:claude-opus-5"] = ModelPricing(
+        input_per_million=1.0, output_per_million=1.0
+    )
+    d = cr.Draft(env.inbox, env.cfg, env.decision(budget_usd=100.0))
+    messages = [{"role": "user", "content": "z" * 10_000}]
+    _, hold = d._worst_case("anthropic:claude-opus-5", messages, None)
+    est = cr.input_estimate(messages, None)
+    assert hold == pytest.approx((est * 1.25 + 8192) / 1_000_000)
+    # settle books the premium on the cache-write tokens the provider reported
+    from types import SimpleNamespace
+
+    msg = SimpleNamespace(
+        content=[],
+        stop_reason="end_turn",
+        usage=SimpleNamespace(
+            input_tokens=100_000, cache_read_input_tokens=0,
+            cache_creation_input_tokens=800_000, output_tokens=100_000,
+        ),
+    )  # fmt: skip
+    usage = _to_response(msg).usage
+    assert usage.cache_write_tokens == 800_000 and usage.input_tokens == 900_000
+    d.settle("anthropic:claude-opus-5", hold, usage, True)
+    assert d.booked == pytest.approx((900_000 + 800_000 * 0.25 + 100_000) / 1_000_000)
+
+
+def test_the_month_cap_counts_every_reservation(env):
+    # a draft still running (no spend yet) counts its whole reservation toward the month
+    row = env.inbox.start_candidate(
+        item_id="r", case_prefix="evals|main|x|r", day="2026-10-01", base_sha=env.base,
+        reserved_usd=9.9, worktree="/nowhere", branch="improve/r",
+    )  # fmt: skip
+    assert env.inbox.spent_month("2026-10") == pytest.approx(9.9)
+    env.inbox.finish_candidate(row["id"], status="no_change", spend_usd=0.0)
+    d = env.decision(budget_usd=0.05)
+    # mid-draft, other rows' reservations fill the month: the next call is refused
+    with env.inbox._lock:
+        env.inbox._conn.execute(f"UPDATE candidate SET spend_usd=NULL, reserved_usd=9.99 "
+                                f"WHERE id='{row['id']}'")  # fmt: skip
+        env.inbox._conn.commit()
+    calls = []
+    run = gateway_agent(lambda ref: WorstCaseProvider(calls))
+    res = go(env, d, run_agent=run)
+    assert res["status"] == "budget_stop" and calls == []
+    assert "monthly cap" in run.refused

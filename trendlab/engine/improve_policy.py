@@ -148,9 +148,13 @@ def draft_config(config: AppConfig, budget_usd: float, minutes: int) -> AppConfi
     cfg.hooks = []
     cfg.mcp = {}
     cfg.sandbox = SandboxConfig(mode="on", writable_paths=[], allow_network=False)
-    # a hard output bound per call, so each call's worst case is known before it is made
+    # a hard output bound per call, so each call's worst case is known before it is made; no SDK
+    # retry and no server-side refusal fallback inside one call, so every attempt goes back
+    # through the gateway and reserves its own worst case (re-review 2, M-3)
     for pcfg in cfg.providers.values():
         pcfg.max_tokens = min(pcfg.max_tokens, DRAFT_MAX_OUTPUT_TOKENS)
+        pcfg.max_retries = 0
+        pcfg.refusal_fallbacks = "off"
     return cfg
 
 

@@ -427,6 +427,7 @@ class SpendCapRefused(ProviderError):
 # Errors a provider returns before any work is billed; every other failure (a timeout, a
 # dropped stream, a cancel, a crash) keeps the whole reservation charged.
 UNBILLED = (ProviderRateLimitError, ProviderAuthenticationError)
+CACHE_WRITE_RATE = 1.25  # Anthropic bills prompt-cache writes at 1.25x the input price
 
 
 def input_estimate(messages: Any, tools: Any) -> int:
@@ -467,14 +468,15 @@ class ReservingProvider(ModelProvider):
 
     async def stream(self, messages, tools=None):
         messages, hold = self.draft.reserve(self.model_ref, messages, tools)
-        usage, billed = None, True
+        usage, billed, emitted = None, True, False
         try:
             async for chunk in self.inner.stream(messages, tools):
+                emitted = True
                 if chunk.final is not None:
                     usage = chunk.final.usage
                 yield chunk
         except UNBILLED:
-            billed = usage is not None
+            billed = emitted  # output already came back, so the call was billed (M-2)
             raise
         finally:
             self.draft.settle(self.model_ref, hold, usage, billed)
@@ -682,8 +684,10 @@ class Draft:
                 **(messages[0].get("_sampling") or {}),
                 "max_tokens": max_out,
             }
+        # an Anthropic prompt-cache write bills input at 1.25x (M-4)
+        rate = CACHE_WRITE_RATE if pcfg and pcfg.type == "anthropic" and pcfg.prompt_caching else 1
         usd = (
-            input_estimate(messages, tools) * pricing.input_per_million
+            input_estimate(messages, tools) * rate * pricing.input_per_million
             + max_out * pricing.output_per_million
         ) / 1_000_000
         return messages, usd
@@ -731,8 +735,10 @@ class Draft:
             pricing = (self.draft_cfg or self.config).pricing.get(model_ref)
             cost = 0.0
             if pricing is not None:
+                writes = getattr(usage, "cache_write_tokens", 0) or 0
                 cost = (
-                    usage.input_tokens * pricing.input_per_million
+                    (usage.input_tokens + writes * (CACHE_WRITE_RATE - 1))
+                    * pricing.input_per_million
                     + usage.output_tokens * pricing.output_per_million
                 ) / 1_000_000
             self.booked += cost

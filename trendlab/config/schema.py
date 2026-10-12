@@ -402,6 +402,7 @@ class ProviderConfig(BaseModel):
     effort: str | None = None  # low | medium | high | xhigh | max
     refusal_fallbacks: str = "auto"  # auto | on | off (server-side fallbacks on Fable 5.x / Opus 5)
     prompt_caching: bool = True  # Anthropic: cache_control breakpoints on system + latest turn
+    max_retries: int | None = Field(default=None, ge=0)  # Anthropic SDK retries; None = SDK default
 
     @field_validator("tool_calling")
     @classmethod
