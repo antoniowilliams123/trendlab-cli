@@ -680,13 +680,18 @@ class Draft:
             ))  # fmt: skip
 
 
-async def remove_worktree(root: Path, path: Path, branch: str, *, drop_branch: bool) -> None:
-    """``git worktree remove --force <exact path>``, then ``git branch -D <branch>``."""
+async def remove_worktree(
+    root: Path, path: Path | str | None, branch: str, *, drop_branch: bool
+) -> None:
+    """``git worktree remove --force <exact path>``, then ``git branch -D <branch>``. Only a
+    path directly under ``<root>/.trendlab/worktrees/`` and only an ``improve/`` branch."""
+    base = (Path(root) / ".trendlab" / "worktrees").resolve()
     with contextlib.suppress(Exception):
-        if Path(path).exists():
-            await git(root, "worktree", "remove", "--force", str(path), check=False)
-        await git(root, "worktree", "prune", check=False)
-        if drop_branch:
+        if path and Path(path).is_absolute() and Path(path).resolve().parent == base:
+            if Path(path).exists():
+                await git(root, "worktree", "remove", "--force", str(path), check=False)
+            await git(root, "worktree", "prune", check=False)
+        if drop_branch and branch.startswith("improve/cand-"):
             await git(root, "branch", "-D", branch, check=False)
 
 

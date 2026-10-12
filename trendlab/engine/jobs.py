@@ -352,3 +352,226 @@ async def observe_job(inbox: Inbox, config, state: dict[str, Any]) -> dict[str, 
     if errors:
         result["errors"] = errors
     return result
+
+
+# -- IL-B: the improve job (evals spec §30.3-§30.5, D-115) ----------------------------------------
+RECOVERED = "recovered after crash or restart"
+# Serializes improve triggers (schedule and socket), so two cannot both start a draft.
+_IMPROVE_LOCK: asyncio.Lock | None = None
+KEPT_FAILED = ("tests_failed", "module_origin_failed")
+
+
+def _exact_unlink(path: Path) -> bool:
+    """Delete one exact file (never a directory, never a pattern); False when absent."""
+    try:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+            return True
+    except OSError:
+        pass
+    return False
+
+
+async def recover_drafting(inbox: Inbox, config, *, is_live=lambda cid: False) -> list[str]:
+    """``drafting`` rows whose draft is not running in this process were left by a crash or a
+    restart: remove their exact worktree and branch and their own temp files, true up the spend
+    from ``sessions.db`` (the reservation stays when there is no record), mark them ``error``."""
+    from trendlab.engine.candidate_runner import dev_clone_root, remove_worktree, session_spend
+
+    out = []
+    for row in inbox.drafting_rows():
+        cid = row["id"]
+        if is_live(cid):
+            continue
+        out_dir = Path(config.improvement.candidates_dir)
+        for name in (f".{cid}.bundle.tmp", f".{cid}.json.tmp"):
+            _exact_unlink(out_dir / name)
+        try:
+            root = dev_clone_root(config)
+        except Exception:  # noqa: BLE001 — the row is still closed; the worktree waits for prune
+            root = None
+        if root is not None:
+            await remove_worktree(root, row.get("worktree"), f"improve/{cid}", drop_branch=True)
+        inbox.finish_candidate(
+            cid, status="error", spend_usd=session_spend(row.get("session_id")), detail=RECOVERED
+        )
+        out.append(cid)
+    return out
+
+
+async def prune_candidates(
+    inbox: Inbox, config, *, now=None, consumed: frozenset[str] = frozenset()
+) -> list[str]:
+    """Worker-side clean-up after ``prune_after_days``: handed-off candidates the referee has
+    not consumed lose their exact bundle and manifest files and their branch; kept failed
+    worktrees are removed with their branch. Each row is marked ``pruned``."""
+    from datetime import UTC, datetime, timedelta
+
+    from trendlab.engine.candidate_runner import dev_clone_root, remove_worktree
+
+    now = now or datetime.now(UTC)
+    horizon = now - timedelta(days=config.improvement.prune_after_days)
+    out_dir = Path(config.improvement.candidates_dir)
+    try:
+        root = dev_clone_root(config)
+    except Exception:  # noqa: BLE001
+        root = None
+    pruned = []
+    for row in inbox.candidates():
+        if row["status"] not in ("handed_off", *KEPT_FAILED) or row["id"] in consumed:
+            continue
+        try:
+            started = datetime.fromisoformat(row["started_at"])
+        except (TypeError, ValueError):
+            continue
+        if started > horizon:
+            continue
+        cid = row["id"]
+        if row["status"] == "handed_off":
+            for name in (f"{cid}.bundle", f"{cid}.json"):
+                _exact_unlink(out_dir / name)
+        if root is not None:
+            await remove_worktree(root, row.get("worktree"), f"improve/{cid}", drop_branch=True)
+        inbox.mark_candidate(cid, status="pruned")
+        pruned.append(cid)
+    return pruned
+
+
+def candidate_line(result: dict[str, Any]) -> str:
+    """The one Telegram line per draft: id, status, spend and test counts only."""
+    tests = result.get("tests") or {}
+    spend = result.get("spend_usd")
+    parts = [
+        f"TrendLab IL-B · {result.get('candidate') or 'no candidate'}",
+        str(result.get("status")),
+        f"spend ${spend:.2f}" if isinstance(spend, int | float) else "spend unknown",
+    ]
+    if "passed" in tests:
+        parts.append(f"tests {tests.get('passed', 0)} passed, {tests.get('failed', 0)} failed")
+    return " · ".join(parts)
+
+
+async def improve_gates(config) -> dict[str, Any]:
+    """The live gate report: IL-0 guard, referee switch, sandbox probe, consumed hand-offs."""
+    from trendlab.engine.improve_policy import (
+        agent_sandbox_ok,
+        read_consumed,
+        read_switch,
+        sandbox_probe,
+    )
+    from trendlab.engine.isolation import check_isolation
+
+    imp = config.improvement
+    iso = await asyncio.to_thread(check_isolation, imp.control_dir)
+    probe_ok, probe_reason = await asyncio.to_thread(sandbox_probe, trendlab_home())
+    env_ok, env_reason = agent_sandbox_ok()
+    return {
+        "isolation": {"ok": iso.ok, "reasons": iso.reasons[:5]},
+        "switch": read_switch(imp.control_dir),
+        "sandbox_probe": {"ok": probe_ok, "reason": probe_reason},
+        "agent_sandbox": {"ok": env_ok, "reason": env_reason},
+        "consumed": read_consumed(imp.control_dir),
+    }
+
+
+async def improve_job(
+    inbox: Inbox,
+    config,
+    state: dict[str, Any],
+    *,
+    item_id: str | None = None,
+    spawn=None,
+    busy=lambda: False,
+    is_live=lambda cid: False,
+    gates=None,
+    draft=None,
+    send=None,
+    now=None,
+) -> dict[str, Any]:
+    """Recover, gate, decide, then start one draft in the background (``spawn``) and return at
+    once with ``{"started": cid}`` or ``{"skipped": reason}``. One Telegram line is sent when
+    the draft finishes. Serialized: one trigger at a time."""
+    global _IMPROVE_LOCK
+    if _IMPROVE_LOCK is None:
+        _IMPROVE_LOCK = asyncio.Lock()
+    async with _IMPROVE_LOCK:
+        return await _improve_job(
+            inbox,
+            config,
+            state,
+            item_id=item_id,
+            spawn=spawn,
+            busy=busy,
+            is_live=is_live,
+            gates=gates,
+            draft=draft,
+            send=send,
+            now=now,
+        )
+
+
+async def _improve_job(
+    inbox: Inbox,
+    config,
+    state: dict[str, Any],
+    *,
+    item_id,
+    spawn,
+    busy,
+    is_live,
+    gates,
+    draft,
+    send,
+    now,
+) -> dict[str, Any]:
+    from trendlab.engine.candidate_runner import draft_candidate
+    from trendlab.engine.improve_policy import decide, mark_needs_tony, ny_now
+    from trendlab.engine.notify import send_telegram
+
+    recovered = await recover_drafting(inbox, config, is_live=is_live)
+    out: dict[str, Any] = {"recovered": recovered} if recovered else {}
+    if busy():
+        return {**out, "skipped": "a draft is already running"}
+    if not config.improvement.propose:
+        return {**out, "skipped": "propose is off"}
+    now = now or ny_now()
+    needs = mark_needs_tony(inbox, config, now=now)
+    if needs:
+        out["needs_tony"] = needs
+    g = await (gates or improve_gates)(config)
+    out["gates"] = {
+        "isolation": g["isolation"],
+        "switch": {"paused": g["switch"].paused, "reason": g["switch"].reason},
+        "sandbox_probe": g["sandbox_probe"],
+        "agent_sandbox": g["agent_sandbox"],
+    }
+    decision = decide(
+        inbox,
+        config,
+        now=now,
+        isolation_ok=g["isolation"]["ok"],
+        sandbox_active=g["sandbox_probe"]["ok"] and g["agent_sandbox"]["ok"],
+        switch=g["switch"],
+        consumed=g["consumed"],
+        item_id=item_id,
+    )
+    if not decision.allowed:
+        return {**out, "skipped": decision.reason}
+    assert decision.item is not None and decision.case_prefix is not None
+    cid = f"cand-{decision.item['id']}-{inbox.prefix_attempts(decision.case_prefix) + 1}"
+    run_draft = draft or draft_candidate
+    notify = send or (lambda text: send_telegram(config, text))
+
+    async def body() -> dict[str, Any]:
+        try:
+            result = await run_draft(inbox, config, decision)
+        except asyncio.CancelledError:
+            raise  # shutdown: the draft recorded itself; no message from a stopping engine
+        try:
+            await notify(candidate_line(result))
+        except Exception:  # noqa: BLE001 — a failed alert never fails the draft
+            pass
+        return result
+
+    (spawn or (lambda coro, _cid: asyncio.create_task(coro)))(body(), cid)
+    return {**out, "started": cid, "budget_usd": decision.budget_usd}

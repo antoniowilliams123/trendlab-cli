@@ -64,6 +64,10 @@ class Engine:
         self._stop = asyncio.Event()
         self.started = time.time()
         self.runs: list[dict[str, Any]] = []
+        # IL-B: the engine owns the one background draft (evals D-115)
+        self.draft_task: asyncio.Task | None = None
+        self.draft_cid: str | None = None
+        self.draft_started: float | None = None
 
     # -- persistence -------------------------------------------------------------------------
     def _load_state(self) -> dict[str, Any]:
@@ -107,6 +111,14 @@ class Engine:
                 and not warm
                 and (not last or time.time() - float(last) >= 1800)
             )
+        if job == "improve":
+            imp = self.config.improvement
+            return (
+                bool(imp.propose and imp.scheduled)
+                and not warm
+                and not self.draft_live()
+                and (not last or time.time() - float(last) >= 2 * 3600)
+            )
         if job == "digest":
             return not last or (now.timestamp() - float(last)) >= ecfg.digest_minutes * 60
         if job == "prune":
@@ -141,7 +153,47 @@ class Engine:
         """Local wall-clock time; the schedule (sleep_at, day stamps) is in the owner's zone."""
         return datetime.now(UTC).astimezone()
 
-    async def run_job(self, job: str) -> dict[str, Any]:
+    # -- IL-B background draft -------------------------------------------------------------------
+    def draft_live(self) -> bool:
+        return self.draft_task is not None and not self.draft_task.done()
+
+    def _draft_is_live(self, cid: str) -> bool:
+        return self.draft_live() and cid == self.draft_cid
+
+    def _spawn_draft(self, coro, cid: str) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self.draft_task, self.draft_cid, self.draft_started = task, cid, time.time()
+
+        def done(t: asyncio.Task) -> None:
+            if self.draft_task is t:
+                self.draft_task, self.draft_cid, self.draft_started = None, None, None
+            if not t.cancelled() and t.exception() is None:
+                self.runs.append({"job": "improve-draft", **(t.result() or {})})
+                self.runs = self.runs[-50:]
+
+        task.add_done_callback(done)
+        return task
+
+    async def _recover_drafts(self) -> list[str]:
+        from trendlab.engine.jobs import recover_drafting
+
+        try:
+            return await recover_drafting(self.inbox, self.config, is_live=self._draft_is_live)
+        except Exception:  # noqa: BLE001 — recovery retries on the next tick
+            return []
+
+    async def _stop_draft(self, timeout: float = 60) -> None:
+        """Cancel a running draft and give its ``finally`` time to record ``shutdown``."""
+        task = self.draft_task
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout)
+        except BaseException:  # noqa: BLE001 — cancelled, timed out or failed: we are stopping
+            pass
+
+    async def run_job(self, job: str, *, item: str | None = None) -> dict[str, Any]:
         now = self.now()
         result: dict[str, Any] = {"job": job, "at": now.isoformat(timespec="seconds")}
         try:
@@ -164,7 +216,28 @@ class Engine:
             elif job == "observe":
                 from trendlab.engine.jobs import observe_job
 
+                recovered = await self._recover_drafts()
+                if recovered:
+                    result["recovered"] = recovered
                 result["observe"] = await observe_job(self.inbox, self.config, self.state)
+                stamp = now.strftime("%Y-%m-%d")
+                if self.state.get("improve_prune_day") != stamp:  # daily, even unscheduled
+                    self.state["improve_prune_day"] = stamp
+                    result["improve_pruned"] = await self._prune_candidates()
+            elif job == "improve":
+                from trendlab.engine.jobs import improve_job
+
+                result["improve"] = await improve_job(
+                    self.inbox,
+                    self.config,
+                    self.state,
+                    item_id=item,
+                    spawn=self._spawn_draft,
+                    busy=self.draft_live,
+                    is_live=self._draft_is_live,
+                )
+            elif job == "improve_prune":
+                result["improve_pruned"] = await self._prune_candidates()
             elif job == "prune":
                 from trendlab.sessions.store import SessionStore
 
@@ -208,6 +281,14 @@ class Engine:
         self.runs = self.runs[-50:]
         return result
 
+    async def _prune_candidates(self) -> list[str]:
+        from trendlab.engine.improve_policy import read_consumed
+        from trendlab.engine.jobs import prune_candidates
+
+        return await prune_candidates(
+            self.inbox, self.config, consumed=read_consumed(self.config.improvement.control_dir)
+        )
+
     async def send_digest(self) -> bool:
         """One plain-English message per cycle (§7.2), only for open issues not reported yet.
         Evals items are left out: the Observer report covers them."""
@@ -235,6 +316,14 @@ class Engine:
                 if k.startswith("last_") and k != "last_digest_text"
             },
             "recent_runs": self.runs[-5:],
+            "draft": (
+                {
+                    "candidate": self.draft_cid,
+                    "elapsed_min": round((time.time() - (self.draft_started or 0)) / 60, 1),
+                }
+                if self.draft_live()
+                else None
+            ),
         }
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -262,8 +351,11 @@ class Engine:
                 "health",
                 "review",
                 "observe",
+                "improve",
+                "improve_prune",
             }:
-                resp = await self.run_job(req["job"])
+                item = req.get("item")
+                resp = await self.run_job(req["job"], item=item if isinstance(item, str) else None)
             elif cmd == "stop":
                 resp = {"stopping": True}
                 self._stop.set()
@@ -287,6 +379,7 @@ class Engine:
                 loop.add_signal_handler(sig, self._stop.set)
             except (NotImplementedError, RuntimeError):
                 pass
+        await self._recover_drafts()
         try:
             while not self._stop.is_set():
                 now = self.now()
@@ -301,6 +394,7 @@ class Engine:
                     "health",
                     "review",
                     "observe",
+                    "improve",
                 ):
                     if self.due(job, now):
                         await self.run_job(job)
@@ -309,6 +403,7 @@ class Engine:
                 except TimeoutError:
                     pass
         finally:
+            await self._stop_draft()  # before the inbox closes, so the draft records itself
             server.close()
             await server.wait_closed()
             for p in (sock, pid_path()):
