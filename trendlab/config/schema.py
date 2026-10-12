@@ -270,6 +270,21 @@ class ImprovementConfig(BaseModel):
     # IL-A: the engine's observe job ingests notices and sends the Observer report
     observe: bool = False
     client: str = "trendlab"  # the Evals workspace whose notices describe this agent
+    # IL-B candidate generator (evals spec §30.5, D-110). Budgets are referee-pinned in the
+    # deploy patch; only Tony changes them. The loop as a whole costs at most $10 a month.
+    propose: bool = False  # L2: draft candidates when triggered
+    scheduled: bool = False  # unattended drafting; stays off until Tony settles Q13/Q14
+    prod_dir: str = "/srv/trendlab/cli-prod"  # the referee-owned production checkout (read-only)
+    candidates_dir: str = "/srv/trendlab/exchange/inbox/candidates"  # bundles + manifests
+    max_attempts_per_case: int = Field(default=3, ge=1)
+    max_case_usd: float = Field(default=0.50, ge=0)
+    max_day_usd: float = Field(default=0.50, ge=0)
+    max_month_usd: float = Field(default=10.0, ge=0)  # month-to-date, America/New_York
+    max_draft_minutes: int = Field(default=60, ge=20)
+    cooldown_days: int = Field(default=7, ge=0)
+    max_pending_handoffs: int = Field(default=10, ge=0)
+    recent_days: int = Field(default=7, ge=1)
+    prune_after_days: int = Field(default=14, ge=1)
 
 
 class EconomicsConfig(BaseModel):

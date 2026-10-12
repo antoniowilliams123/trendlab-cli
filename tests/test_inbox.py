@@ -1,8 +1,12 @@
 """Inbox writes: record is unchanged for callers; the notice ledger is one transaction per action."""
 
+import hashlib
+import json
+import sqlite3
+
 import pytest
 
-from trendlab.engine.inbox import Inbox
+from trendlab.engine.inbox import Inbox, split_signature
 
 RUN = "r-20261012T053000Z-aaaa"
 
@@ -215,3 +219,194 @@ def test_notice_summary_is_per_client_and_capped(tmp_path):
     assert summary["pending_reports"] == runs[-20:]
     assert summary["unreadable_notices"] == [] and summary["rejected_notices"] == []
     assert inbox.notice_summary("nobody")["last_observed_run"] is None
+
+
+# -- IL-B records (evals spec §30.3, §30.5, D-110) -------------------------------------------------
+
+
+OLD_SCHEMA = """
+CREATE TABLE issue (
+    id TEXT PRIMARY KEY, project TEXT NOT NULL, cluster_key TEXT NOT NULL, title TEXT NOT NULL,
+    root_cause TEXT, impacted_files TEXT NOT NULL DEFAULT '[]',
+    evidence_refs TEXT NOT NULL DEFAULT '[]', first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+    occurrences INTEGER NOT NULL DEFAULT 1, severity TEXT NOT NULL DEFAULT 'med',
+    status TEXT NOT NULL DEFAULT 'open', source TEXT NOT NULL DEFAULT 'run',
+    proposed_patch_ref TEXT, verification_ref TEXT, feedback TEXT, card TEXT
+);
+CREATE TABLE notice (
+    run_id TEXT PRIMARY KEY, client TEXT NOT NULL, status TEXT NOT NULL, fingerprint TEXT,
+    detail TEXT, read_failures INTEGER NOT NULL DEFAULT 0, report_status TEXT,
+    report_payload TEXT, report_attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+);
+"""
+
+
+def _old_notice():
+    return {
+        "schema": 1,
+        "kind": "finding_notice",
+        "client": "trendlab",
+        "run_id": RUN,
+        "generated_at": "2026-10-12T05:40:00+00:00",
+        "run": {"status": "complete", "kind": "suite", "started_at": None,
+                "methodology_version": None},
+        "counts": {"total": 2, "passed": 1, "by_split": {}},
+        "findings": [{
+            "case_id": "case-7", "split": "main", "status": "fail", "capability": "a|b",
+            "category": "x", "severity": "high", "gate": None, "failure_codes": ["E.ONE"],
+            "answer_excerpt": "", "judge_reason": "", "expected_summary": "",
+        }],
+        "aggregates": [],
+        "ops": {"run_status": "complete", "errored": 0, "ungraded": 0, "stop_reason": ""},
+    }  # fmt: skip
+
+
+def test_old_schema_migrates_keeps_rows_and_backfills_signatures(tmp_path):
+    path = tmp_path / "inbox.db"
+    sig = "evals|main|a|b|case-7|E.ONE"
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_SCHEMA)
+    conn.execute(
+        "INSERT INTO issue(id, project, cluster_key, title, first_seen, last_seen, source) "
+        "VALUES('i1','harness:trendlab-cli',?,'t','2026-10-12','2026-10-12','evals')",
+        (hashlib.sha1(sig.encode()).hexdigest()[:16],),
+    )
+    conn.execute(
+        "INSERT INTO issue(id, project, cluster_key, title, first_seen, last_seen, source) "
+        "VALUES('i2','harness:trendlab-cli','nomatch','t2','2026-10-12','2026-10-12','evals')"
+    )
+    conn.execute(
+        "INSERT INTO notice(run_id, client, status, report_payload, updated_at) "
+        "VALUES(?, 'trendlab', 'ingested', ?, '2026-10-12')",
+        (RUN, json.dumps(_old_notice())),
+    )
+    conn.execute(
+        "INSERT INTO notice(run_id, client, status, report_payload, updated_at) "
+        "VALUES('r-20261011T053000Z-bbbb', 'trendlab', 'ingested', '{bad json', '2026-10-12')"
+    )
+    conn.commit()
+    conn.close()
+    inbox = Inbox(path)
+    assert inbox.get("i1")["signature"] == sig
+    assert inbox.get("i2")["signature"] is None  # no notice names it: stays NULL, ineligible
+    Inbox(path).close()  # a second open finds the column and does not fail
+    inbox.close()
+
+
+def test_record_stores_the_signature_once(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    a = inbox.record(project="h", title="t", signature="evals|main|c|k|E", source="evals")
+    assert a["signature"] == "evals|main|c|k|E"
+    run = inbox.record(project="/p", title="boom", signature="Traceback secret", source="run")
+    assert run["signature"] is None  # raw run text is never stored, only evals/observe keys
+    inbox.close()
+
+
+def test_split_signature_parses_from_the_right():
+    assert split_signature("evals|main|cap|case-1|E.A+E.B") == (
+        "evals|main|cap",
+        "case-1",
+        "E.A+E.B",
+    )
+    assert split_signature("evals|regression|a|b|c-2|none") == (
+        "evals|regression|a|b",
+        "c-2",
+        "none",
+    )
+    assert split_signature("evals|main|cap") is None  # aggregate (3 parts)
+    assert split_signature("evals|main|cap|case") is None  # 4 parts
+    assert split_signature("evals|ops|complete|x|y") is None
+    assert split_signature("evals|holdout|cap|c|E") is None
+    # a code containing "|": the case id from the evidence ref anchors the cut
+    assert split_signature("evals|main|cap|c-1|E|X", case_id="c-1") == (
+        "evals|main|cap",
+        "c-1",
+        "E|X",
+    )
+    assert split_signature("evals|main|cap|c-1|E|X", case_id="zz") is None
+    # ambiguous: the case id appears twice
+    assert split_signature("evals|main|c-1|c-1|c-1|E", case_id="c-1") is None
+
+
+def _start(inbox, item="abc123", prefix="evals|main|cap|case-1", day="2026-10-12", usd=0.5):
+    return inbox.start_candidate(
+        item_id=item, case_prefix=prefix, day=day, base_sha="a" * 40, reserved_usd=usd,
+        worktree=f"/wt/{item}", branch="improve/x",
+    )  # fmt: skip
+
+
+def test_candidate_lifecycle_and_one_drafting_at_a_time(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    c1 = _start(inbox)
+    assert c1["id"] == "cand-abc123-1" and c1["status"] == "drafting" and c1["attempt"] == 1
+    with pytest.raises(RuntimeError, match="drafting"):
+        _start(inbox)
+    inbox.set_candidate_session(c1["id"], "sess-1")
+    assert inbox.drafting_rows()[0]["session_id"] == "sess-1"
+    inbox.finish_candidate(c1["id"], status="tests_failed", spend_usd=0.2, tests='{"passed": 1}')
+    assert inbox.drafting_rows() == []
+    c2 = _start(inbox, usd=0.3)
+    assert c2["id"] == "cand-abc123-2" and inbox.prefix_attempts("evals|main|cap|case-1") == 2
+    # the reservation counts until the true-up replaces it
+    assert inbox.prefix_spend("evals|main|cap|case-1") == pytest.approx(0.5)
+    assert inbox.spent_today("2026-10-12") == pytest.approx(0.5)
+    assert inbox.spent_month("2026-10") == pytest.approx(0.5)
+    inbox.finish_candidate(c2["id"], status="handed_off", spend_usd=0.1, head_sha="b" * 40)
+    assert inbox.prefix_spend("evals|main|cap|case-1") == pytest.approx(0.3)
+    assert inbox.prefix_has_handoff("evals|main|cap|case-1")
+    assert not inbox.prefix_has_handoff("evals|main|cap|case-2")
+    assert inbox.pending_handoffs() == 1
+    assert inbox.pending_handoffs(consumed={"cand-abc123-2"}) == 0
+    assert inbox.last_attempt_at("evals|main|cap|case-1") == c2["started_at"]
+    assert inbox.last_attempt_at("nope") is None
+    assert inbox.spent_today("2026-10-13") == 0
+    assert inbox.spent_month("2026-11") == 0
+    assert inbox.candidate(c2["id"])["head_sha"] == "b" * 40
+    with pytest.raises(ValueError):
+        inbox.finish_candidate(c2["id"], status="bogus", spend_usd=0)
+    with pytest.raises(ValueError):
+        inbox.finish_candidate(c2["id"], status="error", spend_usd=0, evil="x")
+    inbox.close()
+
+
+def test_candidate_writes_roll_back_on_error(tmp_path, monkeypatch):
+    inbox = Inbox(tmp_path / "inbox.db")
+    c1 = _start(inbox)
+    with pytest.raises(sqlite3.Error):
+        inbox.finish_candidate(c1["id"], status="error", spend_usd=0.1, files_changed=object())
+    assert inbox.candidate(c1["id"])["status"] == "drafting"
+    assert inbox.spent_today("2026-10-12") == pytest.approx(0.5)
+    inbox.close()
+
+
+def test_lessons_for_matches_split_and_capability(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.db")
+    rows = [
+        ("l1", "evals|main|cap|other-case|E", 1, 0, "active"),
+        ("l2", "evals|main|cap|x|E", 5, 1, "active"),
+        ("l3", "evals|main|cap|y|E", 9, 0, "retired"),
+        ("l4", "evals|main|capx|y|E", 9, 0, "active"),
+        ("l5", "evals|regression|cap|y|E", 9, 0, "active"),
+    ]
+    with inbox._lock:
+        for lid, sig, ok, bad, status in rows:
+            inbox._conn.execute(
+                "INSERT INTO lesson(id, signature, symptom, fix_pattern, evidence, succeeded, "
+                "failed, status, created_at, updated_at) VALUES(?,?,'s','f','e',?,?,?,'t','t')",
+                (lid, sig, ok, bad, status),
+            )
+        inbox._conn.commit()
+    got = [r["id"] for r in inbox.lessons_for("evals|main|cap|case-1")]
+    assert got == ["l2", "l1"]
+    assert len(inbox.lessons_for("evals|main|cap|case-1", limit=1)) == 1
+    inbox.close()
+
+
+def test_improvement_config_pins_the_il_b_caps():
+    from trendlab.config.schema import ImprovementConfig
+
+    imp = ImprovementConfig()
+    assert (imp.propose, imp.scheduled) == (False, False)
+    assert (imp.max_case_usd, imp.max_day_usd, imp.max_month_usd) == (0.5, 0.5, 10.0)
+    assert (imp.max_attempts_per_case, imp.max_draft_minutes, imp.cooldown_days) == (3, 60, 7)
+    assert (imp.max_pending_handoffs, imp.recent_days, imp.prune_after_days) == (10, 7, 14)
