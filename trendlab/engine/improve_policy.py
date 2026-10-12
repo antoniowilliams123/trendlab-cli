@@ -62,7 +62,7 @@ class Switch:
 
 def _read_control(path: Path) -> Any:
     """JSON from a referee control file: no symlinks, a regular file, at most 64 KiB."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ValueError("not a regular file")

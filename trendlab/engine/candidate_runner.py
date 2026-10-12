@@ -21,6 +21,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import stat
 import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
@@ -140,6 +141,42 @@ async def git(root: Path, *args: str, check: bool = True, timeout: float = 120) 
     return out
 
 
+# Every git call on a candidate worktree pins the repository (the agent and the candidate's tests
+# can rewrite the worktree, including its .git file) and turns off anything that runs a command.
+SAFE_GIT = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "core.quotePath=false",
+)
+
+
+def worktree_gitdir(root: Path, path: Path) -> Path:
+    """The worktree's git dir, read right after ``git worktree add`` (before any untrusted code
+    runs) and required to sit in the dev clone's own ``.git/worktrees/``."""
+    text = (Path(path) / ".git").read_text(encoding="utf-8").strip()
+    if not text.startswith("gitdir: "):
+        raise DraftError("unexpected worktree .git file")
+    gitdir = Path(text.removeprefix("gitdir: ")).resolve()
+    if gitdir.parent != (Path(root) / ".git" / "worktrees").resolve():
+        raise DraftError("worktree git dir is outside the dev clone")
+    return gitdir
+
+
+async def wt_git(
+    gitdir: Path, path: Path, *args: str, check: bool = True, timeout: float = 120
+) -> tuple[int, str]:
+    argv = ["git", f"--git-dir={gitdir}", f"--work-tree={path}", *SAFE_GIT, *args]
+    code, out = await run_cmd(argv, cwd=gitdir, env=_git_env(), timeout=timeout)
+    if check and code != 0:
+        raise DraftError(f"git {args[0]} failed ({code})")
+    return code, out
+
+
 async def rev_parse(root: Path, ref: str) -> str:
     sha = (await git(root, "rev-parse", "--verify", f"{ref}^{{commit}}")).strip()
     if not SHA_RE.match(sha):
@@ -199,8 +236,11 @@ MAX_REPORT_BYTES = 20_000_000
 
 def _read_report(path: Path) -> bytes:
     """A report written inside the sandbox (candidate-controlled): bounded, no symlinks."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # O_NONBLOCK and S_ISREG: a FIFO planted by candidate code must never block the engine
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("report is not a regular file")
         data = os.read(fd, MAX_REPORT_BYTES + 1)
     finally:
         os.close(fd)
@@ -418,6 +458,8 @@ class Draft:
         self.cid: str | None = None
         self.path: Path | None = None
         self.root: Path | None = None
+        self.gitdir: Path | None = None
+        self._finishing = False  # set once cleanup starts: no more stop requests
         self.tmp_files: list[Path] = []
         self.status = "error"
         self.fields: dict[str, Any] = {}
@@ -426,9 +468,12 @@ class Draft:
 
     # stop requests: set the reason first, then cancel, so ``finally`` can map it to a status
     def request_stop(self, reason: str) -> None:
-        if self.stop_reason is not None or self.task is None or self.loop is None:
+        """The first reason wins; every later request cancels again while the task still runs,
+        so an agent that swallows one CancelledError cannot keep spending."""
+        if self.task is None or self.loop is None or self.task.done() or self._finishing:
             return
-        self.stop_reason = reason
+        if self.stop_reason is None:
+            self.stop_reason = reason
         self.loop.call_soon_threadsafe(self.task.cancel)
 
     def _guard(self, costs) -> None:
@@ -456,7 +501,9 @@ class Draft:
     async def _ticker(self) -> None:
         while True:
             await asyncio.sleep(self.tick_s)
-            if read_switch(self.imp.control_dir).paused:
+            if self.stop_reason is not None:
+                self.request_stop(self.stop_reason)  # cancel again until the draft stops
+            elif read_switch(self.imp.control_dir).paused:
                 self.request_stop("paused")
             elif BLACKOUT[0] <= self.clock().astimezone(NY).hour < BLACKOUT[1]:
                 self.request_stop("blackout")
@@ -486,7 +533,8 @@ class Draft:
             if self.stop_reason is None:
                 self.stop_reason, external_cancel = "shutdown", True
             elif self.task is not None:
-                self.task.uncancel()
+                while self.task.uncancel() > 0:  # our own (possibly repeated) stop requests
+                    pass
             self.status = self.stop_reason
         except DraftError as exc:
             self.status, self.fields["detail"] = "error", str(exc)[:300]
@@ -494,6 +542,7 @@ class Draft:
             self.status = "error"
             self.fields["detail"] = f"{exc.__class__.__name__}: {exc}"[:300]
         finally:
+            self._finishing = True
             deadline.cancel()
             ticker.cancel()
             with contextlib.suppress(BaseException):
@@ -542,6 +591,7 @@ class Draft:
         path.parent.mkdir(parents=True, exist_ok=True)
         await git(self.root, "worktree", "add", "-q", "-b", f"improve/{cid}", str(path), base)
         self.path = path
+        self.gitdir = worktree_gitdir(self.root, path)
         from trendlab.orchestration.gitflow import ensure_excluded
 
         ensure_excluded(path)  # the test home under .trendlab/ never gets committed
@@ -559,17 +609,20 @@ class Draft:
         )
         await self.run_agent(path, cfg, prompt, AgentHooks(started=self._started))
 
-        await git(path, "add", "-A")
-        staged = await run_cmd(
-            ["git", "-C", str(path), "diff", "--cached", "--quiet"], env=_git_env()
-        )
-        if staged[0] != 0:
-            await git(path, "commit", "-q", "--no-verify", "-m", f"improve: {cid}")
-        head = await rev_parse(path, "HEAD")
+        gd = self.gitdir
+        await wt_git(gd, path, "add", "-A")
+        staged, _ = await wt_git(gd, path, "diff", "--cached", "--quiet", check=False)
+        if staged != 0:
+            await wt_git(gd, path, "commit", "-q", "--no-verify", "-m", f"improve: {cid}")
+        _, out = await wt_git(gd, path, "rev-parse", "--verify", "HEAD^{commit}")
+        head = out.strip()
+        if not SHA_RE.match(head):
+            raise DraftError("rev-parse returned a malformed sha")
         if head == base:
             self.status = "no_change"
             return
-        names = (await git(path, "diff", "--name-only", base, head)).split("\n")
+        _, out = await wt_git(gd, path, "diff", "--name-only", "-z", base, head)
+        names = out.split("\0")
         files = sorted(n for n in names if n)
         self.fields.update(
             head_sha=head,
@@ -603,7 +656,8 @@ class Draft:
             os.chmod(out, 0o2750)
         tmp_bundle = out / f".{cid}.bundle.tmp"
         self.tmp_files.append(tmp_bundle)
-        await git(self.path, "bundle", "create", "-q", str(tmp_bundle), f"{base}..improve/{cid}")
+        # from the dev clone itself, never through the (candidate-writable) worktree
+        await git(self.root, "bundle", "create", "-q", str(tmp_bundle), f"{base}..improve/{cid}")
         fd = os.open(tmp_bundle, os.O_RDONLY | os.O_NOFOLLOW)
         try:
             os.fchmod(fd, 0o640)

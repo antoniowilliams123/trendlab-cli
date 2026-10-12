@@ -507,3 +507,56 @@ def test_spend_true_up_prefers_the_call_records(env, monkeypatch):
     monkeypatch.setattr(cr, "session_spend", lambda sid: 0.2 if sid == "sess-1" else None)
     res = go(env, run_agent=agent(edit=fix_core, costs_usd=(0.01,)))
     assert env.inbox.candidate(res["candidate"])["spend_usd"] == pytest.approx(0.2)
+
+
+# -- review fixes: hostile worktrees and agents ---------------------------------------------------
+def test_a_planted_fifo_report_never_blocks(tmp_path):
+    fifo = tmp_path / "junit.xml"
+    os.mkfifo(fifo)
+    with pytest.raises(ValueError, match="regular"):
+        cr._read_report(fifo)
+
+
+def test_a_rewritten_worktree_git_never_runs_commands(env, tmp_path):
+    marker = tmp_path / "pwned"
+
+    def edit(path):
+        fix_core(path)
+        (path / ".git").unlink()  # the candidate swaps in its own repository
+        sh("git", "init", "-q", cwd=path)
+        sh("git", "config", "core.fsmonitor", f"touch {marker}; false", cwd=path)
+        hook = path / ".git" / "hooks" / "post-commit"
+        hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+        hook.chmod(0o755)
+
+    res = go(env, run_agent=agent(edit=edit))
+    assert not marker.exists()
+    assert res["status"] == "handed_off", env.inbox.candidate(res["candidate"])["detail"]
+
+
+def test_quoted_paths_are_still_flagged_protected(env):
+    def edit(path):
+        (path / "trendlab" / "security").mkdir()
+        (path / "trendlab" / "security" / "é.py").write_text("X = 1\n")
+
+    res = go(env, run_agent=agent(edit=edit))
+    assert env.inbox.candidate(res["candidate"])["touches_protected"] == ["trendlab/security/é.py"]
+
+
+def test_an_agent_that_swallows_a_cancel_is_cancelled_again(env):
+    async def run(path, cfg, prompt, hooks):
+        tracker = CostTracker(cfg)
+        hooks.started("sess-sw", tracker)
+        swallowed = 0
+        for _ in range(200):
+            try:
+                tracker.record("deepseek:flash", TokenUsage(input_tokens=30_000), 1)
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                swallowed += 1
+                if swallowed > 1:
+                    raise
+
+    res = go(env, env.decision(budget_usd=0.1), run_agent=run)
+    assert res["status"] == "budget_stop"
+    assert env.inbox.candidate(res["candidate"])["spend_usd"] < 0.2
